@@ -5,8 +5,8 @@ import NomiCore
 /// previews and UI tests have something to render: 4 categories, 4 accounts (one
 /// archived), 2 rules, 2 budgets (one over 90%, one under), >=12 months of dated
 /// transactions, at least one merged row and one needsReview row.
-enum PreviewData {
-  static let categories: [Category] = {
+public enum PreviewData {
+  public static let categories: [NomiCore.Category] = {
     let names: [(String, String, Int)] = [
       ("Food & Dining", "fork.knife", 0),
       ("Shopping", "bag", 1),
@@ -14,7 +14,7 @@ enum PreviewData {
       ("Bills & Utilities", "bolt", 3),
     ]
     return names.enumerated().map { index, entry in
-      Category(
+      NomiCore.Category(
         id: UUID(uuidString: String(format: "00000000-0000-0000-0000-0000000001%02d", index))!,
         name: entry.0,
         symbolName: entry.1,
@@ -25,7 +25,7 @@ enum PreviewData {
     }
   }()
 
-  static let accounts: [Account] = [
+  public static let accounts: [Account] = [
     Account(
       id: UUID(uuidString: "00000000-0000-0000-0000-000000000201")!,
       displayName: "HDFC •• 4471",
@@ -64,7 +64,7 @@ enum PreviewData {
     ),
   ]
 
-  static let rules: [Rule] = [
+  public static let rules: [Rule] = [
     Rule(
       id: UUID(uuidString: "00000000-0000-0000-0000-000000000301")!,
       pattern: "*SWIGGY*",
@@ -83,12 +83,12 @@ enum PreviewData {
     ),
   ]
 
-  static let transactions: [Transaction] = makeTransactions()
+  public static let transactions: [Transaction] = makeTransactions()
 
   /// One budget over 90% of current-month spend, one comfortably under —
   /// derived from the actual seeded transactions so the property holds
   /// regardless of how the merchant rotation lands.
-  static let budgets: [Budget] = {
+  public static let budgets: [Budget] = {
     let calendar = Calendar.current
     let now = Date()
     let monthRange = dateRange(for: .month(year: calendar.component(.year, from: now), month: calendar.component(.month, from: now)), calendar: calendar)

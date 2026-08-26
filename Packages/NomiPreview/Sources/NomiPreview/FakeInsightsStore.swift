@@ -4,14 +4,14 @@ import NomiCore
 @MainActor
 public final class FakeInsightsStore: InsightsStore {
   private let transactions: [Transaction]
-  private let categories: [Category]
+  private let categories: [NomiCore.Category]
   private let accounts: [Account]
   private let budgets: [Budget]
   private let calendar = Calendar.current
 
   public init(
     transactions: [Transaction] = PreviewData.transactions,
-    categories: [Category] = PreviewData.categories,
+    categories: [NomiCore.Category] = PreviewData.categories,
     accounts: [Account] = PreviewData.accounts,
     budgets: [Budget] = PreviewData.budgets
   ) {
@@ -30,7 +30,7 @@ public final class FakeInsightsStore: InsightsStore {
 
     var byCategory: [UUID: Int] = [:]
     for row in rows where row.directionRaw == Direction.debit.rawValue {
-      byCategory[row.categoryID ?? Category.uncategorizedID, default: 0] += row.amountMinor
+      byCategory[row.categoryID ?? NomiCore.Category.uncategorizedID, default: 0] += row.amountMinor
     }
     let categorySlices: [CategorySlice] = byCategory.map { categoryID, total in
       let category = categories.first { $0.id == categoryID }

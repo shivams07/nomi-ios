@@ -29,5 +29,5 @@ public actor FakeFileImportService: FileImportService {
     ImportSummary(created: 2, merged: 0, skipped: 0)
   }
 
-  public func saveMapping(_ mapping: ColumnMapping, signature: String, bankLabel: String) throws {}
+  public nonisolated func saveMapping(_ mapping: ColumnMapping, signature: String, bankLabel: String) throws {}
 }

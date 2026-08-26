@@ -7,14 +7,14 @@ public enum CategoryStoreError: Error {
 
 @MainActor
 public final class FakeCategoryStore: CategoryStore {
-  public var categories: [Category]
+  public var categories: [NomiCore.Category]
 
-  public init(categories: [Category] = PreviewData.categories) {
+  public init(categories: [NomiCore.Category] = PreviewData.categories) {
     self.categories = categories
   }
 
-  public func create(name: String, symbolName: String, paletteSlot: Int) throws -> Category {
-    let category = Category(name: name, symbolName: symbolName, paletteSlot: paletteSlot, sortIndex: categories.count)
+  public func create(name: String, symbolName: String, paletteSlot: Int) throws -> NomiCore.Category {
+    let category = NomiCore.Category(name: name, symbolName: symbolName, paletteSlot: paletteSlot, sortIndex: categories.count)
     categories.append(category)
     return category
   }
