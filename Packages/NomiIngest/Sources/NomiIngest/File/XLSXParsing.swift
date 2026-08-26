@@ -31,7 +31,13 @@ enum XLSXParser {
       var maxColumn = 0
       for cell in row.cells {
         let columnIndex = Self.columnIndex(cell.reference.column.value)
-        byColumn[columnIndex] = cell.stringValue(sharedStrings) ?? ""
+        let text: String
+        if let sharedStrings, let resolved = cell.stringValue(sharedStrings) {
+          text = resolved
+        } else {
+          text = cell.value ?? ""
+        }
+        byColumn[columnIndex] = text
         maxColumn = max(maxColumn, columnIndex)
       }
       return (0...maxColumn).map { byColumn[$0] ?? "" }
