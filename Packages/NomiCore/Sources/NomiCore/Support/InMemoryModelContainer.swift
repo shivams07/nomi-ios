@@ -36,9 +36,14 @@ public enum InMemoryModelContainer {
     _ = shared
   }
 
+  /// Intentionally does NOT call `context.insert(_:)` — under `swift test`
+  /// (no app bundle), the CoreData-backed store's first write crashes with
+  /// "Unable to determine Bundle Name" regardless of store configuration.
+  /// `warmUp()` alone satisfies SwiftData's requirement for an active
+  /// container; a never-inserted, detached model is fine for reading and
+  /// writing its own properties, which is all tests/`NomiPreview` need.
   @discardableResult
   public static func inserted<T: PersistentModel>(_ model: T) -> T {
-    context.insert(model)
-    return model
+    model
   }
 }
