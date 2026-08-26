@@ -9,8 +9,8 @@ let package = Package(
   ],
   dependencies: [
     .package(path: "../NomiCore"),
-    .package(url: "https://github.com/apple/swift-nio-imap.git", from: "3.0.0"),
-    .package(url: "https://github.com/CoreOffice/CoreXLSX.git", from: "0.14.2"),
+    .package(url: "https://github.com/apple/swift-nio-imap.git", from: "0.4.0"),
+    .package(url: "https://github.com/CoreOffice/CoreXLSX.git", from: "0.9.1"),
     .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.7.0"),
   ],
   targets: [
