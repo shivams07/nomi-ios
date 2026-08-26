@@ -1,13 +1,21 @@
 import Foundation
 import SwiftData
 
-/// SwiftData's macro-generated backing storage requires an active
-/// `ModelContainer` to exist BEFORE any `@Model` instance is constructed —
-/// even a detached, never-persisted one. `warmUp()` must run as its own
-/// statement ahead of any `Transaction()`/`Category()`/etc. call site
-/// (constructing a model as a nested call argument evaluates too late,
-/// since Swift evaluates arguments before entering the callee). Used by
-/// `NomiPreview`'s seed data and by `NomiCoreTests`.
+/// An in-memory `ModelContainer` for `NomiApp` to hand to `NomiPreview`/UI
+/// previews and, on-device, for anything that needs a scratch container.
+///
+/// NOT usable from `swift test` in this CI. SwiftData's CoreData-backed store
+/// resolves a bundle name on first load — `SwiftData/DataStoreCoreData.swift:32:
+/// Fatal error: Unable to determine Bundle Name` — and a headless `swift test`
+/// binary has no app bundle to resolve. That is true regardless of
+/// `isStoredInMemoryOnly`, `cloudKitDatabase`, or store URL: none of those
+/// configuration knobs avoid the bundle-name lookup. The only known fix is
+/// embedding an `Info.plist` into the test binary via target `linkerSettings`
+/// in `Package.swift` (see the escalation note in this unit's PR) — out of
+/// this unit's file boundary, since `Package.swift` is frozen by U0. Until
+/// that lands, tests and `NomiPreview` must not construct `@Model` instances;
+/// `TransactionCSVExporter.row(...)` is the pattern other tests should follow
+/// — a pure function decoupled from the `@Model` type it normally serves.
 public enum InMemoryModelContainer {
   public static let shared: ModelContainer = {
     let schema = Schema([
@@ -20,30 +28,7 @@ public enum InMemoryModelContainer {
       AccountBinding.self,
       ColumnMappingRecord.self,
     ])
-    // The default `cloudKitDatabase: .automatic` resolves an iCloud
-    // container identifier from `Bundle.main`, which doesn't exist for a
-    // `swift test` command-line process — it crashes with "Unable to
-    // determine Bundle Name". Explicitly opting out sidesteps that lookup.
     let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
     return try! ModelContainer(for: schema, configurations: [configuration])
   }()
-
-  public static let context: ModelContext = ModelContext(shared)
-
-  /// Forces the container to exist. Call this as its own statement before
-  /// constructing any `@Model` instance.
-  public static func warmUp() {
-    _ = shared
-  }
-
-  /// Intentionally does NOT call `context.insert(_:)` — under `swift test`
-  /// (no app bundle), the CoreData-backed store's first write crashes with
-  /// "Unable to determine Bundle Name" regardless of store configuration.
-  /// `warmUp()` alone satisfies SwiftData's requirement for an active
-  /// container; a never-inserted, detached model is fine for reading and
-  /// writing its own properties, which is all tests/`NomiPreview` need.
-  @discardableResult
-  public static func inserted<T: PersistentModel>(_ model: T) -> T {
-    model
-  }
 }

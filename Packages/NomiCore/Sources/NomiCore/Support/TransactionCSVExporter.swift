@@ -4,24 +4,44 @@ import Foundation
 /// grouping separator — a CSV is opened in a spreadsheet, not displayed in the
 /// app. Dates export as ISO-8601. Header row always present, even for zero rows.
 public enum TransactionCSVExporter {
-  private static let header = "date,description,merchant,amount,direction,category_id,account_id"
+  static let header = "date,description,merchant,amount,direction,category_id,account_id"
 
   public static func export(_ transactions: [Transaction]) -> String {
+    let rows = transactions.map {
+      row(
+        date: $0.date,
+        descriptionText: $0.descriptionText,
+        merchantName: $0.merchantName,
+        amountMinor: $0.amountMinor,
+        directionRaw: $0.directionRaw,
+        categoryID: $0.categoryID,
+        accountID: $0.accountID
+      )
+    }
+    return ([header] + rows).joined(separator: "\n")
+  }
+
+  /// The per-row formatter, decoupled from `Transaction` (a SwiftData `@Model`)
+  /// so it can be unit tested without constructing one.
+  static func row(
+    date: Date,
+    descriptionText: String,
+    merchantName: String?,
+    amountMinor: Int,
+    directionRaw: String,
+    categoryID: UUID?,
+    accountID: UUID?
+  ) -> String {
     let iso = ISO8601DateFormatter()
     iso.formatOptions = [.withInternetDateTime]
 
-    var lines = [header]
-    for transaction in transactions {
-      let date = iso.string(from: transaction.date)
-      let description = csvField(transaction.descriptionText)
-      let merchant = csvField(transaction.merchantName ?? "")
-      let amount = plainDecimal(transaction.amountMinor)
-      let direction = transaction.directionRaw
-      let categoryID = transaction.categoryID?.uuidString ?? ""
-      let accountID = transaction.accountID?.uuidString ?? ""
-      lines.append("\(date),\(description),\(merchant),\(amount),\(direction),\(categoryID),\(accountID)")
-    }
-    return lines.joined(separator: "\n")
+    let isoDate = iso.string(from: date)
+    let description = csvField(descriptionText)
+    let merchant = csvField(merchantName ?? "")
+    let amount = plainDecimal(amountMinor)
+    let categoryIDField = categoryID?.uuidString ?? ""
+    let accountIDField = accountID?.uuidString ?? ""
+    return "\(isoDate),\(description),\(merchant),\(amount),\(directionRaw),\(categoryIDField),\(accountIDField)"
   }
 
   private static func plainDecimal(_ amountMinor: Int) -> String {

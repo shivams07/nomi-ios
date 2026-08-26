@@ -1,6 +1,5 @@
 import Foundation
 import NomiCore
-import SwiftData
 
 /// Seed data shared by every fake store. Realistic enough that Morgan's SwiftUI
 /// previews and UI tests have something to render: 4 categories, 4 accounts (one
@@ -8,7 +7,6 @@ import SwiftData
 /// transactions, at least one merged row and one needsReview row.
 public enum PreviewData {
   public static let categories: [NomiCore.Category] = {
-    InMemoryModelContainer.warmUp()
     let names: [(String, String, Int)] = [
       ("Food & Dining", "fork.knife", 0),
       ("Shopping", "bag", 1),
@@ -16,20 +14,18 @@ public enum PreviewData {
       ("Bills & Utilities", "bolt", 3),
     ]
     return names.enumerated().map { index, entry in
-      InMemoryModelContainer.inserted(NomiCore.Category(
+      NomiCore.Category(
         id: UUID(uuidString: String(format: "00000000-0000-0000-0000-0000000001%02d", index))!,
         name: entry.0,
         symbolName: entry.1,
         paletteSlot: entry.2,
         isSystem: true,
         sortIndex: index
-      ))
+      )
     }
   }()
 
-  public static let accounts: [Account] = {
-    InMemoryModelContainer.warmUp()
-    return [
+  public static let accounts: [Account] = [
     Account(
       id: UUID(uuidString: "00000000-0000-0000-0000-000000000201")!,
       displayName: "HDFC •• 4471",
@@ -66,12 +62,9 @@ public enum PreviewData {
       isArchived: true,
       createdAt: Date(timeIntervalSinceNow: -500 * 86400)
     ),
-    ].map(InMemoryModelContainer.inserted)
-  }()
+  ]
 
-  public static let rules: [Rule] = {
-    InMemoryModelContainer.warmUp()
-    return [
+  public static let rules: [Rule] = [
     Rule(
       id: UUID(uuidString: "00000000-0000-0000-0000-000000000301")!,
       pattern: "*SWIGGY*",
@@ -88,8 +81,7 @@ public enum PreviewData {
       isEnabled: true,
       createdAt: Date(timeIntervalSinceNow: -190 * 86400)
     ),
-    ].map(InMemoryModelContainer.inserted)
-  }()
+  ]
 
   public static let transactions: [Transaction] = makeTransactions()
 
@@ -97,7 +89,6 @@ public enum PreviewData {
   /// derived from the actual seeded transactions so the property holds
   /// regardless of how the merchant rotation lands.
   public static let budgets: [Budget] = {
-    InMemoryModelContainer.warmUp()
     let calendar = Calendar.current
     let now = Date()
     let monthRange = dateRange(for: .month(year: calendar.component(.year, from: now), month: calendar.component(.month, from: now)), calendar: calendar)
@@ -126,11 +117,10 @@ public enum PreviewData {
         isEnabled: true,
         createdAt: Date(timeIntervalSinceNow: -100 * 86400)
       ),
-    ].map(InMemoryModelContainer.inserted)
+    ]
   }()
 
   private static func makeTransactions() -> [Transaction] {
-    InMemoryModelContainer.warmUp()
     var result: [Transaction] = []
     let calendar = Calendar.current
     let now = Date()
@@ -241,6 +231,6 @@ public enum PreviewData {
     )
     result.append(reviewRow)
 
-    return result.map(InMemoryModelContainer.inserted)
+    return result
   }
 }

@@ -1,6 +1,5 @@
 import Foundation
 import NomiCore
-import SwiftData
 
 @MainActor
 public final class FakeBudgetStore: BudgetStore {
@@ -18,9 +17,7 @@ public final class FakeBudgetStore: BudgetStore {
     if let existing = storedBudgets.first(where: { $0.categoryID == categoryID }) {
       existing.amountMinor = amountMinor
     } else {
-      InMemoryModelContainer.warmUp()
       let budget = Budget(categoryID: categoryID, amountMinor: amountMinor)
-      InMemoryModelContainer.inserted(budget)
       storedBudgets.append(budget)
     }
   }

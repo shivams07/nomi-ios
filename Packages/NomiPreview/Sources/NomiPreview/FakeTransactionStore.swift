@@ -1,6 +1,5 @@
 import Foundation
 import NomiCore
-import SwiftData
 
 @MainActor
 public final class FakeTransactionStore: TransactionStore {
@@ -12,7 +11,6 @@ public final class FakeTransactionStore: TransactionStore {
   }
 
   public func add(_ draft: ManualTransactionDraft) throws -> Transaction {
-    InMemoryModelContainer.warmUp()
     let normalized = normalizeDescription(draft.descriptionText)
     let transaction = Transaction(
       date: draft.date,
@@ -31,7 +29,6 @@ public final class FakeTransactionStore: TransactionStore {
         normalizedDescription: normalized
       )
     )
-    InMemoryModelContainer.inserted(transaction)
     transactions.append(transaction)
     lastUsedCategory = draft.categoryID
     return transaction
