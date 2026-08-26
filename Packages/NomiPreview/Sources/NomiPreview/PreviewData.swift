@@ -1,5 +1,6 @@
 import Foundation
 import NomiCore
+import SwiftData
 
 /// Seed data shared by every fake store. Realistic enough that Morgan's SwiftUI
 /// previews and UI tests have something to render: 4 categories, 4 accounts (one
@@ -14,14 +15,14 @@ public enum PreviewData {
       ("Bills & Utilities", "bolt", 3),
     ]
     return names.enumerated().map { index, entry in
-      NomiCore.Category(
+      InMemoryModelContainer.inserted(NomiCore.Category(
         id: UUID(uuidString: String(format: "00000000-0000-0000-0000-0000000001%02d", index))!,
         name: entry.0,
         symbolName: entry.1,
         paletteSlot: entry.2,
         isSystem: true,
         sortIndex: index
-      )
+      ))
     }
   }()
 
@@ -62,7 +63,7 @@ public enum PreviewData {
       isArchived: true,
       createdAt: Date(timeIntervalSinceNow: -500 * 86400)
     ),
-  ]
+  ].map(InMemoryModelContainer.inserted)
 
   public static let rules: [Rule] = [
     Rule(
@@ -81,7 +82,7 @@ public enum PreviewData {
       isEnabled: true,
       createdAt: Date(timeIntervalSinceNow: -190 * 86400)
     ),
-  ]
+  ].map(InMemoryModelContainer.inserted)
 
   public static let transactions: [Transaction] = makeTransactions()
 
@@ -117,7 +118,7 @@ public enum PreviewData {
         isEnabled: true,
         createdAt: Date(timeIntervalSinceNow: -100 * 86400)
       ),
-    ]
+    ].map(InMemoryModelContainer.inserted)
   }()
 
   private static func makeTransactions() -> [Transaction] {
@@ -231,6 +232,6 @@ public enum PreviewData {
     )
     result.append(reviewRow)
 
-    return result
+    return result.map(InMemoryModelContainer.inserted)
   }
 }

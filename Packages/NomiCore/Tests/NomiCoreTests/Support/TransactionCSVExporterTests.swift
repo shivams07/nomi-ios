@@ -4,14 +4,14 @@ import Testing
 
 struct TransactionCSVExporterTests {
   @Test func exportContainsNoGroupingSeparatorOrRupeeSign() {
-    let transaction = Transaction(
+    let transaction = InMemoryModelContainer.inserted(Transaction(
       date: Date(timeIntervalSince1970: 1_700_000_000),
       descriptionText: "SWIGGY ORDER",
       merchantName: "SWIGGY",
       normalizedDescription: "SWIGGY ORDER",
       amountMinor: 123_456,
       directionRaw: Direction.debit.rawValue
-    )
+    ))
     let csv = TransactionCSVExporter.export([transaction])
     #expect(!csv.contains("₹"))
     #expect(!csv.contains("1,234"))
@@ -27,8 +27,8 @@ struct TransactionCSVExporterTests {
 
   @Test func exportRoundTripsAmountsAcrossMultipleRows() {
     let transactions = [
-      Transaction(date: Date(), descriptionText: "A", normalizedDescription: "A", amountMinor: 100),
-      Transaction(date: Date(), descriptionText: "B", normalizedDescription: "B", amountMinor: 50_000),
+      InMemoryModelContainer.inserted(Transaction(date: Date(), descriptionText: "A", normalizedDescription: "A", amountMinor: 100)),
+      InMemoryModelContainer.inserted(Transaction(date: Date(), descriptionText: "B", normalizedDescription: "B", amountMinor: 50_000)),
     ]
     let csv = TransactionCSVExporter.export(transactions)
     let dataLines = csv.split(separator: "\n").dropFirst()

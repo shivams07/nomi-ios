@@ -1,5 +1,6 @@
 import Foundation
 import NomiCore
+import SwiftData
 
 @MainActor
 public final class FakeTransactionStore: TransactionStore {
@@ -29,6 +30,7 @@ public final class FakeTransactionStore: TransactionStore {
         normalizedDescription: normalized
       )
     )
+    InMemoryModelContainer.context.insert(transaction)
     transactions.append(transaction)
     lastUsedCategory = draft.categoryID
     return transaction
