@@ -5,13 +5,13 @@ import SwiftUI
 /// A single ledger row. **Never carries `NomiGlow`** — it lives inside a
 /// scrolling list, which is exactly the container that modifier must not enter.
 public struct TransactionRow: View {
-  public let transaction: Transaction
+  public let transaction: NomiCore.Transaction
   public let categoryName: String?
   public let accountName: String?
 
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-  public init(transaction: Transaction, categoryName: String?, accountName: String?) {
+  public init(transaction: NomiCore.Transaction, categoryName: String?, accountName: String?) {
     self.transaction = transaction
     self.categoryName = categoryName
     self.accountName = accountName
@@ -116,24 +116,30 @@ public struct TransactionRow: View {
 }
 
 #Preview("Default") {
-  let ordinary = PreviewData.transactions.first { $0.mergedCount == 1 && !$0.needsReview }!
-  return TransactionRow(transaction: ordinary, categoryName: "Food & Dining", accountName: "HDFC •• 4471")
-    .padding()
-    .background(NomiColor.surfaceRaised)
-    .preferredColorScheme(.dark)
+  TransactionRow(
+    transaction: PreviewData.transactions.first { $0.mergedCount == 1 && !$0.needsReview }!,
+    categoryName: "Food & Dining",
+    accountName: "HDFC •• 4471"
+  )
+  .padding()
+  .background(NomiColor.surfaceRaised)
+  .preferredColorScheme(.dark)
 }
 
 #Preview("Uncategorized-only") {
-  let uncategorized = PreviewData.transactions.first { $0.needsReview }!
-  return TransactionRow(transaction: uncategorized, categoryName: nil, accountName: nil)
-    .padding()
-    .background(NomiColor.surfaceRaised)
-    .preferredColorScheme(.dark)
+  TransactionRow(
+    transaction: PreviewData.transactions.first { $0.needsReview }!,
+    categoryName: nil,
+    accountName: nil
+  )
+  .padding()
+  .background(NomiColor.surfaceRaised)
+  .preferredColorScheme(.dark)
 }
 
 #Preview("Merged row — flag and both sources") {
   let merged = PreviewData.transactions.first { $0.mergedCount > 1 }!
-  return VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+  VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
     TransactionRow(transaction: merged, categoryName: "Food & Dining", accountName: "HDFC •• 4471")
     Text(merged.sourceRefs.map { $0.source.rawValue }.joined(separator: " + "))
       .nomiTextStyle(.caption)
@@ -145,10 +151,13 @@ public struct TransactionRow: View {
 }
 
 #Preview("Accessibility 3") {
-  let ordinary = PreviewData.transactions.first!
-  return TransactionRow(transaction: ordinary, categoryName: "Food & Dining", accountName: "HDFC •• 4471")
-    .padding()
-    .background(NomiColor.surfaceRaised)
-    .environment(\.dynamicTypeSize, .accessibility3)
-    .preferredColorScheme(.dark)
+  TransactionRow(
+    transaction: PreviewData.transactions.first!,
+    categoryName: "Food & Dining",
+    accountName: "HDFC •• 4471"
+  )
+  .padding()
+  .background(NomiColor.surfaceRaised)
+  .environment(\.dynamicTypeSize, .accessibility3)
+  .preferredColorScheme(.dark)
 }
