@@ -31,7 +31,7 @@ struct TransactionCSVExporterTests {
       TransactionCSVExporter.row(date: Date(), descriptionText: "B", merchantName: nil, amountMinor: 50_000, directionRaw: Direction.credit.rawValue, categoryID: nil, accountID: nil),
     ]
     for row in rows {
-      let fields = row.split(separator: ",")
+      let fields = row.split(separator: ",", omittingEmptySubsequences: false)
       let amountField = String(fields[3])
       #expect(Decimal(string: amountField) != nil)
     }
