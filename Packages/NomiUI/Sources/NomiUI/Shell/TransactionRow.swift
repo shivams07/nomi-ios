@@ -22,19 +22,26 @@ public struct TransactionRow: View {
   }
 
   private var amountText: String {
-    let sign = isCredit ? "+" : ""
-    return sign + NomiFormatters.amountString(minor: transaction.amountMinor)
+    Self.amountText(minor: transaction.amountMinor, direction: transaction.direction)
   }
 
   private var subtitle: String {
-    var parts: [String] = []
-    parts.append(categoryName ?? "Uncategorized")
-    parts.append(accountName ?? "Unassigned")
-    return parts.joined(separator: " · ")
+    Self.subtitle(categoryName: categoryName, accountName: accountName)
   }
 
-  var subtitleForTesting: String { subtitle }
-  var amountTextForTesting: String { amountText }
+  /// Pure — no `@Model` access — so it is directly unit-testable. `swift test`
+  /// on this package's CI runner cannot construct `@Model` instances
+  /// headlessly (see `InMemoryModelContainer`'s note in NomiCore), so display
+  /// logic that needs coverage lives here rather than on the `Transaction`-typed properties above.
+  static func subtitle(categoryName: String?, accountName: String?) -> String {
+    [categoryName ?? "Uncategorized", accountName ?? "Unassigned"].joined(separator: " · ")
+  }
+
+  /// Pure — see `subtitle(categoryName:accountName:)`.
+  static func amountText(minor: Int, direction: Direction) -> String {
+    let sign = direction == .credit ? "+" : ""
+    return sign + NomiFormatters.amountString(minor: minor)
+  }
 
   public var body: some View {
     // At accessibility Dynamic Type sizes the amount moves below the merchant

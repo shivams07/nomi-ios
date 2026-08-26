@@ -2,28 +2,29 @@ import NomiCore
 import XCTest
 @testable import NomiUI
 
+/// Exercises `TransactionRow`'s pure display-logic helpers only. This package's
+/// CI runner cannot construct `@Model` instances headlessly (SwiftData's
+/// bundle-name resolution fails outside an app bundle — see
+/// `InMemoryModelContainer`'s note in NomiCore), so these tests never build a
+/// `Transaction`.
 final class TransactionRowTests: XCTestCase {
   func testNilAccountRendersUnassigned() {
-    let transaction = Transaction(descriptionText: "TEST", amountMinor: 100, accountID: nil)
-    let row = TransactionRow(transaction: transaction, categoryName: "Food", accountName: nil)
-    XCTAssertTrue(row.subtitleForTesting.contains("Unassigned"))
+    let subtitle = TransactionRow.subtitle(categoryName: "Food", accountName: nil)
+    XCTAssertTrue(subtitle.contains("Unassigned"))
   }
 
   func testNilCategoryRendersUncategorized() {
-    let transaction = Transaction(descriptionText: "TEST", amountMinor: 100)
-    let row = TransactionRow(transaction: transaction, categoryName: nil, accountName: "HDFC")
-    XCTAssertTrue(row.subtitleForTesting.contains("Uncategorized"))
+    let subtitle = TransactionRow.subtitle(categoryName: nil, accountName: "HDFC")
+    XCTAssertTrue(subtitle.contains("Uncategorized"))
   }
 
   func testCreditGetsPlusPrefix() {
-    let transaction = Transaction(descriptionText: "TEST", amountMinor: 100, directionRaw: Direction.credit.rawValue)
-    let row = TransactionRow(transaction: transaction, categoryName: nil, accountName: nil)
-    XCTAssertTrue(row.amountTextForTesting.hasPrefix("+"))
+    let text = TransactionRow.amountText(minor: 100, direction: .credit)
+    XCTAssertTrue(text.hasPrefix("+"))
   }
 
   func testDebitHasNoSignPrefix() {
-    let transaction = Transaction(descriptionText: "TEST", amountMinor: 100, directionRaw: Direction.debit.rawValue)
-    let row = TransactionRow(transaction: transaction, categoryName: nil, accountName: nil)
-    XCTAssertFalse(row.amountTextForTesting.hasPrefix("+"))
+    let text = TransactionRow.amountText(minor: 100, direction: .debit)
+    XCTAssertFalse(text.hasPrefix("+"))
   }
 }
