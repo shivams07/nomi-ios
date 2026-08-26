@@ -7,8 +7,10 @@ import XCTest
 /// "Concurrent writes from mail sync and file import must not race."
 ///
 /// The race is a check-then-act: two callers both read the merge candidates,
-/// both find nothing, and both insert. `IngestPipeline` being an actor is what
-/// closes it — the read and the write are in one non-reentrant span per call.
+/// both find nothing, and both insert. `actor` alone does NOT close it — Swift
+/// actors are reentrant, and the first version of this unit failed the second
+/// test below on CI with a mergedCount of 3 out of 12. What closes it is the
+/// mutex `IngestPipeline` holds across the whole read-decide-write span.
 final class SerializedWriteTests: XCTestCase {
 
   func testAMailSyncAndAFileImportForTheSameTransactionProduceOneRow() async throws {

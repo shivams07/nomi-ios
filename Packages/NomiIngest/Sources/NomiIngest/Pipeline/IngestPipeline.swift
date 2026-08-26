@@ -4,9 +4,15 @@ import NomiCore
 /// The single write path. Every `Transaction` in this app is created, merged or
 /// recategorized here and nowhere else.
 ///
-/// `actor` is the serialization: a mail sync and a file import calling `ingest`
-/// concurrently are queued, not interleaved, so two drafts for the same
-/// transaction cannot both miss the dedupe check and both create a row.
+/// Serialization is the point, and `actor` alone does not provide it: Swift
+/// actors are *reentrant*, so a second `ingest` can start while the first is
+/// suspended on a store `await` — both read the merge candidates, both find
+/// nothing, both insert. That is a check-then-act race and it is exactly what
+/// the design forbids between mail sync and file import.
+///
+/// So every public entry point takes an in-actor mutex and holds it across the
+/// whole read-decide-write span. `SerializedWriteTests` is the regression: it
+/// failed on the first CI run against a plain reentrant actor.
 ///
 /// The design says "one ModelActor". It is split in two here — this actor holds
 /// the decisions, `SwiftDataPipelineStore` (a `@ModelActor`) holds the
@@ -19,6 +25,8 @@ public actor IngestPipeline {
   private let calendar: Calendar
   private let now: @Sendable () -> Date
   private var observer: (any PostCommitObserver)?
+  private var isBusy = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
 
   public init(
     store: any PipelineStore,
@@ -47,7 +55,12 @@ public actor IngestPipeline {
   @discardableResult
   public func ingest(_ drafts: [TransactionDraft]) async throws -> IngestBatchResult {
     guard !drafts.isEmpty else { return .empty }
+    await acquire()
+    defer { release() }
+    return try await performIngest(drafts)
+  }
 
+  private func performIngest(_ drafts: [TransactionDraft]) async throws -> IngestBatchResult {
     let rules = try await store.rules()
     let timestamp = now()
 
@@ -135,6 +148,12 @@ public actor IngestPipeline {
   /// without a re-import.
   @discardableResult
   public func reapplyRules() async throws -> RuleApplyResult {
+    await acquire()
+    defer { release() }
+    return try await performReapplyRules()
+  }
+
+  private func performReapplyRules() async throws -> RuleApplyResult {
     let rules = try await store.rules()
     let rows = try await store.rulePassCandidates()
     let timestamp = now()
@@ -166,6 +185,12 @@ public actor IngestPipeline {
   /// it pointed at this rule; `categoryID` and `categorySource` are untouched.
   @discardableResult
   public func ruleDeleted(_ ruleID: UUID) async throws -> Int {
+    await acquire()
+    defer { release() }
+    return try await performRuleDeleted(ruleID)
+  }
+
+  private func performRuleDeleted(_ ruleID: UUID) async throws -> Int {
     let rows = try await store.rows(appliedRuleID: ruleID)
     let timestamp = now()
 
@@ -190,6 +215,12 @@ public actor IngestPipeline {
   /// not defensive (R5).
   @discardableResult
   public func reconcile() async throws -> ReconcileResult {
+    await acquire()
+    defer { release() }
+    return try await performReconcile()
+  }
+
+  private func performReconcile() async throws -> ReconcileResult {
     let groups = try await store.duplicateGroups()
     guard !groups.isEmpty else { return .empty }
 
@@ -222,6 +253,27 @@ public actor IngestPipeline {
     guard !plan.isEmpty else { return }
     try await store.apply(plan)
     await observer?.didCommit(affectedCategoryIDs: plan.affectedCategoryIDs)
+  }
+
+  // MARK: - Exclusive access
+  //
+  // An in-actor mutex. Actor isolation makes `isBusy` and `waiters` safe to
+  // touch; what it does not do is keep one batch's read and write adjacent,
+  // and that is what this restores.
+
+  private func acquire() async {
+    while isBusy {
+      await withCheckedContinuation { continuation in
+        waiters.append(continuation)
+      }
+    }
+    isBusy = true
+  }
+
+  private func release() {
+    isBusy = false
+    guard !waiters.isEmpty else { return }
+    waiters.removeFirst().resume()
   }
 
   private func note(_ set: inout Set<UUID>, _ ids: UUID?...) {
