@@ -20,7 +20,13 @@ public enum InMemoryModelContainer {
       AccountBinding.self,
       ColumnMappingRecord.self,
     ])
-    let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+    // `isStoredInMemoryOnly: true` still resolves a store identifier through
+    // `Bundle.main`, which doesn't exist for a `swift test` command-line
+    // process — it crashes with "Unable to determine Bundle Name". An
+    // explicit file URL sidesteps that lookup entirely.
+    let url = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("NomiCorePreview-\(UUID().uuidString).sqlite")
+    let configuration = ModelConfiguration(url: url)
     return try! ModelContainer(for: schema, configurations: [configuration])
   }()
 
