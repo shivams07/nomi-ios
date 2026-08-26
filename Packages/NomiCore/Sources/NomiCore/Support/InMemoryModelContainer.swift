@@ -20,13 +20,11 @@ public enum InMemoryModelContainer {
       AccountBinding.self,
       ColumnMappingRecord.self,
     ])
-    // `isStoredInMemoryOnly: true` still resolves a store identifier through
-    // `Bundle.main`, which doesn't exist for a `swift test` command-line
-    // process — it crashes with "Unable to determine Bundle Name". An
-    // explicit file URL sidesteps that lookup entirely.
-    let url = URL(fileURLWithPath: NSTemporaryDirectory())
-      .appendingPathComponent("NomiCorePreview-\(UUID().uuidString).sqlite")
-    let configuration = ModelConfiguration(url: url)
+    // The default `cloudKitDatabase: .automatic` resolves an iCloud
+    // container identifier from `Bundle.main`, which doesn't exist for a
+    // `swift test` command-line process — it crashes with "Unable to
+    // determine Bundle Name". Explicitly opting out sidesteps that lookup.
+    let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
     return try! ModelContainer(for: schema, configurations: [configuration])
   }()
 
