@@ -15,6 +15,12 @@ let package = Package(
     .target(
       name: "NomiUI",
       dependencies: ["NomiCore", "NomiPreview"],
+      resources: [
+        .copy("Resources/Fonts/Montserrat-Medium.otf"),
+        .copy("Resources/Fonts/Montserrat-SemiBold.otf"),
+        .copy("Resources/Fonts/Montserrat-Bold.otf"),
+        .copy("Resources/Fonts/Inter-Regular.otf"),
+      ],
       swiftSettings: [.enableExperimentalFeature("StrictConcurrency=targeted")]
     ),
     .testTarget(
