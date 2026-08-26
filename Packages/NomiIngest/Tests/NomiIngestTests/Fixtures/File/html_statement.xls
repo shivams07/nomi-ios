@@ -1,0 +1,13 @@
+<html>
+<head><title>Statement</title></head>
+<body>
+<table border="1">
+<tr><td>Bank Statement</td></tr>
+</table>
+<table border="1">
+<tr><th>Date</th><th>Description</th><th>Chq/Ref No</th><th>Value Date</th><th>Debit</th><th>Credit</th><th>Balance</th></tr>
+<tr><td>01-04-2026</td><td>UPI-PAYTM-500987654321</td><td>KKBK0N9001</td><td>01-04-2026</td><td>320.00</td><td></td><td>12500.00</td></tr>
+<tr><td>02-04-2026</td><td>REFUND CREDIT</td><td>KKBK0N9002</td><td>02-04-2026</td><td></td><td>200.00</td><td>12700.00</td></tr>
+</table>
+</body>
+</html>
