@@ -13,6 +13,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: List available Xcode versions
+        run: ls /Applications | grep -i Xcode
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
