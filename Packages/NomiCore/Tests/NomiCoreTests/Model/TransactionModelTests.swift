@@ -3,6 +3,8 @@ import Testing
 @testable import NomiCore
 
 struct TransactionModelTests {
+  init() { InMemoryModelContainer.warmUp() }
+
   @Test func directionComputedPropertyRoundTrips() {
     let transaction = InMemoryModelContainer.inserted(Transaction())
     transaction.direction = .credit

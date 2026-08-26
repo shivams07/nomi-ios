@@ -14,6 +14,7 @@ public final class FakeCategoryStore: CategoryStore {
   }
 
   public func create(name: String, symbolName: String, paletteSlot: Int) throws -> NomiCore.Category {
+    InMemoryModelContainer.warmUp()
     let category = NomiCore.Category(name: name, symbolName: symbolName, paletteSlot: paletteSlot, sortIndex: categories.count)
     InMemoryModelContainer.inserted(category)
     categories.append(category)

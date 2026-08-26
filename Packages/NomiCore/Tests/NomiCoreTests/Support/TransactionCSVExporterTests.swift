@@ -3,6 +3,8 @@ import Testing
 @testable import NomiCore
 
 struct TransactionCSVExporterTests {
+  init() { InMemoryModelContainer.warmUp() }
+
   @Test func exportContainsNoGroupingSeparatorOrRupeeSign() {
     let transaction = InMemoryModelContainer.inserted(Transaction(
       date: Date(timeIntervalSince1970: 1_700_000_000),

@@ -8,6 +8,7 @@ import SwiftData
 /// transactions, at least one merged row and one needsReview row.
 public enum PreviewData {
   public static let categories: [NomiCore.Category] = {
+    InMemoryModelContainer.warmUp()
     let names: [(String, String, Int)] = [
       ("Food & Dining", "fork.knife", 0),
       ("Shopping", "bag", 1),
@@ -26,7 +27,9 @@ public enum PreviewData {
     }
   }()
 
-  public static let accounts: [Account] = [
+  public static let accounts: [Account] = {
+    InMemoryModelContainer.warmUp()
+    return [
     Account(
       id: UUID(uuidString: "00000000-0000-0000-0000-000000000201")!,
       displayName: "HDFC •• 4471",
@@ -63,9 +66,12 @@ public enum PreviewData {
       isArchived: true,
       createdAt: Date(timeIntervalSinceNow: -500 * 86400)
     ),
-  ].map(InMemoryModelContainer.inserted)
+    ].map(InMemoryModelContainer.inserted)
+  }()
 
-  public static let rules: [Rule] = [
+  public static let rules: [Rule] = {
+    InMemoryModelContainer.warmUp()
+    return [
     Rule(
       id: UUID(uuidString: "00000000-0000-0000-0000-000000000301")!,
       pattern: "*SWIGGY*",
@@ -82,7 +88,8 @@ public enum PreviewData {
       isEnabled: true,
       createdAt: Date(timeIntervalSinceNow: -190 * 86400)
     ),
-  ].map(InMemoryModelContainer.inserted)
+    ].map(InMemoryModelContainer.inserted)
+  }()
 
   public static let transactions: [Transaction] = makeTransactions()
 
@@ -90,6 +97,7 @@ public enum PreviewData {
   /// derived from the actual seeded transactions so the property holds
   /// regardless of how the merchant rotation lands.
   public static let budgets: [Budget] = {
+    InMemoryModelContainer.warmUp()
     let calendar = Calendar.current
     let now = Date()
     let monthRange = dateRange(for: .month(year: calendar.component(.year, from: now), month: calendar.component(.month, from: now)), calendar: calendar)
@@ -122,6 +130,7 @@ public enum PreviewData {
   }()
 
   private static func makeTransactions() -> [Transaction] {
+    InMemoryModelContainer.warmUp()
     var result: [Transaction] = []
     let calendar = Calendar.current
     let now = Date()
