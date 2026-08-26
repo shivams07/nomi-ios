@@ -15,7 +15,7 @@ public final class FakeRuleStore: RuleStore {
   @discardableResult
   public func create(pattern: String, categoryID: UUID) throws -> RuleApplyResult {
     let rule = Rule(pattern: pattern, categoryID: categoryID, priority: rules.count)
-    InMemoryModelContainer.context.insert(rule)
+    InMemoryModelContainer.inserted(rule)
     rules.append(rule)
     let matched = matchPool.filter { globMatches(pattern: pattern, value: $0) }.count
     return RuleApplyResult(matched: matched, recategorized: matched)

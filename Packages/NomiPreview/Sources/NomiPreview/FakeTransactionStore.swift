@@ -30,7 +30,7 @@ public final class FakeTransactionStore: TransactionStore {
         normalizedDescription: normalized
       )
     )
-    InMemoryModelContainer.context.insert(transaction)
+    InMemoryModelContainer.inserted(transaction)
     transactions.append(transaction)
     lastUsedCategory = draft.categoryID
     return transaction

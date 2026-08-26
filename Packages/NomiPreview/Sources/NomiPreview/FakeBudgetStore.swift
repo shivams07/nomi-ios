@@ -19,7 +19,7 @@ public final class FakeBudgetStore: BudgetStore {
       existing.amountMinor = amountMinor
     } else {
       let budget = Budget(categoryID: categoryID, amountMinor: amountMinor)
-      InMemoryModelContainer.context.insert(budget)
+      InMemoryModelContainer.inserted(budget)
       storedBudgets.append(budget)
     }
   }
