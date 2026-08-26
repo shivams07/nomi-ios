@@ -95,9 +95,9 @@ public enum TabularFigures {
 
   public static func font(name: String, size: CGFloat) -> Font {
     #if canImport(UIKit)
-    Font(uiFont: platformFont(name: name, size: size))
+    Font(platformFont(name: name, size: size) as UIFont)
     #elseif canImport(AppKit)
-    Font(nsFont: platformFont(name: name, size: size))
+    Font(platformFont(name: name, size: size) as NSFont)
     #endif
   }
 }
