@@ -12,7 +12,7 @@ protocol DatedRow {
   var date: Date { get }
 }
 
-extension Transaction: DatedRow {}
+extension NomiCore.Transaction: DatedRow {}
 
 enum RecentRows {
   static func mostRecent<T: DatedRow>(_ rows: [T], limit: Int) -> [T] {
@@ -24,13 +24,13 @@ enum RecentRows {
 /// Distinct AC from `TopMerchantsCard` — a list of individual rows, not a
 /// rollup. Merchant labels use `merchantName ?? descriptionText` (§2.4).
 public struct RecentTransactionsCard: View {
-  public let transactions: [Transaction]
+  public let transactions: [NomiCore.Transaction]
 
-  public init(transactions: [Transaction]) {
+  public init(transactions: [NomiCore.Transaction]) {
     self.transactions = transactions
   }
 
-  private var recent: [Transaction] {
+  private var recent: [NomiCore.Transaction] {
     RecentRows.mostRecent(transactions, limit: 5)
   }
 
@@ -55,7 +55,7 @@ public struct RecentTransactionsCard: View {
     }
   }
 
-  private func row(for transaction: Transaction) -> some View {
+  private func row(for transaction: NomiCore.Transaction) -> some View {
     HStack(spacing: NomiSpacing.xs) {
       VStack(alignment: .leading, spacing: 2) {
         Text(transaction.merchantName ?? transaction.descriptionText)

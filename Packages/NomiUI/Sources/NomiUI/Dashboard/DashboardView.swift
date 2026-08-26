@@ -56,7 +56,7 @@ public struct DashboardView: View {
     return (try? insightsStore.budgetProgress(year: year, month: month)) ?? []
   }
 
-  private var recentTransactions: [Transaction] {
+  private var recentTransactions: [NomiCore.Transaction] {
     (try? insightsStore.transactions(in: .allTime)) ?? []
   }
 

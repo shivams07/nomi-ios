@@ -150,23 +150,8 @@ public struct HeroTotalCard: View {
   .preferredColorScheme(.dark)
 }
 
-#Preview("Hero total — reduce motion, dark") {
-  HeroTotalCard(insights: PeriodInsights(
-    period: .month(year: 2026, month: 8),
-    debitMinor: 42_318_00,
-    creditMinor: 60_000_00,
-    netMinor: 17_682_00,
-    priorDebitMinor: 38_000_00,
-    priorCreditMinor: 55_000_00,
-    transactionCount: 74,
-    byDay: [],
-    byCategory: [],
-    topMerchants: [],
-    needsReviewCount: 0,
-    uncategorizedCount: 0
-  ))
-  .padding()
-  .background(NomiColor.surfaceCanvas)
-  .environment(\.accessibilityReduceMotion, true)
-  .preferredColorScheme(.dark)
-}
+// No reduce-motion #Preview: EnvironmentValues.accessibilityReduceMotion is a
+// read-only reflection of the system setting on this SDK (Xcode 16.2) — it
+// cannot be overridden via `.environment(_:_:)`, only observed. The actual
+// rule ("reduce-motion renders final state with no count-up") is covered by
+// `HeroCountUp.initialDisplayValue` in HeroTotalCardTests instead.
