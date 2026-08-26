@@ -30,12 +30,20 @@ enum XLSXParser {
       var byColumn: [Int: String] = [:]
       var maxColumn = 0
       for cell in row.cells {
-        let columnIndex = cell.reference.column.index - 1
+        let columnIndex = Self.columnIndex(cell.reference.column.value)
         byColumn[columnIndex] = cell.stringValue(sharedStrings) ?? ""
         maxColumn = max(maxColumn, columnIndex)
       }
       return (0...maxColumn).map { byColumn[$0] ?? "" }
     }
     return grid
+  }
+
+  /// "A" -> 0, "B" -> 1, ..., "Z" -> 25, "AA" -> 26, ... `ColumnReference`
+  /// only exposes its letters (`value`) publicly, not the numeric index.
+  private static func columnIndex(_ letters: String) -> Int {
+    letters.unicodeScalars.reduce(0) { acc, scalar in
+      acc * 26 + Int(scalar.value - UnicodeScalar("A").value + 1)
+    } - 1
   }
 }
