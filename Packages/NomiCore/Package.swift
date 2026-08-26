@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
   name: "NomiCore",
-  platforms: [.iOS(.v17), .macOS(.v14)],
+  platforms: [.iOS(.v17), .macOS(.v15)],
   products: [
     .library(name: "NomiCore", targets: ["NomiCore"])
   ],
