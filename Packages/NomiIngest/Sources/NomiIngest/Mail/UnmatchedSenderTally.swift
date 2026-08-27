@@ -23,6 +23,18 @@ public struct UnmatchedSenderTally: Sendable, Equatable {
     counts[domain, default: 0] += 1
   }
 
+  /// Folds another tally's counts in.
+  ///
+  /// A backfill classifies one batch at a time (§2.17), so the run's tally is
+  /// the sum of ~60 of these. It has to merge at the **counts**, not at `top()`:
+  /// a domain sitting eleventh in every batch and first overall would never
+  /// appear if the batches were reduced through their own top-10 lists first.
+  public mutating func merge(_ other: UnmatchedSenderTally) {
+    for (domain, count) in other.counts {
+      counts[domain, default: 0] += count
+    }
+  }
+
   /// Descending by count, max 10 (§2.5.1). Ties broken alphabetically so two
   /// syncs over the same mail report the same order — a report that reshuffles
   /// on every run is a report nobody trusts.

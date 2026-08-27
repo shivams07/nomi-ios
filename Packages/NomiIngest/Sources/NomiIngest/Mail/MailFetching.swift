@@ -37,8 +37,27 @@ public protocol MailFetching: Sendable {
   /// `SELECT` (or `EXAMINE`, which is better here — read-only by construction).
   func selectMailbox(_ name: String) async throws -> MailboxState
 
-  /// `UID SEARCH SINCE <date>`. Used by the 6-month backfill.
+  /// `UID SEARCH SINCE <date>`. Used only by the full rescan a UIDVALIDITY
+  /// change forces — the backfill windows its search instead, below.
   func uids(since date: Date, in mailbox: String) async throws -> [UInt32]
+
+  /// `UID SEARCH SINCE <d1> BEFORE <d2>` — one window of the backfill's walk
+  /// (§2.17).
+  ///
+  /// `SINCE` is inclusive, `BEFORE` is exclusive, and both are **date-granular**:
+  /// IMAP compares against the message's INTERNALDATE with the time of day
+  /// discarded, in the *server's* timezone, not the device's. Implementations
+  /// must format the dates as `dd-MMM-yyyy` with an English locale — `05-Aug-2026`
+  /// — because the server parses that literally and a device set to Hindi or a
+  /// Buddhist calendar would otherwise emit something it rejects.
+  ///
+  /// The engine walks a month at a time so the response line stays bounded: the
+  /// whole result of a SEARCH is one line with no CRLF until the end, and six
+  /// months of a busy mailbox is ~120 KB of UIDs on it.
+  ///
+  /// **The engine deduplicates, so overlapping windows are safe and a gap is
+  /// not.** Do not "tighten" an implementation by shifting a boundary a day.
+  func uids(since: Date, before: Date, in mailbox: String) async throws -> [UInt32]
 
   /// `UID SEARCH UID <uid+1>:*`. Used by incremental sync.
   func uids(after uid: UInt32, in mailbox: String) async throws -> [UInt32]
@@ -55,6 +74,13 @@ public protocol MailFetching: Sendable {
   /// a fetch AND an ingest both succeed, so the same UIDs are simply re-fetched
   /// next sync, and re-ingesting a `SourceRef` the pipeline already holds is a
   /// total no-op. Asserted in `MailSyncEngineTests`.
+  ///
+  /// **The engine decides the batch size; the transport answers one command at
+  /// a time.** `uids` arrives already bounded — `MailSyncEngine.fetchBatchSize`
+  /// of them — so an implementation should issue one `UID FETCH` for the set it
+  /// was given and must not re-chunk, coalesce or prefetch. The whole point of
+  /// the bound is that only one batch of message bodies exists at once (§2.17);
+  /// a transport that helpfully reads ahead puts it straight back.
   func fetch(uids: [UInt32], in mailbox: String) async throws -> [MailMessage]
 }
 
