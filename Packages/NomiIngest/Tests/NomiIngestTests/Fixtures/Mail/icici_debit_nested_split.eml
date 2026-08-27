@@ -1,0 +1,9 @@
+From: ICICI Bank Alerts <credit_cards@icicibank.com>
+To: <user@example.com>
+Subject: Transaction alert on ICICI Bank Credit Card
+Date: Mon, 17 Aug 2026 13:22:10 +0530
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>td{padding:4px}</style></head><body><table width="100%"><tr><td align="center"><p>Dear Customer,</p><table width="100%"><tr><td><table width="600"><tr><td><table><tr><td>Your ICICI Bank Card XX8812 has been debited with</td><td nowrap>INR</td><td nowrap>2,349</td><td nowrap>. 75</td></tr><tr><td colspan="4">at AMAZON INDIA on 17-Aug-2026</td></tr></table></td></tr></table></td></tr></table><p></p></td></tr></table></body></html>

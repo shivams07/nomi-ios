@@ -1,0 +1,9 @@
+From: Kotak Bank Alerts <alerts@kotak.com>
+To: <user@example.com>
+Subject: Transaction alert: amount spent on your Kotak Card
+Date: Mon, 24 Aug 2026 12:48:19 +0530
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>td{padding:4px}</style></head><body><table width="100%"><tr><td align="center"><p>Dear Customer,</p><table cellpadding="6" cellspacing="0" border="0"><tr><td style="font-family:Arial;color:#555">Amount</td><td style="font-family:Arial;font-weight:bold">Rs.1,999.00 spent</td></tr><tr><td style="font-family:Arial;color:#555">Card</td><td style="font-family:Arial;font-weight:bold">Card XX5540</td></tr><tr><td style="font-family:Arial;color:#555">Date</td><td style="font-family:Arial;font-weight:bold">on 24-08-2026</td></tr><tr><td style="font-family:Arial;color:#555">Merchant</td><td style="font-family:Arial;font-weight:bold">at BLINKIT</td></tr></table><p></p></td></tr></table></body></html>

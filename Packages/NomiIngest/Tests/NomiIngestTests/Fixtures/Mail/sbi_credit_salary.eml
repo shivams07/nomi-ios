@@ -1,0 +1,9 @@
+From: SBI Alerts <alerts@sbi.co.in>
+To: <user@example.com>
+Subject: Credit Transaction Alert
+Date: Fri, 31 Jul 2026 09:12:00 +0530
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>td{padding:4px}</style></head><body><table width="100%"><tr><td align="center"><p>Dear Customer,</p><table cellpadding="6" cellspacing="0" border="0"><tr><td style="font-family:Arial;color:#555">Account</td><td style="font-family:Arial;font-weight:bold">A/c No. XXXXX4471</td></tr><tr><td style="font-family:Arial;color:#555">Amount</td><td style="font-family:Arial;font-weight:bold">credit by transfer of Rs 85,000.00</td></tr><tr><td style="font-family:Arial;color:#555">Date</td><td style="font-family:Arial;font-weight:bold">on 31/07/2026</td></tr><tr><td style="font-family:Arial;color:#555">Reference</td><td style="font-family:Arial;font-weight:bold">NEFT/SALARY/ACME TECHNOLOGIES</td></tr></table><p></p></td></tr></table></body></html>

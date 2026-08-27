@@ -1,0 +1,9 @@
+From: SBI Alerts <alerts@sbi.co.in>
+To: <user@example.com>
+Subject: Transaction Alert from State Bank of India
+Date: Wed, 12 Aug 2026 11:04:18 +0530
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>td{padding:4px}</style></head><body><table width="100%"><tr><td align="center"><p>Dear Customer,</p><table cellpadding="6" cellspacing="0" border="0"><tr><td style="font-family:Arial;color:#555">Account</td><td style="font-family:Arial;font-weight:bold">A/c No. XXXXX4471</td></tr><tr><td style="font-family:Arial;color:#555">Amount</td><td style="font-family:Arial;font-weight:bold">debit by transfer of Rs 3,000.00</td></tr><tr><td style="font-family:Arial;color:#555">Date</td><td style="font-family:Arial;font-weight:bold">on 12/08/2026</td></tr><tr><td style="font-family:Arial;color:#555">Reference</td><td style="font-family:Arial;font-weight:bold">UPI/DR/622104477311/SWIGGY/YESB/swiggy@ybl</td></tr></table><p>Please do not share your OTP with anyone.</p></td></tr></table></body></html>

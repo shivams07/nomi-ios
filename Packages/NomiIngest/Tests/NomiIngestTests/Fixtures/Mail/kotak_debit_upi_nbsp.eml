@@ -1,0 +1,9 @@
+From: Kotak Bank Alerts <alerts@kotak.com>
+To: <user@example.com>
+Subject: UPI transaction alert
+Date: Tue, 25 Aug 2026 18:11:07 +0530
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>td{padding:4px}</style></head><body><table width="100%"><tr><td align="center"><p>Dear Customer,</p><table><tr><td>Amount</td><td>Rs.&nbsp;750.25&nbsp;has been debited</td></tr><tr><td>A/c</td><td>a/c XX5540</td></tr><tr><td>Date</td><td>on 25-08-2026</td></tr><tr><td>Ref</td><td>UPI-ZOMATO-zomato@paytm-9931204411</td></tr></table><p></p></td></tr></table></body></html>

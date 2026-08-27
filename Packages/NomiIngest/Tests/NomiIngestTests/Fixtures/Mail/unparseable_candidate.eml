@@ -1,0 +1,9 @@
+From: HDFC Bank InstaAlerts <alerts@hdfcbank.net>
+To: <user@example.com>
+Subject: Transaction alert: Rs.1,250.00 debited from your account
+Date: Thu, 27 Aug 2026 09:00:00 +0530
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>td{padding:4px}</style></head><body><table width="100%"><tr><td align="center"><p>Dear Customer,</p><table><tr><td>This transaction alert could not be displayed in your mail client.</td></tr><tr><td>Please log in to HDFC Bank NetBanking to view the details.</td></tr></table><p>Not you? Call 18002026161.</p></td></tr></table></body></html>
