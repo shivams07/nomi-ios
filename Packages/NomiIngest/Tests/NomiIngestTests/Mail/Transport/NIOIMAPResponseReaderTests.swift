@@ -144,23 +144,100 @@ final class NIOIMAPResponseReaderTests: XCTestCase {
     }
   }
 
-  /// The library default is 4096 bytes, which is smaller than an ordinary HTML
-  /// bank alert. Left alone it would fail on the largest messages only — the
-  /// failure a fixture is least likely to catch.
-  func testABodyLargerThanTheLibraryDefaultLiteralLimitIsAccepted() throws {
-    let filler = String(repeating: "x", count: 40_000)
-    let message = "From: <a@b.com>\r\n\r\n\(filler)\r\n"
-    let wire = "* 1 FETCH (UID 5 BODY[] {\(message.utf8.count)}\r\n" + message + ")\r\n"
+  // MARK: - The limits, and what they actually gate
 
-    let events = try reader().consume(Array(wire.utf8))
+  /// **A correction to my own earlier finding, kept as a test so it cannot
+  /// quietly revert.**
+  ///
+  /// I reported that `ResponseParser`'s 4096-byte `literalSizeLimit` default
+  /// would reject ordinary bank mail. It does not. At 0.4.0 the FETCH body is
+  /// sized against `GrammarParser.messageBodySizeLimit` (default `.max`), which
+  /// `ResponseParser.Options` cannot even set; `literalSizeLimit` gates other
+  /// literals. A 40 KB body is accepted with the parser knobs at their library
+  /// defaults, and this test says so out loud.
+  func testTheLibraryDefaultLiteralLimitDoesNotRejectALargeMessageBody() throws {
+    let atLibraryDefaults = NIOIMAPResponseReader(
+      limits: .init(
+        bodySizeLimit: .max,
+        literalSizeLimit: 4_096,
+        bufferLimit: 8_192,
+        framingBufferLimit: 1024 * 1024
+      )
+    )
 
-    guard case .fetchedMessage(_, let body)? = events.first(where: {
+    let events = try atLibraryDefaults.consume(Array(Self.wire(bodyBytes: 40_000).utf8))
+
+    XCTAssertTrue(
+      events.contains { if case .fetchedMessage = $0 { return true } else { return false } },
+      "40 KB was rejected at the library literal limit — the original finding would be right")
+  }
+
+  /// `bodySizeLimit` is the one knob here that is genuinely enforced
+  /// (`guardStreamingSizeLimit`, strict `<`). Its library default is
+  /// `UInt64.max`, so shipping 25 MB is a deliberate TIGHTENING, not a fix.
+  ///
+  /// Discriminating both ways: below the limit the message arrives, at or above
+  /// it the read fails loudly rather than returning an empty result.
+  func testBodySizeLimitIsEnforcedAndIsATighteningNotAFix() throws {
+    let capped = NIOIMAPResponseReader(limits: .init(bodySizeLimit: 10_000))
+
+    XCTAssertThrowsError(try capped.consume(Array(Self.wire(bodyBytes: 40_000).utf8))) { error in
+      guard case IMAPTransportError.malformedResponse = error else {
+        return XCTFail("expected a surfaced parse failure, got \(error)")
+      }
+    }
+
+    let under = try NIOIMAPResponseReader(limits: .init(bodySizeLimit: 10_000))
+      .consume(Array(Self.wire(bodyBytes: 500).utf8))
+    XCTAssertTrue(
+      under.contains { if case .fetchedMessage = $0 { return true } else { return false } })
+  }
+
+  /// The shipping limits accept a message far larger than any bank alert.
+  func testTheShippingLimitsAcceptAnOrdinaryAndAVeryLargeMessage() throws {
+    for size in [4_000, 40_000, 400_000] {
+      let events = try reader().consume(Array(Self.wire(bodyBytes: size).utf8))
+      XCTAssertTrue(
+        events.contains { if case .fetchedMessage = $0 { return true } else { return false } },
+        "a \(size)-byte body was rejected")
+    }
+  }
+
+  /// One FETCH, fed **one byte at a time**, so the body can only arrive as a
+  /// long run of literal chunks (§2.16(c)).
+  ///
+  /// This is the test that would catch a reader handling only `.complete`
+  /// frames: replayed as a single buffer, such a reader still looks fine.
+  func testALargeBodyFedOneByteAtATimeIsReassembledFromItsLiteralChunks() throws {
+    let wire = Self.wire(bodyBytes: 20_000)
+    let bytes = Array(wire.utf8)
+    let reader = self.reader()
+
+    var collected: [IMAPServerEvent] = []
+    for byte in bytes {
+      collected += try reader.consume([byte])
+    }
+
+    guard case .fetchedMessage(let uid, let body)? = collected.first(where: {
       if case .fetchedMessage = $0 { return true }
       return false
     }) else {
-      return XCTFail("a 40 KB body was rejected: \(events)")
+      return XCTFail("byte-at-a-time lost the message: \(collected)")
     }
-    XCTAssertEqual(body.count, message.utf8.count)
+    XCTAssertEqual(uid, 5)
+    XCTAssertEqual(body.count, Self.message(bodyBytes: 20_000).utf8.count)
+    XCTAssertEqual(String(decoding: body, as: UTF8.self), Self.message(bodyBytes: 20_000))
+  }
+
+  // MARK: -
+
+  private static func message(bodyBytes: Int) -> String {
+    "From: <alerts@hdfcbank.net>\r\n\r\n" + String(repeating: "x", count: bodyBytes) + "\r\n"
+  }
+
+  private static func wire(bodyBytes: Int) -> String {
+    let message = self.message(bodyBytes: bodyBytes)
+    return "* 1 FETCH (UID 5 BODY[] {\(message.utf8.count)}\r\n" + message + ")\r\n"
   }
 
   // MARK: - Completion and failure
