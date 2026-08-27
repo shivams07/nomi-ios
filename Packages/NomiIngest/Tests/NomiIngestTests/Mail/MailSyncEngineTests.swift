@@ -236,7 +236,8 @@ final class MailSyncEngineTests: XCTestCase {
 
     _ = try await engine.syncNow()
 
-    let cursor = try XCTUnwrap(await engine.cursor)
+    let loaded = await engine.cursor
+    let cursor = try XCTUnwrap(loaded)
     XCTAssertEqual(cursor.lastSeenUID, 41)
     XCTAssertEqual(cursor.uidValidity, 900_100)
     XCTAssertEqual(fetcher.uidsAfterCalls, [], "no cursor yet, so no incremental search")
@@ -275,7 +276,8 @@ final class MailSyncEngineTests: XCTestCase {
 
     XCTAssertEqual(fetcher.uidsAfterCalls, [], "must not trust the old cursor")
     XCTAssertEqual(fetcher.uidsSinceCalls.count, 1)
-    XCTAssertEqual(try XCTUnwrap(await engine.cursor).uidValidity, 777_777)
+    let loaded = await engine.cursor
+    XCTAssertEqual(try XCTUnwrap(loaded).uidValidity, 777_777)
   }
 
   func testAnEmptyMailboxProducesAnEmptySummaryAndNoPipelineCall() async throws {
@@ -418,7 +420,8 @@ final class MailSyncEngineTests: XCTestCase {
       // expected
     }
 
-    let cursor = try XCTUnwrap(await engine.cursor)
+    let loaded = await engine.cursor
+    let cursor = try XCTUnwrap(loaded)
     XCTAssertEqual(cursor.lastSeenUID, 199, "end of batch 2 — UIDs 150...199")
     XCTAssertEqual(fetcher.fetched.count, 3, "it must stop at the failure, not carry on")
     XCTAssertEqual(pipeline.received.count, 2, "batch 3 reached the pipeline zero times")
@@ -555,7 +558,8 @@ final class MailSyncEngineTests: XCTestCase {
       // expected
     }
 
-    let cursor = try XCTUnwrap(await engine.cursor)
+    let loaded = await engine.cursor
+    let cursor = try XCTUnwrap(loaded)
     XCTAssertEqual(cursor.lastSeenUID, 39, "the cursor must not advance past an unfetched UID")
   }
 
