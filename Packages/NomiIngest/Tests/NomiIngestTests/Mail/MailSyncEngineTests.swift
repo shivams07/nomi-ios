@@ -54,6 +54,36 @@ final class RecordingPipeline: DraftIngesting, @unchecked Sendable {
   }
 }
 
+/// A fetcher whose `fetch` fails, standing in for a server that hangs up
+/// mid-FETCH (an unexpected `* BYE` before the tagged completion).
+final class FailingFetchFetcher: MailFetching, @unchecked Sendable {
+  let state: MailboxState
+  private let uids: [UInt32]
+  private(set) var fetchAttempts = 0
+
+  init(
+    uids: [UInt32],
+    state: MailboxState = MailboxState(name: "INBOX", uidValidity: 900_100, uidNext: 999)
+  ) {
+    self.uids = uids
+    self.state = state
+  }
+
+  struct Hangup: Error {}
+
+  func connect(_ credentials: IMAPCredentials) async throws {}
+  func disconnect() async throws {}
+  func selectMailbox(_ name: String) async throws -> MailboxState { state }
+  func uids(since date: Date, in mailbox: String) async throws -> [UInt32] { uids }
+  func uids(after uid: UInt32, in mailbox: String) async throws -> [UInt32] {
+    uids.filter { $0 > uid }
+  }
+  func fetch(uids: [UInt32], in mailbox: String) async throws -> [MailMessage] {
+    fetchAttempts += 1
+    throw Hangup()
+  }
+}
+
 final class MailSyncEngineTests: XCTestCase {
 
   private func message(_ file: String, uid: UInt32) throws -> MailMessage {
@@ -180,5 +210,58 @@ final class MailSyncEngineTests: XCTestCase {
     let months = Calendar(identifier: .gregorian)
       .dateComponents([.month], from: since, to: now).month
     XCTAssertEqual(months, 6)
+  }
+  // MARK: - A hangup mid-fetch must not look like "nothing new"
+
+  /// If the fetch fails, the cursor stays where it was and the same UIDs are
+  /// re-fetched next sync.
+  ///
+  /// This is the mechanism behind U2b's `* BYE` handling (§2.16). A server that
+  /// hangs up mid-FETCH would otherwise be indistinguishable from "0 new
+  /// transactions" — the silent-zero failure that is worth more than any amount
+  /// of tidy error handling to avoid. Re-fetching is safe: re-ingesting a
+  /// `SourceRef` the pipeline already has is a total no-op.
+  func testAFailedFetchLeavesTheCursorWhereItWasAndRethrows() async throws {
+    let fetcher = FailingFetchFetcher(uids: [40, 41])
+    let engine = MailSyncEngine(
+      fetcher: fetcher,
+      pipeline: RecordingPipeline(),
+      cursor: MailSyncCursor(mailbox: "INBOX", uidValidity: 900_100, lastSeenUID: 39)
+    )
+
+    do {
+      _ = try await engine.syncNow()
+      XCTFail("syncNow should have rethrown the fetch failure")
+    } catch is FailingFetchFetcher.Hangup {
+      // expected
+    }
+
+    let cursor = try XCTUnwrap(await engine.cursor)
+    XCTAssertEqual(cursor.lastSeenUID, 39, "the cursor must not advance past an unfetched UID")
+  }
+
+  func testTheSameUIDsAreRetriedOnTheNextSyncAfterAFailure() async throws {
+    let fetcher = FailingFetchFetcher(uids: [40, 41])
+    let engine = MailSyncEngine(
+      fetcher: fetcher,
+      pipeline: RecordingPipeline(),
+      cursor: MailSyncCursor(mailbox: "INBOX", uidValidity: 900_100, lastSeenUID: 39)
+    )
+
+    _ = try? await engine.syncNow()
+    _ = try? await engine.syncNow()
+
+    XCTAssertEqual(fetcher.fetchAttempts, 2, "the second sync must re-attempt the same UIDs")
+  }
+
+  /// A failed fetch must not reach the pipeline at all — no partial batch, no
+  /// half-ingested sync.
+  func testAFailedFetchIngestsNothing() async throws {
+    let pipeline = RecordingPipeline()
+    let engine = MailSyncEngine(fetcher: FailingFetchFetcher(uids: [40]), pipeline: pipeline)
+
+    _ = try? await engine.syncNow()
+
+    XCTAssertTrue(pipeline.received.isEmpty)
   }
 }
