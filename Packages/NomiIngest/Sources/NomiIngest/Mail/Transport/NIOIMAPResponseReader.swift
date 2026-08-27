@@ -40,6 +40,9 @@ public final class NIOIMAPResponseReader: IMAPResponseReading, @unchecked Sendab
   /// - `bufferLimit` — **stored and never read** anywhere in `ResponseParser` at
   ///   0.4.0. It enforces nothing today. Passed anyway so the value is sane if
   ///   upstream starts honouring it.
+  /// - `framingBufferLimit` — the framer's, not the parser's, and the only one
+  ///   of the four that a real mailbox reaches. Derivation on
+  ///   `IMAPFraming.defaultBufferSizeLimit` (§2.17).
   public struct Limits: Sendable {
     public var bodySizeLimit: UInt64
     public var literalSizeLimit: Int
@@ -50,7 +53,7 @@ public final class NIOIMAPResponseReader: IMAPResponseReading, @unchecked Sendab
       bodySizeLimit: UInt64 = 25 * 1024 * 1024,
       literalSizeLimit: Int = 1024 * 1024,
       bufferLimit: Int = 1024 * 1024,
-      framingBufferLimit: Int = 1024 * 1024
+      framingBufferLimit: Int = IMAPFraming.defaultBufferSizeLimit
     ) {
       self.bodySizeLimit = bodySizeLimit
       self.literalSizeLimit = literalSizeLimit
