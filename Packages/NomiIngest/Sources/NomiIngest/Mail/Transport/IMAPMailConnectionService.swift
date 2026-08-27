@@ -125,21 +125,23 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
   /// `unmatchedSenders` — the measurement that tells us which banks the user
   /// actually has, computed on their own device (§2.5.1).
   ///
-  /// **Progress is reported twice, not continuously**, and that is a real
-  /// limitation rather than a simplification: `MailSyncEngine` returns a summary
-  /// and exposes no per-message callback. Adding one means editing
-  /// `Mail/MailSyncEngine.swift`, which is U2's file and not this unit's to
-  /// touch. Flagged for U7's backfill screen — a two-step bar is honest but it
-  /// is not the progress indicator that screen wants.
+  /// Progress is the engine's, forwarded verbatim: one tick per completed batch
+  /// of 50 (§2.17). This service adds nothing to it and must not — a count
+  /// synthesised here would be a second opinion about work it did not do.
+  ///
+  /// The one tick it does emit is the leading `total: 0`, before the engine has
+  /// finished its windowed search and knows how many messages there are.
+  /// `BackfillBanner` reads a zero total as an empty bar rather than dividing by
+  /// it, which is the honest rendering of "still looking".
   public func startBackfill(months: Int) async throws {
     let address = try requireConnectedAddress()
     progressContinuation.yield(BackfillProgress(scanned: 0, total: 0, created: 0))
 
     do {
-      let summary = try await engine.backfill(months: months)
-      progressContinuation.yield(
-        BackfillProgress(
-          scanned: summary.scanned, total: summary.scanned, created: summary.created))
+      let continuation = progressContinuation
+      _ = try await engine.backfill(months: months) { tick in
+        continuation.yield(tick)
+      }
       recordSync(at: now())
       stateContinuation.yield(.connected(address: address, lastSync: currentLastSync()))
     } catch {

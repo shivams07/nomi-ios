@@ -61,6 +61,9 @@ private final class FlakyFetcher: MailFetching, @unchecked Sendable {
   func uids(since date: Date, in mailbox: String) async throws -> [UInt32] {
     try await inner.uids(since: date, in: mailbox)
   }
+  func uids(since: Date, before: Date, in mailbox: String) async throws -> [UInt32] {
+    try await inner.uids(since: since, before: before, in: mailbox)
+  }
   func uids(after uid: UInt32, in mailbox: String) async throws -> [UInt32] {
     try await inner.uids(after: uid, in: mailbox)
   }
@@ -230,12 +233,47 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
     try await service.startBackfill(months: 6)
 
     var progress: [BackfillProgress] = []
-    for await tick in service.backfillProgress.prefix(2) { progress.append(tick) }
+    for await tick in service.backfillProgress.prefix(3) { progress.append(tick) }
 
+    // The service's own "started, total unknown" tick, then the engine's — the
+    // total as soon as the windowed search resolves, then one per batch (§2.17).
     XCTAssertEqual(progress[0].scanned, 0)
-    XCTAssertEqual(progress[1].scanned, 2)
+    XCTAssertEqual(progress[0].total, 0)
+    XCTAssertEqual(progress[1].scanned, 0)
     XCTAssertEqual(progress[1].total, 2)
-    XCTAssertEqual(progress[1].created, 2)
+    XCTAssertEqual(progress[2].scanned, 2)
+    XCTAssertEqual(progress[2].total, 2)
+    XCTAssertEqual(progress[2].created, 2)
+  }
+
+  /// The contract U2b owes U8, and the reason U2's engine had to be batched at
+  /// all: a backfill big enough to need a progress bar must produce a stream
+  /// that actually moves, not one value at the end (§2.17).
+  func testAMultiBatchBackfillStreamsATickPerBatch() async throws {
+    let pipeline = RecordingPipeline()
+    pipeline.result = IngestBatchResult(created: 1, merged: 0, flagged: 0)
+    let fetcher = BatchingFetcher(
+      uids: Array(UInt32(100)...UInt32(249)),
+      template: try MailFixtures.message("hdfc_debit_netbanking.eml", uid: 1))
+    let service = IMAPMailConnectionService(
+      fetcher: fetcher,
+      engine: MailSyncEngine(fetcher: fetcher, pipeline: pipeline),
+      credentials: MemoryCredentialStore(),
+      now: { Date(timeIntervalSince1970: 1_787_000_000) })
+
+    try await service.connect(credentials)
+    try await service.startBackfill(months: 6)
+
+    var progress: [BackfillProgress] = []
+    for await tick in service.backfillProgress.prefix(5) { progress.append(tick) }
+
+    XCTAssertEqual(progress.map(\.scanned), [0, 0, 50, 100, 150])
+    XCTAssertEqual(progress.map(\.total), [0, 150, 150, 150, 150])
+    // One ingest per batch, and this pipeline reports one created per call.
+    XCTAssertEqual(progress.map(\.created), [0, 0, 1, 2, 3])
+    XCTAssertEqual(
+      progress.last?.scanned, progress.last?.total,
+      "the bar must reach its end, or the banner never goes away")
   }
 
   func testBackfillBeforeConnectIsRefused() async {

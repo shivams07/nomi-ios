@@ -53,6 +53,22 @@ public struct IMAPCommand: Equatable, Sendable {
     IMAPCommand(tag: tag, body: "UID SEARCH SINCE \(imapDate(date))")
   }
 
+  /// `UID SEARCH SINCE <d1> BEFORE <d2>` — one window of the backfill's walk
+  /// (§2.17).
+  ///
+  /// The engine asks for a month at a time so the reply stays bounded: a SEARCH
+  /// result is a single line with no CRLF until the end, and six months of a
+  /// busy mailbox is ~120 KB of UIDs on it.
+  ///
+  /// **`SINCE` is inclusive, `BEFORE` is exclusive, and the server compares
+  /// dates only** — the time of day is discarded, in the server's timezone. The
+  /// engine overlaps its windows by a day because of that, and the transport
+  /// must pass the dates through untouched rather than "correcting" a boundary.
+  public static func uidSearchBetween(tag: String, since: Date, before: Date) -> IMAPCommand {
+    IMAPCommand(
+      tag: tag, body: "UID SEARCH SINCE \(imapDate(since)) BEFORE \(imapDate(before))")
+  }
+
   /// `UID SEARCH UID <n+1>:*` — incremental sync above the cursor.
   ///
   /// `n + 1` rather than `n`, or every sync re-fetches the last message it

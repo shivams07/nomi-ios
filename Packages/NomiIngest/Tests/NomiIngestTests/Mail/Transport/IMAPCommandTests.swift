@@ -29,6 +29,10 @@ final class IMAPCommandTests: XCTestCase {
       .login(tag: "a001", address: "a@b.com", password: "pw"),
       .examine(tag: "a002", mailbox: "INBOX"),
       .uidSearchSince(tag: "a003", date: Date(timeIntervalSince1970: 1_787_000_000)),
+      .uidSearchBetween(
+        tag: "a003b",
+        since: Date(timeIntervalSince1970: 1_786_000_000),
+        before: Date(timeIntervalSince1970: 1_787_000_000)),
       .uidSearchAfter(tag: "a004", uid: 4388),
       .uidFetchBodyPeek(tag: "a005", uids: [1]),
       .idle(tag: "a006"),
@@ -127,6 +131,28 @@ final class IMAPCommandTests: XCTestCase {
     XCTAssertEqual(IMAPCommand.imapDate(date), "06-Aug-2026")
     XCTAssertEqual(
       IMAPCommand.uidSearchSince(tag: "a1", date: date).body, "UID SEARCH SINCE 06-Aug-2026")
+  }
+
+  /// One window of the backfill walk (§2.17). `SINCE` inclusive, `BEFORE`
+  /// exclusive, both date-granular — the server discards the time of day, so the
+  /// two dates are the whole meaning of the request.
+  func testAWindowedSearchCarriesBothBoundsInOrder() {
+    let command = IMAPCommand.uidSearchBetween(
+      tag: "a003",
+      since: Date(timeIntervalSince1970: 1_786_000_000),  // 06 Aug 2026
+      before: Date(timeIntervalSince1970: 1_788_600_000)  // 05 Sep 2026
+    )
+    XCTAssertEqual(
+      command.wireText, "a003 UID SEARCH SINCE 06-Aug-2026 BEFORE 05-Sep-2026\r\n")
+  }
+
+  /// The transport passes the engine's dates through untouched. The overlap
+  /// between adjacent windows is deliberate — dedupe absorbs a duplicate, and
+  /// nothing recovers a day dropped by a boundary someone tightened here.
+  func testTheWindowBoundsAreNotAdjustedByTheTransport() {
+    let since = Date(timeIntervalSince1970: 1_786_000_000)
+    let command = IMAPCommand.uidSearchBetween(tag: "a1", since: since, before: since)
+    XCTAssertEqual(command.body, "UID SEARCH SINCE 06-Aug-2026 BEFORE 06-Aug-2026")
   }
 
   /// A password containing a quote would otherwise close the string early and
