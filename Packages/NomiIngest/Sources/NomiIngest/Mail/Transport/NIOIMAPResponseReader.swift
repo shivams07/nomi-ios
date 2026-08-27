@@ -4,21 +4,28 @@ import NIOIMAP
 
 /// Turns raw server bytes into `IMAPServerEvent`s using swift-nio-imap.
 ///
-/// Two stages (design §2.15):
+/// **One stage, not two.** Bytes accumulate in `pending` and are handed straight
+/// to `ResponseParser.parseResponseStream`, called in a loop until it returns
+/// `nil`. That is the same shape as the library's own client read path —
+/// `IMAPClientHandler` -> `NIOSingleStepByteToMessageProcessor<ResponseDecoder>`
+/// -> `ResponseParser`, over a raw accumulating buffer with no framing stage
+/// anywhere in front of it.
 ///
-/// 1. **`IMAPFraming`** splits the byte stream into frames — the literal-aware
-///    part, wrapped in its own file because it needs SPI (§2.16).
-/// 2. **`ResponseParser`** parses each frame, fed in a loop until it returns
-///    `nil`. Plainly public, reached through `NIOIMAP`'s single-line
-///    `@_exported import NIOIMAPCore`; no SPI and no
-///    `NIOSingleStepByteToMessageProcessor`.
+/// **Design §2.15 put `FramingParser` in front of the parser. That was wrong,
+/// and CI is what proved it: `FramingParser` is the SERVER side.** `FrameDecoder`,
+/// which wraps it, is only ever paired with `IMAPServerHandler` — it frames
+/// incoming *commands*. Nothing on the client response path uses it, because
+/// `ResponseParser` is already literal-aware: it reads the `{115}` itself and
+/// streams the body out as `.streamingBytes`.
 ///
-/// **Both `.complete` and `.literalChunk` frames go to the parser.** A reader
-/// that handled only `.complete` would silently drop every message body large
-/// enough to arrive as a literal, which is all of them. Reassembly happens via
-/// the parser's `.streamingBytes` events accumulating into `pendingBody` — the
-/// parser tracks the literal's remaining byte count itself, so there is no
-/// second copy of that arithmetic here.
+/// The symptom was total and uniform: no `.fetchedMessage` was ever produced for
+/// a literal body, at any size, at any chunk boundary, while every non-literal
+/// response came through fine. Nine reader tests failed for that one reason.
+///
+/// The framer cannot be left in "just in case" either — its output is not
+/// byte-preserving. `FramingIntegrationTests` asserts `.complete("A1 NOOP\r")`
+/// for a CR|LF split and documents the dropped LF as legitimate, so a stage that
+/// forwards frames corrupts the stream it forwards.
 ///
 /// `NIOCore` is linked for exactly one reason: naming `ByteBuffer` (§2.15).
 public final class NIOIMAPResponseReader: IMAPResponseReading, @unchecked Sendable {
@@ -37,28 +44,64 @@ public final class NIOIMAPResponseReader: IMAPResponseReading, @unchecked Sendab
   ///   cannot set and which defaults to `.max`. So the library's 4096 default
   ///   does *not* reject a large email; raising it is headroom for an unusual
   ///   non-body literal and nothing more.
-  /// - `bufferLimit` — **stored and never read** anywhere in `ResponseParser` at
-  ///   0.4.0. It enforces nothing today. Passed anyway so the value is sane if
-  ///   upstream starts honouring it.
-  /// - `framingBufferLimit` — the framer's, not the parser's, and the only one
-  ///   of the four that a real mailbox reaches. Derivation on
-  ///   `IMAPFraming.defaultBufferSizeLimit` (§2.17).
+  /// - `bufferLimit` — **assigned at `ResponseParser.swift:189` and read
+  ///   nowhere** at 0.4.0, despite a doc comment promising it throws. It
+  ///   enforces nothing. Passed anyway so the value is sane if upstream starts
+  ///   honouring it — but it is *not* the ceiling, which is why the next one
+  ///   exists.
+  /// - `accumulationBufferLimit` — **ours, enforced here, and the only ceiling
+  ///   the read path has.** Derivation on `Limits.defaultAccumulationBufferLimit`
+  ///   (§2.17). It replaces the framer's `bufferSizeLimit`, which went with the
+  ///   framer: dropping that stage without reinstating its ceiling would have
+  ///   left nothing at all bounding what we buffer from a server.
   public struct Limits: Sendable {
     public var bodySizeLimit: UInt64
     public var literalSizeLimit: Int
     public var bufferLimit: Int
-    public var framingBufferLimit: Int
+    public var accumulationBufferLimit: Int
+
+    /// The ceiling on bytes held while no complete response can be parsed out of
+    /// them. 256 KB, per design §2.17.
+    ///
+    /// **It does not cap a message body**, and nobody should "fix" it thinking
+    /// it does: a literal never sits here, because `ResponseParser` drains it as
+    /// `.streamingBytes` as it arrives — a 400 KB body fed in one `consume` is
+    /// consumed within that call and leaves nothing behind. The memory that
+    /// matters for a backfill is the FETCH batch, and that is bounded in
+    /// `MailSyncEngine` (§2.17 axis 1), not here.
+    ///
+    /// It is sized for one case, and the case is `* SEARCH`: **the whole result
+    /// of a UID SEARCH is a single line with no CRLF until the end**, so none of
+    /// it is parseable until all of it has arrived.
+    ///
+    /// The derivation, and why 256 KB rather than something snug:
+    ///
+    /// - `* SEARCH ` + 3,000 four-digit UIDs measures **15,010 bytes** — already
+    ///   past the 8192 the library defaults to elsewhere, on a modest mailbox.
+    /// - A long-lived Gmail INBOX hands out **6- and 7-digit UIDs**, and six busy
+    ///   months is nearer 10,000–15,000 messages than 3,000. At 8 bytes per UID
+    ///   (7 digits + separator) that is **~120 KB on one line**.
+    /// - 256 KB is ~32,000 seven-digit UIDs: about twice the realistic worst case.
+    ///
+    /// So this is a guard against a malformed or hostile server, not a
+    /// correctness knob — big enough that tripping it means the response is
+    /// wrong, not that the user has a lot of mail. Windowing the SEARCH by month
+    /// (§2.17 axis 2) bounds the request as well, but a ceiling on what we will
+    /// buffer from a server is not something windowing replaces.
+    ///
+    /// Covered by `IMAPResponseBufferCeilingTests`.
+    public static let defaultAccumulationBufferLimit = 256 * 1024
 
     public init(
       bodySizeLimit: UInt64 = 25 * 1024 * 1024,
       literalSizeLimit: Int = 1024 * 1024,
       bufferLimit: Int = 1024 * 1024,
-      framingBufferLimit: Int = IMAPFraming.defaultBufferSizeLimit
+      accumulationBufferLimit: Int = Limits.defaultAccumulationBufferLimit
     ) {
       self.bodySizeLimit = bodySizeLimit
       self.literalSizeLimit = literalSizeLimit
       self.bufferLimit = bufferLimit
-      self.framingBufferLimit = framingBufferLimit
+      self.accumulationBufferLimit = accumulationBufferLimit
     }
 
     /// The library's own defaults, for the tests that show what changing them
@@ -67,15 +110,20 @@ public final class NIOIMAPResponseReader: IMAPResponseReading, @unchecked Sendab
       bodySizeLimit: .max,
       literalSizeLimit: 4_096,
       bufferLimit: 8_192,
-      framingBufferLimit: 8_192
+      accumulationBufferLimit: 8_192
     )
   }
 
   private let limits: Limits
   private let lock = NSLock()
 
-  private var framing: IMAPFraming
   private var parser: ResponseParser
+
+  /// Everything received and not yet parsed off. One buffer for the whole
+  /// connection: `parseResponseStream` moves the reader index forward by exactly
+  /// what it consumed and leaves the remainder in place, so a response split
+  /// across packets simply completes on a later `consume`.
+  private var pending = ByteBuffer()
 
   /// Assembly state for the FETCH currently in flight. A FETCH arrives as
   /// several events — start, attributes, streamed body, finish — and only the
@@ -85,7 +133,6 @@ public final class NIOIMAPResponseReader: IMAPResponseReading, @unchecked Sendab
 
   public init(limits: Limits = Limits()) {
     self.limits = limits
-    self.framing = IMAPFraming(bufferSizeLimit: limits.framingBufferLimit)
     self.parser = Self.makeParser(limits)
   }
 
@@ -102,8 +149,8 @@ public final class NIOIMAPResponseReader: IMAPResponseReading, @unchecked Sendab
   public func reset() {
     lock.lock()
     defer { lock.unlock() }
-    framing = IMAPFraming(bufferSizeLimit: limits.framingBufferLimit)
     parser = Self.makeParser(limits)
+    pending = ByteBuffer()
     pendingUID = nil
     pendingBody = []
   }
@@ -112,52 +159,60 @@ public final class NIOIMAPResponseReader: IMAPResponseReading, @unchecked Sendab
     lock.lock()
     defer { lock.unlock() }
 
-    var incoming = ByteBuffer(bytes: bytes)
-    let frames: [IMAPFrame]
-    do {
-      frames = try framing.append(&incoming)
-    } catch {
-      throw IMAPTransportError.malformedResponse(String(describing: error))
-    }
+    pending.writeBytes(bytes)
 
     var events: [IMAPServerEvent] = []
-    for frame in frames {
-      switch frame {
-      case .complete(var buffer), .literalChunk(var buffer, _):
-        try events.append(contentsOf: parse(&buffer))
-      case .invalid(let buffer):
-        throw IMAPTransportError.malformedResponse(
-          "unparseable frame: \(String(decoding: buffer.readableBytesView, as: UTF8.self))")
-      }
-    }
-    return events
-  }
+    var stalls = 0
 
-  // MARK: -
-
-  private func parse(_ buffer: inout ByteBuffer) throws -> [IMAPServerEvent] {
-    var events: [IMAPServerEvent] = []
-
-    while buffer.readableBytes > 0 {
-      let before = buffer.readableBytes
+    while pending.readableBytes > 0 {
+      let before = pending.readableBytes
       let parsed: ResponseOrContinuationRequest?
       do {
-        parsed = try parser.parseResponseStream(buffer: &buffer)
+        parsed = try parser.parseResponseStream(buffer: &pending)
       } catch {
         throw IMAPTransportError.malformedResponse(String(describing: error))
       }
 
+      // `nil` means `IncompleteMessage`: the parser rolled its own buffer back,
+      // consumed nothing, and wants more bytes. There is nothing further to do
+      // with what we have.
       guard let parsed else { break }
+
       if let event = map(parsed) {
         events.append(event)
       }
-      // Guard against a parser that consumed nothing — without this an
-      // unconsumable frame spins this loop forever, on a background sync, with
-      // no way for the user to tell.
-      if buffer.readableBytes == before { break }
+
+      // A parsed response that consumed no bytes is legitimate exactly once in a
+      // row: `.streamingEnd` is emitted from a state transition when the
+      // literal's byte count reaches zero, before the `)` that follows it is
+      // read. Breaking on the first zero-consumption result would stop right
+      // there and never reach `.finish` — which is the event that actually
+      // yields the message. Repeated stalls are a parser we cannot make progress
+      // with, and spinning here would hang a background sync silently.
+      if pending.readableBytes == before {
+        stalls += 1
+        if stalls > 4 { break }
+      } else {
+        stalls = 0
+      }
     }
+
+    pending.discardReadBytes()
+
+    // The ceiling goes here, *after* draining, not on the incoming bytes: a
+    // single `consume` carrying a 400 KB body is parsed within this call and
+    // leaves nothing behind. What is left is by definition unparseable so far,
+    // and that is the thing worth bounding.
+    guard pending.readableBytes <= limits.accumulationBufferLimit else {
+      throw IMAPTransportError.malformedResponse(
+        "\(pending.readableBytes) bytes buffered with no complete response, "
+          + "over the \(limits.accumulationBufferLimit)-byte limit")
+    }
+
     return events
   }
+
+  // MARK: -
 
   private func map(_ parsed: ResponseOrContinuationRequest) -> IMAPServerEvent? {
     switch parsed {
@@ -249,7 +304,9 @@ public final class NIOIMAPResponseReader: IMAPResponseReading, @unchecked Sendab
 
     case .streamingBytes(let buffer):
       // This is the literal reassembly. The parser hands the body over in as
-      // many chunks as the network delivered it in.
+      // many chunks as the network delivered it in, and tracks the literal's
+      // remaining byte count itself — there is no second copy of that
+      // arithmetic here.
       pendingBody.append(contentsOf: buffer.readableBytesView)
       return nil
 

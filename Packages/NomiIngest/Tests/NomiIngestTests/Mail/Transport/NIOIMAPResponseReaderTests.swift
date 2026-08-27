@@ -58,10 +58,11 @@ final class NIOIMAPResponseReaderTests: XCTestCase {
 
   // MARK: - UID FETCH: the literal
 
-  /// The reason `FramingParser` is used rather than a hand-rolled line splitter.
-  /// The literal below contains blank lines and CRLFs of its own — split it on
-  /// line boundaries and the message is silently truncated at its first header
-  /// break, which is every email.
+  /// The reason the raw stream goes to `ResponseParser` rather than through any
+  /// line splitter. The literal below contains blank lines and CRLFs of its own
+  /// — split it on line boundaries and the message is silently truncated at its
+  /// first header break, which is every email. `ResponseParser` reads the
+  /// `{size}` itself and streams the body out, so it never sees a line there.
   func testAFetchedMessageIsReassembledFromItsLiteralIncludingBlankLines() throws {
     let message =
       "From: <alerts@hdfcbank.net>\r\n"
@@ -161,7 +162,7 @@ final class NIOIMAPResponseReaderTests: XCTestCase {
         bodySizeLimit: .max,
         literalSizeLimit: 4_096,
         bufferLimit: 8_192,
-        framingBufferLimit: 1024 * 1024
+        accumulationBufferLimit: 1024 * 1024
       )
     )
 
@@ -204,10 +205,12 @@ final class NIOIMAPResponseReaderTests: XCTestCase {
   }
 
   /// One FETCH, fed **one byte at a time**, so the body can only arrive as a
-  /// long run of literal chunks (§2.16(c)).
+  /// long run of `.streamingBytes` events (§2.16(c)).
   ///
-  /// This is the test that would catch a reader handling only `.complete`
-  /// frames: replayed as a single buffer, such a reader still looks fine.
+  /// This is the test that catches a reader that reassembles a literal only when
+  /// it arrives whole: replayed as a single buffer, such a reader still looks
+  /// fine. It is also the shape that proved the framing stage was wrong — with
+  /// `FramingParser` in front, *no* chunking produced a message at all.
   func testALargeBodyFedOneByteAtATimeIsReassembledFromItsLiteralChunks() throws {
     let wire = Self.wire(bodyBytes: 20_000)
     let bytes = Array(wire.utf8)

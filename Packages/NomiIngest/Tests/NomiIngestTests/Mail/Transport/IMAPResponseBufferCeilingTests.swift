@@ -4,8 +4,17 @@ import XCTest
 
 @testable import NomiIngest
 
-/// The framing buffer limit, and the one case that actually reaches it.
-final class IMAPFramingTests: XCTestCase {
+/// The accumulation-buffer ceiling, and the one case that actually reaches it.
+///
+/// This file used to test `IMAPFraming`'s limit. The framer is gone — it was the
+/// server side of the library and it broke every literal body (see
+/// `NIOIMAPResponseReader`) — but its ceiling was the only bound the read path
+/// had, so it moved onto the reader's own accumulation buffer rather than being
+/// deleted along with it. Same derivation, same number, enforced in a different
+/// place. These tests exist so that stays true.
+final class IMAPResponseBufferCeilingTests: XCTestCase {
+
+  private static let ceiling = NIOIMAPResponseReader.Limits.defaultAccumulationBufferLimit
 
   /// `* SEARCH` with several thousand UIDs, as a six-month backfill returns.
   ///
@@ -16,24 +25,25 @@ final class IMAPFramingTests: XCTestCase {
     "* SEARCH " + (1...uidCount).map { String(base + $0) }.joined(separator: " ") + "\r\n"
   }
 
-  /// **The reason `IMAPFraming` raises `FramingParser`'s 8192 default**, and it
-  /// is not the message body.
+  /// **The reason the ceiling is raised above the 8192 the library uses
+  /// elsewhere**, and it is not the message body.
   ///
-  /// A literal never accumulates in the framer, so 8192 does not cap a body. But
-  /// `* SEARCH` is a single line, and the first six-month backfill on a real
-  /// mailbox returns thousands of UIDs on it. At the library default that line
-  /// blows the buffer and the *first run against Shivam's mailbox* fails — the
-  /// one run nobody on this team can rehearse.
-  func testALongSearchResponseFailsAtTheLibraryDefaultAndParsesAtOurs() throws {
+  /// A literal never accumulates here — `ResponseParser` drains it as
+  /// `.streamingBytes` as it arrives — so 8192 does not cap a body. But
+  /// `* SEARCH` is a single line, unparseable until its CRLF arrives, and the
+  /// first six-month backfill on a real mailbox returns thousands of UIDs on it.
+  /// At 8192 that line blows the buffer and the *first run against Shivam's
+  /// mailbox* fails — the one run nobody on this team can rehearse.
+  func testALongSearchResponseFailsAtASmallCeilingAndParsesAtOurs() throws {
     let line = Self.longSearchLine(uidCount: 3_000)
-    XCTAssertGreaterThan(line.utf8.count, 8_192, "the fixture must actually exceed the default")
+    XCTAssertGreaterThan(line.utf8.count, 8_192, "the fixture must actually exceed the small one")
 
-    // At the library default: the line is still unterminated when the buffer
-    // passes 8192, so the framer gives up on it.
-    let atDefault = NIOIMAPResponseReader(limits: .init(framingBufferLimit: 8_192))
-    XCTAssertThrowsError(try Self.feedInChunks(line, to: atDefault)) { error in
+    // At 8192: the line is still unterminated when the buffer passes the
+    // ceiling, so the read gives up on it.
+    let atSmallCeiling = NIOIMAPResponseReader(limits: .init(accumulationBufferLimit: 8_192))
+    XCTAssertThrowsError(try Self.feedInChunks(line, to: atSmallCeiling)) { error in
       guard case IMAPTransportError.malformedResponse = error else {
-        return XCTFail("expected a surfaced framing failure, got \(error)")
+        return XCTFail("expected a surfaced buffer-limit failure, got \(error)")
       }
     }
 
@@ -51,10 +61,10 @@ final class IMAPFramingTests: XCTestCase {
   }
 
   /// A short SEARCH is fine either way — the limit only bites on the long one.
-  func testAShortSearchResponseParsesAtTheLibraryDefaultToo() throws {
+  func testAShortSearchResponseParsesAtASmallCeilingToo() throws {
     let events = try Self.feedInChunks(
       Self.longSearchLine(uidCount: 20),
-      to: NIOIMAPResponseReader(limits: .init(framingBufferLimit: 8_192)))
+      to: NIOIMAPResponseReader(limits: .init(accumulationBufferLimit: 8_192)))
 
     XCTAssertTrue(
       events.contains { if case .searchResults = $0 { return true } else { return false } })
@@ -66,9 +76,9 @@ final class IMAPFramingTests: XCTestCase {
   /// something snug enough to fail on a big mailbox, or up to a number that
   /// stops being a guard at all.
   func testTheCeilingIsTheDerivedValueAndTheReaderUsesIt() {
-    XCTAssertEqual(IMAPFraming.defaultBufferSizeLimit, 256 * 1024)
+    XCTAssertEqual(Self.ceiling, 256 * 1024)
     XCTAssertEqual(
-      NIOIMAPResponseReader.Limits().framingBufferLimit, IMAPFraming.defaultBufferSizeLimit,
+      NIOIMAPResponseReader.Limits().accumulationBufferLimit, Self.ceiling,
       "the shipping reader must use the derived ceiling, not its own number")
   }
 
@@ -82,7 +92,7 @@ final class IMAPFramingTests: XCTestCase {
   func testTheRealisticWorstCaseSearchLineFitsUnderTheCeiling() throws {
     let line = Self.longSearchLine(uidCount: 15_000, base: 4_000_000)
     XCTAssertGreaterThan(line.utf8.count, 120_000, "the fixture must be the ~120 KB case")
-    XCTAssertLessThan(line.utf8.count, IMAPFraming.defaultBufferSizeLimit)
+    XCTAssertLessThan(line.utf8.count, Self.ceiling)
 
     let events = try Self.feedInChunks(line, to: NIOIMAPResponseReader())
     guard case .searchResults(let uids)? = events.first(where: {
@@ -100,17 +110,38 @@ final class IMAPFramingTests: XCTestCase {
   /// only thing this limit is for now that windowing bounds the request (§2.17).
   func testALineBeyondTheCeilingIsRejected() {
     let line = Self.longSearchLine(uidCount: 40_000, base: 4_000_000)
-    XCTAssertGreaterThan(line.utf8.count, IMAPFraming.defaultBufferSizeLimit)
+    XCTAssertGreaterThan(line.utf8.count, Self.ceiling)
 
     XCTAssertThrowsError(try Self.feedInChunks(line, to: NIOIMAPResponseReader())) { error in
       guard case IMAPTransportError.malformedResponse = error else {
-        return XCTFail("expected a surfaced framing failure, got \(error)")
+        return XCTFail("expected a surfaced buffer-limit failure, got \(error)")
       }
     }
   }
 
+  /// **The ceiling must not be measured against what arrives, only against what
+  /// is left over.**
+  ///
+  /// A 400 KB message body is well past the 256 KB ceiling and arrives in a
+  /// single `consume` here, but `ResponseParser` consumes all of it within that
+  /// call, so nothing is left buffered. Checking the limit before draining — or
+  /// against the incoming byte count — would reject an ordinary large email and
+  /// look exactly like a hostile server.
+  func testABodyLargerThanTheCeilingIsAcceptedBecauseItIsNeverLeftBuffered() throws {
+    let message = "From: <alerts@hdfcbank.net>\r\n\r\n"
+      + String(repeating: "x", count: 400_000) + "\r\n"
+    let wire = "* 1 FETCH (UID 5 BODY[] {\(message.utf8.count)}\r\n" + message + ")\r\n"
+
+    XCTAssertGreaterThan(wire.utf8.count, Self.ceiling)
+
+    let events = try NIOIMAPResponseReader().consume(Array(wire.utf8))
+    XCTAssertTrue(
+      events.contains { if case .fetchedMessage = $0 { return true } else { return false } },
+      "a 400 KB body was rejected by the accumulation ceiling")
+  }
+
   /// Fed in pieces, because that is how a socket delivers it and it is the only
-  /// way the buffer accumulates rather than framing in one go.
+  /// way the buffer accumulates rather than parsing in one go.
   private static func feedInChunks(
     _ text: String, to reader: NIOIMAPResponseReader, chunk: Int = 512
   ) throws -> [IMAPServerEvent] {
