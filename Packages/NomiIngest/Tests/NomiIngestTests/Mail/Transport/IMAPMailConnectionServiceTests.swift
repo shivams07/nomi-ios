@@ -175,7 +175,10 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
     }
   }
 
-  func testSyncBeforeConnectIsRefused() async {
+  // `throws`, like the test above it: the typed `catch` is deliberately not
+  // exhaustive, and only a throwing test may leave the rest to propagate. An
+  // unexpected error then fails the test by name rather than being swallowed.
+  func testSyncBeforeConnectIsRefused() async throws {
     let (service, _, _, _) = makeService()
 
     do {
@@ -276,7 +279,8 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
       "the bar must reach its end, or the banner never goes away")
   }
 
-  func testBackfillBeforeConnectIsRefused() async {
+  // `throws` for the same reason as `testSyncBeforeConnectIsRefused` above.
+  func testBackfillBeforeConnectIsRefused() async throws {
     let (service, _, _, _) = makeService()
 
     do {
