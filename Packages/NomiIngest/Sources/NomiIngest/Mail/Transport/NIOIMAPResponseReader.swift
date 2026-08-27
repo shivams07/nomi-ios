@@ -161,14 +161,64 @@ public final class NIOIMAPResponseReader: IMAPResponseReading, @unchecked Sendab
 
     pending.writeBytes(bytes)
 
+    // **Never hand the parser a buffer whose last byte is a lone CR.**
+    //
+    // `PL.parseNewline` needs two bytes to recognise CRLF. Given only a CR it
+    // falls through to the single-byte path and reports a CR-only line ending,
+    // which `parseResponseStream` reconciles with the LF that follows *only
+    // while it is in `.response` mode*. If the line that CR terminated was a
+    // literal header, the parser has already moved on to `.attributeBytes`, so
+    // the LF is read as the literal's FIRST BYTE. The body comes out shifted by
+    // one and one byte short, with no error raised anywhere.
+    //
+    // Not hypothetical: this is exactly why chunk sizes 1 and 3 failed
+    // `testAMessageSplitAcrossArbitraryPacketBoundariesIsStillReassembled`
+    // while 7, 16 and 64 passed — those boundaries happen not to land between
+    // the CR and the LF of the `{51}` header. Holding the CR back until its
+    // partner arrives costs one deferred byte and makes the split unobservable.
+    //
+    // A server that genuinely ended a line with a bare CR would stall here. No
+    // IMAP server does — RFC 3501 says CRLF — and the alternative is silently
+    // corrupting message bodies.
+    let withheldCR = pending.readableBytesView.last == UInt8(ascii: "\r")
+    let parseableBytes = pending.readableBytes - (withheldCR ? 1 : 0)
+
+    var events: [IMAPServerEvent] = []
+
+    if parseableBytes > 0,
+      var parseable = pending.getSlice(at: pending.readerIndex, length: parseableBytes)
+    {
+      // Whatever the loop below leaves unconsumed stays in `pending`, together
+      // with the withheld CR, and completes on a later `consume`.
+      defer { pending.moveReaderIndex(forwardBy: parseableBytes - parseable.readableBytes) }
+      events = try drain(&parseable)
+    }
+
+    pending.discardReadBytes()
+
+    // The ceiling goes here, *after* draining, not on the incoming bytes: a
+    // single `consume` carrying a 400 KB body is parsed within this call and
+    // leaves nothing behind. What is left is by definition unparseable so far,
+    // and that is the thing worth bounding.
+    guard pending.readableBytes <= limits.accumulationBufferLimit else {
+      throw IMAPTransportError.malformedResponse(
+        "\(pending.readableBytes) bytes buffered with no complete response, "
+          + "over the \(limits.accumulationBufferLimit)-byte limit")
+    }
+
+    return events
+  }
+
+  /// Parses as much as it can out of `buffer`, leaving the remainder in place.
+  private func drain(_ buffer: inout ByteBuffer) throws -> [IMAPServerEvent] {
     var events: [IMAPServerEvent] = []
     var stalls = 0
 
-    while pending.readableBytes > 0 {
-      let before = pending.readableBytes
+    while buffer.readableBytes > 0 {
+      let before = buffer.readableBytes
       let parsed: ResponseOrContinuationRequest?
       do {
-        parsed = try parser.parseResponseStream(buffer: &pending)
+        parsed = try parser.parseResponseStream(buffer: &buffer)
       } catch {
         throw IMAPTransportError.malformedResponse(String(describing: error))
       }
@@ -182,31 +232,19 @@ public final class NIOIMAPResponseReader: IMAPResponseReading, @unchecked Sendab
         events.append(event)
       }
 
-      // A parsed response that consumed no bytes is legitimate exactly once in a
-      // row: `.streamingEnd` is emitted from a state transition when the
-      // literal's byte count reaches zero, before the `)` that follows it is
-      // read. Breaking on the first zero-consumption result would stop right
-      // there and never reach `.finish` — which is the event that actually
-      // yields the message. Repeated stalls are a parser we cannot make progress
-      // with, and spinning here would hang a background sync silently.
-      if pending.readableBytes == before {
+      // A parsed response that consumed no bytes is legitimate: `.streamingEnd`
+      // is emitted from a state transition when the literal's byte count reaches
+      // zero, before the `)` that follows it is read. Breaking on the first
+      // zero-consumption result would stop right there and never reach
+      // `.finish` — which is the event that actually yields the message.
+      // Repeated stalls are a parser we cannot make progress with, and spinning
+      // here would hang a background sync silently.
+      if buffer.readableBytes == before {
         stalls += 1
         if stalls > 4 { break }
       } else {
         stalls = 0
       }
-    }
-
-    pending.discardReadBytes()
-
-    // The ceiling goes here, *after* draining, not on the incoming bytes: a
-    // single `consume` carrying a 400 KB body is parsed within this call and
-    // leaves nothing behind. What is left is by definition unparseable so far,
-    // and that is the thing worth bounding.
-    guard pending.readableBytes <= limits.accumulationBufferLimit else {
-      throw IMAPTransportError.malformedResponse(
-        "\(pending.readableBytes) bytes buffered with no complete response, "
-          + "over the \(limits.accumulationBufferLimit)-byte limit")
     }
 
     return events
