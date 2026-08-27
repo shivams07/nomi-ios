@@ -112,7 +112,12 @@ final class IMAPFetchSequencerTests: XCTestCase {
 
     let messages = try sequencer.messages()
     XCTAssertEqual(messages.map(\.uid), [4389])
-    XCTAssertTrue(
-      String(decoding: messages[0].bytes, as: UTF8.self).contains("1,299.50"))
+
+    // `XCTUnwrap`, not `messages[0]`. When this assertion first ran on CI the
+    // list came back empty, and the subscript trapped — which kills the test
+    // *process*, so every suite after this one was never reached and the log
+    // said nothing about why. A test that fails must fail, not crash.
+    let first = try XCTUnwrap(messages.first)
+    XCTAssertTrue(String(decoding: first.bytes, as: UTF8.self).contains("1,299.50"))
   }
 }

@@ -106,9 +106,12 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
 
     var seen: [MailConnectionState] = []
     for await state in service.state.prefix(3) { seen.append(state) }
-    XCTAssertEqual(seen[0], .disconnected)
-    XCTAssertEqual(seen[1], .connecting)
-    XCTAssertEqual(seen[2], .connected(address: "shivam@example.com", lastSync: nil))
+    // Compared as a whole rather than element by element: `prefix(3)` yields
+    // *at most* three, so a stream that ends early leaves `seen[2]` trapping —
+    // and a trap takes the whole test process down with it.
+    XCTAssertEqual(
+      seen,
+      [.disconnected, .connecting, .connected(address: "shivam@example.com", lastSync: nil)])
   }
 
   /// Storing a password the server just rejected buys nothing but a background
@@ -240,13 +243,11 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
 
     // The service's own "started, total unknown" tick, then the engine's — the
     // total as soon as the windowed search resolves, then one per batch (§2.17).
-    XCTAssertEqual(progress[0].scanned, 0)
-    XCTAssertEqual(progress[0].total, 0)
-    XCTAssertEqual(progress[1].scanned, 0)
-    XCTAssertEqual(progress[1].total, 2)
-    XCTAssertEqual(progress[2].scanned, 2)
-    XCTAssertEqual(progress[2].total, 2)
-    XCTAssertEqual(progress[2].created, 2)
+    // Mapped and compared whole: `prefix(3)` yields at most three, so indexing
+    // a short stream traps and takes every later suite down with it.
+    XCTAssertEqual(progress.map(\.scanned), [0, 0, 2])
+    XCTAssertEqual(progress.map(\.total), [0, 2, 2])
+    XCTAssertEqual(progress.last?.created, 2)
   }
 
   /// The contract U2b owes U8, and the reason U2's engine had to be batched at

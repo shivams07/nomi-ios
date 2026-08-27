@@ -168,11 +168,25 @@ final class IMAPCommandTests: XCTestCase {
 
   // MARK: - Framing
 
+  /// Counted over **bytes**, not `Character`s.
+  ///
+  /// `wireText.filter { $0 == "\n" }.count` was the obvious way to write this
+  /// and it is wrong in a way that only shows up on correct output: Swift
+  /// iterates a `String` by extended grapheme cluster, and CR LF *is one
+  /// cluster*. A correctly framed command therefore contains zero `"\n"`
+  /// Characters — the test failed against code that was right, and would have
+  /// passed against a command ending in a bare LF, which is the defect it
+  /// exists to catch.
   func testEveryCommandEndsCRLFAndNotBareLF() {
     let command = IMAPCommand.logout(tag: "a007")
     XCTAssertTrue(command.wireText.hasSuffix("\r\n"))
-    XCTAssertEqual(command.wireText.filter { $0 == "\n" }.count, 1)
-    XCTAssertEqual(Array(command.wireBytes.suffix(2)), [0x0D, 0x0A])
+
+    let bytes = Array(command.wireBytes)
+    XCTAssertEqual(bytes.filter { $0 == 0x0A }.count, 1)
+    XCTAssertEqual(Array(bytes.suffix(2)), [0x0D, 0x0A])
+    for (index, byte) in bytes.enumerated() where byte == 0x0A {
+      XCTAssertTrue(index > 0 && bytes[index - 1] == 0x0D, "bare LF at byte \(index)")
+    }
   }
 
   /// IDLE is ended by an untagged literal `DONE`. That is the protocol, not an
