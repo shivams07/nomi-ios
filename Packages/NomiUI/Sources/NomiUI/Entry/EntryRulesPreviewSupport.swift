@@ -21,6 +21,11 @@ enum EntryRulesPreviewSupport {
     ]
   }
 
+  /// `ModelContainer.mainContext` is `@MainActor`-isolated; these two builders
+  /// are only ever called from `#Preview` closures, which already run on the
+  /// main actor, so this annotation just tells the (targeted) concurrency
+  /// checker what's already true rather than changing behaviour.
+  @MainActor
   static func makeCategoryContainer(seed: [NomiCore.Category]? = nil) -> ModelContainer {
     let container = try! ModelContainer(
       for: Schema([NomiCore.Category.self]),
@@ -32,6 +37,7 @@ enum EntryRulesPreviewSupport {
     return container
   }
 
+  @MainActor
   static func makeRulesContainer() -> ModelContainer {
     let container = try! ModelContainer(
       for: Schema([NomiCore.Category.self, NomiCore.Rule.self]),
