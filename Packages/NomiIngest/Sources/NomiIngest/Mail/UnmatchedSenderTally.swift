@@ -38,14 +38,27 @@ public struct UnmatchedSenderTally: Sendable, Equatable {
   /// Descending by count, max 10 (§2.5.1). Ties broken alphabetically so two
   /// syncs over the same mail report the same order — a report that reshuffles
   /// on every run is a report nobody trusts.
+  ///
+  /// Written as statements rather than a `map`/`sorted`/`prefix`/`map` chain:
+  /// as one expression, with the comparator an inline ternary over a dictionary
+  /// element's `$0.key`/`$0.value`, the type-checker gives up
+  /// (*"unable to type-check this expression in reasonable time"*). The array
+  /// is annotated and the comparator is a named function with concrete
+  /// parameter types, so nothing here is left for inference to reconstruct.
   public func top(_ limit: Int = 10) -> [UnmatchedSender] {
-    counts
-      .map { UnmatchedSender(domain: $0.key, count: $0.value) }
-      .sorted {
-        $0.count == $1.count ? $0.domain < $1.domain : $0.count > $1.count
-      }
-      .prefix(limit)
-      .map { $0 }
+    var senders: [UnmatchedSender] = []
+    senders.reserveCapacity(counts.count)
+    for (domain, count) in counts {
+      senders.append(UnmatchedSender(domain: domain, count: count))
+    }
+    senders.sort(by: Self.rankedBefore)
+    return Array(senders.prefix(limit))
+  }
+
+  /// Descending by count, ties alphabetical by domain.
+  private static func rankedBefore(_ a: UnmatchedSender, _ b: UnmatchedSender) -> Bool {
+    if a.count != b.count { return a.count > b.count }
+    return a.domain < b.domain
   }
 
   public var isEmpty: Bool { counts.isEmpty }
