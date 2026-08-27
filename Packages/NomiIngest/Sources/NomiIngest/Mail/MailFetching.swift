@@ -44,6 +44,17 @@ public protocol MailFetching: Sendable {
   func uids(after uid: UInt32, in mailbox: String) async throws -> [UInt32]
 
   /// `UID FETCH <set> (BODY.PEEK[])`, parsed through `RFC822Message`.
+  ///
+  /// **Must throw if the server hangs up before the tagged completion** — an
+  /// unexpected `* BYE`, a closed socket, a truncated literal. Returning the
+  /// messages that happened to arrive would make a hangup indistinguishable from
+  /// "0 new transactions", which is the silent-zero failure this whole layer is
+  /// arranged to avoid (§2.16).
+  ///
+  /// Throwing is safe and cheap: `MailSyncEngine` advances its cursor only after
+  /// a fetch AND an ingest both succeed, so the same UIDs are simply re-fetched
+  /// next sync, and re-ingesting a `SourceRef` the pipeline already holds is a
+  /// total no-op. Asserted in `MailSyncEngineTests`.
   func fetch(uids: [UInt32], in mailbox: String) async throws -> [MailMessage]
 }
 
