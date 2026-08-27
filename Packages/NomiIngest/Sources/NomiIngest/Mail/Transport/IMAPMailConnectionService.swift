@@ -185,7 +185,7 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
       switch transportError {
       case .authenticationFailed:
         return .authenticationFailed
-      case .notConnected, .connectionClosed:
+      case .notConnected, .connectionClosed, .serverClosedMidCommand:
         return .connectionFailed
       case .commandFailed, .malformedResponse:
         return .unknown(String(describing: transportError))

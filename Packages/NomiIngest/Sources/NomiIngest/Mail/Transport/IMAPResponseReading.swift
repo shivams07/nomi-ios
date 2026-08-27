@@ -31,6 +31,12 @@ public enum IMAPCompletionStatus: String, Equatable, Sendable {
 }
 
 public enum IMAPTransportError: Error, Sendable, Equatable {
+  /// `* BYE` (or a closed stream) arrived before the tagged completion of a
+  /// command. Distinct from `connectionClosed`, which is an orderly shutdown:
+  /// this one means a batch is short and must NOT be treated as complete
+  /// (§2.16). `MailFetching.fetch` throws it; `MailSyncEngine` then leaves the
+  /// cursor alone and the UIDs are re-fetched next sync.
+  case serverClosedMidCommand(tag: String, text: String)
   case notConnected
   case authenticationFailed(String)
   case commandFailed(tag: String, status: IMAPCompletionStatus, text: String)

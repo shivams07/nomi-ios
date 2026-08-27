@@ -39,11 +39,19 @@ public struct IMAPFraming {
 
   /// `FramingParser`'s own default is 8192 (`IMAPDefaults.lineLengthLimit`).
   ///
-  /// That default does **not** cap a message body: a literal never accumulates
-  /// in the framer, because it emits `.insideLiteral` per chunk as it drains.
-  /// What the limit actually bounds is a single *unterminated line* — a server
-  /// sending megabytes with no CRLF. Raising it is headroom for a long header
-  /// line, not a fix for anything.
+  /// **It does not cap a message body**, and nobody should "fix" it thinking it
+  /// does: a literal never accumulates in the framer, which emits
+  /// `.insideLiteral` per chunk as it drains. What the limit bounds is a single
+  /// *unterminated line*.
+  ///
+  /// It is raised anyway, for a reason that is not the body: **`* SEARCH` is one
+  /// line and the six-month backfill makes it a long one.** A backfill matching
+  /// a couple of thousand messages returns
+  /// `* SEARCH 4388 4389 4390 …` — several thousand UIDs at ~6 bytes each, so
+  /// 12 KB or more with no CRLF until the end. At 8192 the framer throws
+  /// `PayloadTooLargeError` and the *first run on a real mailbox* fails, which
+  /// is the one run nobody here can rehearse. Covered by
+  /// `IMAPFramingTests.testALongSearchResponse…`.
   public init(bufferSizeLimit: Int = 1024 * 1024) {
     parser = FramingParser(bufferSizeLimit: bufferSizeLimit)
   }
