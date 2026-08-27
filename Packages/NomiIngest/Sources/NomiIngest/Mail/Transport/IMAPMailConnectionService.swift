@@ -187,7 +187,7 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
         return .authenticationFailed
       case .notConnected, .connectionClosed:
         return .connectionFailed
-      case .commandFailed, .malformedResponse, .responseParsingUnavailable:
+      case .commandFailed, .malformedResponse:
         return .unknown(String(describing: transportError))
       }
     }

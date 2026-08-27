@@ -28,7 +28,7 @@ S: * SEARCH 4388 4389 4390 4391
 S: a003 OK SEARCH completed
 
 C: a004 UID FETCH 4389:4391 (UID BODY.PEEK[])
-S: * 4211 FETCH (UID 4389 BODY[] {94}
+S: * 4211 FETCH (UID 4389 BODY[] {115}
 S: From: <alerts@hdfcbank.net>
 S: Subject: Transaction alert
 S:

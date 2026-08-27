@@ -248,18 +248,4 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
       XCTAssertEqual(error, .notConnected)
     }
   }
-
-  // MARK: - The unimplemented reader
-
-  /// The response parser is a blocked design decision, not a missing line. It
-  /// fails loudly: a mail client that silently reports "0 new transactions"
-  /// because it could not read a single response is worse than one that reports
-  /// an error.
-  func testTheUnimplementedResponseReaderRefusesRatherThanReturningNothing() {
-    let reader = UnimplementedResponseReader()
-
-    XCTAssertThrowsError(try reader.consume([0x2A, 0x20, 0x4F, 0x4B])) { error in
-      XCTAssertEqual(error as? IMAPTransportError, .responseParsingUnavailable)
-    }
-  }
 }
