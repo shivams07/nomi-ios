@@ -80,7 +80,9 @@ public struct EntryView: View {
         .font(TabularFigures.font(name: NomiFont.montserratSemiBold, size: 39))
         .foregroundStyle(NomiColor.textPrimary)
       TextField("0", text: $amountText)
+        #if os(iOS)
         .keyboardType(.decimalPad)
+        #endif
         .focused($isAmountFocused)
         .font(TabularFigures.font(name: NomiFont.montserratSemiBold, size: 39))
         .foregroundStyle(NomiColor.textPrimary)

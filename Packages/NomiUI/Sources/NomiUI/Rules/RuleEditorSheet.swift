@@ -34,7 +34,9 @@ struct RuleEditorSheet: View {
         Section("Pattern") {
           TextField("*MERCHANT*", text: $pattern)
             .autocorrectionDisabled()
+            #if os(iOS)
             .textInputAutocapitalization(.characters)
+            #endif
         }
         Section("Category") {
           Picker("Category", selection: $categoryID) {

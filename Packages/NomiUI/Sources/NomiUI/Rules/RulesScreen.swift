@@ -41,9 +41,11 @@ public struct RulesScreen: View {
           Image(systemName: "plus")
         }
       }
+      #if os(iOS)
       ToolbarItem(placement: .navigationBarLeading) {
         EditButton()
       }
+      #endif
     }
     .sheet(isPresented: $isCreating) {
       RuleEditorSheet(ruleStore: ruleStore, categories: categories, rule: nil)
