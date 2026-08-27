@@ -1,0 +1,9 @@
+From: Axis Bank Alerts <alerts@axisbank.com>
+To: <user@example.com>
+Subject: Debit transaction alert on your Axis Bank account
+Date: Wed, 19 Aug 2026 21:14:33 +0530
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>td{padding:4px}</style></head><body><table width="100%"><tr><td align="center"><p>Dear Customer,</p><table cellpadding="6" cellspacing="0" border="0"><tr><td style="font-family:Arial;color:#555">Amount</td><td style="font-family:Arial;font-weight:bold">INR 5,000.00 has been debited</td></tr><tr><td style="font-family:Arial;color:#555">Account</td><td style="font-family:Arial;font-weight:bold">A/c no. XX9930</td></tr><tr><td style="font-family:Arial;color:#555">Date</td><td style="font-family:Arial;font-weight:bold">on 19-08-2026</td></tr><tr><td style="font-family:Arial;color:#555">Info</td><td style="font-family:Arial;font-weight:bold">ATM CASH WITHDRAWAL KORAMANGALA</td></tr></table><p></p></td></tr></table></body></html>

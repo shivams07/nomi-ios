@@ -1,0 +1,9 @@
+From: HDFC Bank InstaAlerts <alerts@hdfcbank.net>
+To: <user@example.com>
+Subject: Transaction alert on your HDFC Bank Card
+Date: Thu, 13 Aug 2026 19:41:02 +0530
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>td{padding:4px}</style></head><body><table width="100%"><tr><td align="center"><p>Dear Customer,</p><table><tr><td>Amount</td><td align="right">₹</td><td align="left">4,500</td><td align="left">.00</td><td>&nbsp;has been debited</td></tr><tr><td>Card</td><td colspan="4">Card ending 4471</td></tr><tr><td>Merchant</td><td colspan="4">at SWIGGY on 13-08-2026</td></tr></table><p>Not you? Call 18002026161.</p></td></tr></table></body></html>
