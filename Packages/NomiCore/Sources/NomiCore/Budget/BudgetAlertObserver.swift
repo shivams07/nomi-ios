@@ -1,7 +1,15 @@
 import Foundation
 
 /// Everything the evaluator needs, read at one instant.
-public struct BudgetAlertContext: Sendable, Equatable {
+///
+/// **Not `Equatable`, deliberately.** `BudgetProgress` is not `Equatable`, so
+/// the conformance cannot be synthesised — and the alternative, adding it to
+/// `BudgetProgress` in `Contracts/Types.swift`, means editing a shared contract
+/// for a conformance nothing in the repo uses. Nothing compares two contexts:
+/// it is constructed by U8's provider, read once by the evaluator, and dropped.
+/// If a caller ever does need equality, add it to `BudgetProgress` in the
+/// contract rather than hand-writing `==` here.
+public struct BudgetAlertContext: Sendable {
   public let progress: [BudgetProgress]
   public let firedKeys: Set<String>
   public let settings: NotificationSettings
