@@ -10,11 +10,15 @@ let package = Package(
   dependencies: [
     .package(path: "../NomiCore"),
     // `.upToNextMinor`, not `from:` — design §2.16. Under a plain `from:` the
-    // range is 0.4.0 ..< 1.0.0, and U2b reaches `FramingParser` through
-    // `@_spi(NIOIMAPInternal)`. SPI carries no semver promise, so a patch bump
-    // could remove it with no signal at all. Pinning to the minor means that
-    // breakage arrives as a deliberate bump rather than as a red CI run nobody
-    // changed anything to cause.
+    // range is 0.4.0 ..< 1.0.0, and a 0.x library makes no compatibility promise
+    // across a minor: 0.5.0 may change `ResponseParser` freely. Pinning to the
+    // minor means breakage arrives as a deliberate bump rather than as a red CI
+    // run nobody changed anything to cause.
+    //
+    // §2.16 argued this from the `@_spi(NIOIMAPInternal)` import U2b needed to
+    // reach `FramingParser`. That import is gone — `FramingParser` turned out to
+    // be the server side and was removed from the read path entirely, so this
+    // package now uses only public API. The pin stays on the 0.x argument above.
     .package(url: "https://github.com/apple/swift-nio-imap.git", .upToNextMinor(from: "0.4.0")),
     // Authorised by design §2.15, for one reason only: naming `ByteBuffer` at
     // the call site. `NIOIMAPCore.ResponseParser` is already reachable through

@@ -1,0 +1,41 @@
+# Recorded-shape IMAP session: connect, examine, incremental search, fetch, logout.
+#
+# STRUCTURAL, like the .eml fixtures. Built from RFC 3501 section 8 and the
+# documented Gmail IMAP dialogue — not captured from a live server, because no
+# one on this team has mailbox access (design 2.5.1).
+#
+# "C: " lines are exactly what the client must put on the wire, minus the CRLF.
+# "S: " lines are the server's reply. Blank lines and "#" comments are ignored.
+#
+# The one line that matters most is the UID FETCH: BODY.PEEK[], never BODY[].
+# BODY[] marks the user's real mail as read as a side effect of scanning it (R4).
+
+S: * OK Gimap ready for requests
+
+C: a001 LOGIN "shivam@example.com" "abcd efgh ijkl mnop"
+S: a001 OK shivam@example.com authenticated (Success)
+
+C: a002 EXAMINE "INBOX"
+S: * FLAGS (\Answered \Flagged \Draft \Deleted \Seen)
+S: * 4218 EXISTS
+S: * 0 RECENT
+S: * OK [UIDVALIDITY 900100] UIDs valid
+S: * OK [UIDNEXT 4392] Predicted next UID
+S: a002 OK [READ-ONLY] EXAMINE completed
+
+C: a003 UID SEARCH UID 4388:*
+S: * SEARCH 4388 4389 4390 4391
+S: a003 OK SEARCH completed
+
+C: a004 UID FETCH 4389:4391 (UID BODY.PEEK[])
+S: * 4211 FETCH (UID 4389 BODY[] {115}
+S: From: <alerts@hdfcbank.net>
+S: Subject: Transaction alert
+S:
+S: Rs. 1,299.50 has been debited from account no. XX4471.
+S: )
+S: a004 OK Success
+
+C: a005 LOGOUT
+S: * BYE LOGOUT Requested
+S: a005 OK 73 good day (Success)
