@@ -22,6 +22,11 @@ let package = Package(
         "CoreXLSX",
         "SwiftSoup",
       ],
+      // senders.json is Layer 1's data and must ship in the bundle. Authorised
+      // by design §2.10, which permits this declaration on this target and
+      // NOTHING else in this file: no dependency added, removed or re-pinned,
+      // no platforms change, no new target.
+      resources: [.process("Resources")],
       swiftSettings: [.enableExperimentalFeature("StrictConcurrency=targeted")]
     ),
     .testTarget(

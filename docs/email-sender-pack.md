@@ -5,7 +5,9 @@ bank changes its format.
 
 Design references: §1.4 (two layers plus a pre-filter), §1.5 (the extractor
 seam), §2.5.1 and §2.5.2 (why the bank list is discovered rather than supplied),
-R4 (IMAP), R6 and R19 (why green CI here does not mean the amounts are right).
+R4 (IMAP), R6 and R19 (why green CI here does not mean the amounts are right),
+§2.10 (the pack is a real resource) and §2.14 (the transport is U2b, not this
+unit).
 
 ---
 
@@ -17,8 +19,8 @@ R4 (IMAP), R6 and R19 (why green CI here does not mean the amounts are right).
 uses.** Nobody was asked which banks they bank with, and nobody read anyone's
 mail to work it out — §2.5.1 sets out why both routes were rejected, and §2.5.2
 records that the decision was reversed and why it changes nothing here: no agent
-on this team has mailbox access, and the IMAP client that would grant it is this
-unit's own deliverable.
+on this team has mailbox access, and the IMAP client that would grant it is the
+deliverable of U2b, the unit downstream of this one (§2.14).
 
 If three of the five are wrong, the app still works. Those senders fall through
 to the Layer-2 heuristic extractor, every row they produce is flagged
@@ -103,38 +105,33 @@ right is the worst failure available here (R6).
 
 ## Adding or fixing a bank
 
-1. Open `Packages/NomiIngest/Sources/NomiIngest/Resources/SendersPackJSON.swift`.
+1. Open `Packages/NomiIngest/Sources/NomiIngest/Resources/senders.json`.
 2. Add an entry, or edit the regexes on an existing one.
 3. Add **at least two** `.eml` fixtures under
    `Packages/NomiIngest/Tests/NomiIngestTests/Fixtures/Mail/` and an expectation
    row in `MailExtractionFixtureTests`.
 
-That is the whole change. No Swift outside the JSON literal moves.
+That is the whole change. No Swift moves at all — the pack is data, and that is
+the point (§2.5.1).
 
-### Why the pack is a Swift file and not `senders.json`
+### Where the pack lives
 
-The design specifies `Resources/senders.json`, loaded as a bundled resource. That
-cannot be done as the repo stands: **U0 froze `NomiIngest/Package.swift` with no
-`resources:` declaration**, so SwiftPM never synthesises `Bundle.module` and a
-bundled JSON file is unreachable at runtime.
+`Packages/NomiIngest/Sources/NomiIngest/Resources/senders.json`, shipped as a
+real SPM resource. `Packages/NomiIngest/Package.swift` carries
+`resources: [.process("Resources")]` on the `NomiIngest` target, which design
+§2.10 authorised for exactly this and for nothing else in that file.
 
-Editing a frozen manifest was not this unit's call to make, and it is not free
-either — the same target is built by U3's `File/`, U4's `Pipeline/` and U8's app,
-so a mistake there breaks three other branches. The pack therefore ships as JSON
-held in a Swift raw-string literal, in the directory the design assigns it,
-decoded through exactly the `Codable` path a bundled file would use.
+It is a resource and not a Swift literal on purpose. §2.5.1 and §2.5.2 both rest
+on the pack being **data** — correcting it is one JSON entry per bank, no code
+change, no unit, no re-plan. The pack is *expected* to be partly wrong, so that
+is the one property not to trade away.
 
-To make it a real resource later, the entire change is:
-
-1. move the literal into `Resources/senders.json`
-2. add `resources: [.process("Resources")]` to the `NomiIngest` target
-3. in `SenderPack.bundled`, swap `SendersPackJSON.raw.data(using:)` for
-   `Bundle.module.url(forResource: "senders", withExtension: "json")`
-
-Nothing else moves. §1.4's CloudKit-hosted pack, when it arrives, slots into the
-same place.
-
----
+A missing or malformed file degrades to an empty pack rather than trapping:
+Layer 2 still extracts and every row lands in the review queue. That failure is
+quiet by design, which is why `testTheBundledPackIsLoadedFromAnActualResourceFile`
+asserts the file is genuinely in the bundle — drop the `resources:` line and
+Layer 1 would match nothing, every mail would fall through flagged, and no error
+would appear anywhere.
 
 ## Dropping real `.eml` samples in
 
@@ -239,23 +236,27 @@ needs. Prettiness loses to the join.
 
 ---
 
-## The transport, and what is missing
+## The transport — U2b, a separate unit
 
 Everything above reads a `MailMessage`. Getting one off a server is
-`MailFetching`, and **this unit ships the seam, the sync engine that drives it,
-and no IMAP implementation.** See the PR for the escalation; the short version is
-R4's instruction to timebox the `swift-nio-imap` route rather than grind, taken
-in a week where CI cannot compile anything.
+`MailFetching`, and that protocol is **implemented by U2b (`mail-transport`)**,
+not here. Design §2.14 split it out: none of it can be verified without a live
+mailbox, and this unit's tested half should not wait on it.
+
+U2b owns `Mail/Transport/**` and holds three things — the `MailFetching`
+implementation, the Keychain credential store, and the `MailConnectionService`
+conformance U8 wires. `Mail/*.swift` at one level is this unit and stops at the
+seam.
 
 Whatever implements `MailFetching` must:
 
-- connect over **TLS on 993**, authenticating with an app-specific password read
-  from `KeychainCredentialStore` (§1.1)
-- `EXAMINE` rather than `SELECT` where possible — read-only by construction
+- connect over **TLS on 993**, authenticating with an app-specific password from
+  the Keychain (§1.1)
+- `EXAMINE` rather than `SELECT` — read-only by construction
 - **`UID FETCH … (BODY.PEEK[])`, never `BODY[]`** (R4). `BODY[]` sets `\Seen` on
   the user's real mail while merely scanning it: a visible, annoying,
   hard-to-undo regression in a mailbox this app does not own
-- carry `UIDVALIDITY` out of `SELECT`, so `MailSyncEngine` can tell a normal
+- carry `UIDVALIDITY` out of the select, so `MailSyncEngine` can tell a normal
   incremental sync from a mailbox rebuild
 - hand raw message bytes to `RFC822Message.parse` and nothing else
 

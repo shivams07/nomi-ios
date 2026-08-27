@@ -178,6 +178,22 @@ final class MailParsingTests: XCTestCase {
 
   // MARK: - The pack
 
+  /// The pack is a real bundled resource, not a Swift literal (§2.10), which
+  /// means it can fail in a way a literal could not: if the `resources:` line on
+  /// the NomiIngest target is ever dropped, `Bundle.module` stops carrying the
+  /// file and `SenderPack.bundled` silently degrades to empty. Layer 1 would
+  /// then match nothing, every mail would fall to Layer 2, and every row would
+  /// arrive flagged — a plausible-looking outcome with no error anywhere. This
+  /// asserts the file is actually in the bundle.
+  func testTheBundledPackIsLoadedFromAnActualResourceFile() throws {
+    let url = try XCTUnwrap(
+      SenderPack.resourceBundle.url(forResource: "senders", withExtension: "json"),
+      "senders.json is not in the bundle — check `resources:` on the NomiIngest target")
+    XCTAssertFalse(try Data(contentsOf: url).isEmpty)
+    XCTAssertNotNil(SenderPack.load())
+    XCTAssertFalse(SenderPack.bundled.entries.isEmpty)
+  }
+
   func testTheBundledPackShipsFiveProvisionalEntriesAndSaysItIsProvisional() {
     let pack = SenderPack.bundled
     XCTAssertEqual(pack.entries.count, 5)

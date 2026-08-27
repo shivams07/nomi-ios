@@ -27,20 +27,32 @@ public struct SenderPack: Codable, Sendable, Equatable {
     entries.first { $0.matches(domain: domain, subject: subject) }
   }
 
-  /// The bundled pack. Parsed once.
+  /// The bundled pack, read from `Resources/senders.json`. Parsed once.
   ///
-  /// If the JSON is ever malformed this returns an empty pack rather than
-  /// trapping: Layer 2 still extracts, every row lands in the review queue, and
-  /// the user sees degraded results instead of a crash on launch.
-  public static let bundled: SenderPack = {
-    guard let data = SendersPackJSON.raw.data(using: .utf8),
-      let pack = try? JSONDecoder().decode(SenderPack.self, from: data)
-    else {
-      return SenderPack(
-        readme: "", version: 0, candidateDomains: [], candidateDomainTokens: [], entries: [])
-    }
-    return pack
-  }()
+  /// It is a real resource rather than a Swift literal because §2.5.1 and §2.5.2
+  /// both rest on the pack being *data*: correcting it is one JSON entry per
+  /// bank, no code change and no unit. The pack is *expected* to be partly wrong,
+  /// so that property is the one thing not to trade away. `Package.swift` carries
+  /// the `resources:` line §2.10 authorised for exactly this.
+  ///
+  /// A malformed or missing file returns an empty pack rather than trapping:
+  /// Layer 2 still extracts, every row lands in the review queue, and the user
+  /// sees degraded results instead of a crash on launch.
+  public static let bundled: SenderPack = load() ?? .empty
+
+  static let empty = SenderPack(
+    readme: "", version: 0, candidateDomains: [], candidateDomainTokens: [], entries: [])
+
+  /// `Bundle.module` is synthesised per target, so the test target cannot name
+  /// NomiIngest's. This is how a test reaches it.
+  static var resourceBundle: Bundle { .module }
+
+  static func load(from bundle: Bundle = .module) -> SenderPack? {
+    guard let url = bundle.url(forResource: "senders", withExtension: "json"),
+      let data = try? Data(contentsOf: url)
+    else { return nil }
+    return try? JSONDecoder().decode(SenderPack.self, from: data)
+  }
 
   public init(
     readme: String,
