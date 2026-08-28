@@ -53,6 +53,7 @@ enum BudgetsPreviewSupport {
     return container
   }
 
+  @MainActor
   static func makeInsightsStore(progress: [BudgetProgress] = sampleProgress) -> FixedBudgetProgressInsightsStore {
     FixedBudgetProgressInsightsStore(progress: progress)
   }
