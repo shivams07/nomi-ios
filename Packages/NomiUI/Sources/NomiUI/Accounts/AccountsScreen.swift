@@ -143,10 +143,10 @@ private enum AccountsScreenFixtures {
 
   static let accounts: [Account] = [positive, negative, zeroTransactions, archived]
 
-  static let transactions: [Transaction] = [
-    Transaction(date: Date(timeIntervalSinceNow: -30 * 86400), amountMinor: 128_450_00, directionRaw: Direction.credit.rawValue, accountID: positive.id),
-    Transaction(date: Date(timeIntervalSinceNow: -20 * 86400), amountMinor: 4_200_00, directionRaw: Direction.debit.rawValue, accountID: negative.id),
-    Transaction(date: Date(timeIntervalSinceNow: -90 * 86400), amountMinor: 900_00, directionRaw: Direction.debit.rawValue, accountID: archived.id),
+  static let transactions: [NomiCore.Transaction] = [
+    NomiCore.Transaction(date: Date(timeIntervalSinceNow: -30 * 86400), amountMinor: 128_450_00, directionRaw: Direction.credit.rawValue, accountID: positive.id),
+    NomiCore.Transaction(date: Date(timeIntervalSinceNow: -20 * 86400), amountMinor: 4_200_00, directionRaw: Direction.debit.rawValue, accountID: negative.id),
+    NomiCore.Transaction(date: Date(timeIntervalSinceNow: -90 * 86400), amountMinor: 900_00, directionRaw: Direction.debit.rawValue, accountID: archived.id),
   ]
 }
 
