@@ -111,6 +111,21 @@ private let examineOK = """
   a002 OK [READ-ONLY] EXAMINE completed\r\n
   """
 
+/// Midnight UTC on the given day. The IMAP date form carries no time, and the
+/// formatter in `IMAPCommand` is pinned to UTC and `en_US_POSIX` — building the
+/// input the same way keeps these assertions readable and keeps a machine in
+/// another timezone from changing the expected string.
+private func utcDate(_ year: Int, _ month: Int, _ day: Int) -> Date {
+  var components = DateComponents()
+  components.year = year
+  components.month = month
+  components.day = day
+  components.hour = 12
+  var calendar = Calendar(identifier: .gregorian)
+  calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
+  return calendar.date(from: components)!
+}
+
 final class NWIMAPFetcherTests: XCTestCase {
 
   private func connected(
@@ -256,8 +271,7 @@ final class NWIMAPFetcherTests: XCTestCase {
       "* SEARCH 4388 4389 4390\r\na003 OK SEARCH completed\r\n",
     ])
 
-    let uids = try await fetcher.uids(
-      since: Date(timeIntervalSince1970: 1_754_000_000), in: "INBOX")
+    let uids = try await fetcher.uids(since: utcDate(2025, 8, 1), in: "INBOX")
 
     XCTAssertEqual(uids, [4388, 4389, 4390])
     XCTAssertTrue(channel.sentText.contains("a003 UID SEARCH SINCE 01-Aug-2025\r\n"), channel.sentText)
@@ -270,12 +284,14 @@ final class NWIMAPFetcherTests: XCTestCase {
     ])
 
     _ = try await fetcher.uids(
-      since: Date(timeIntervalSince1970: 1_754_000_000),
-      before: Date(timeIntervalSince1970: 1_756_600_000),
-      in: "INBOX")
+      since: utcDate(2025, 8, 1), before: utcDate(2025, 9, 1), in: "INBOX")
 
+    // `SINCE` inclusive, `BEFORE` exclusive, both date-only and compared in the
+    // server's timezone. The engine overlaps its windows by a day because of
+    // that; the transport passes the dates through untouched rather than
+    // "correcting" a boundary.
     XCTAssertTrue(
-      channel.sentText.contains("a003 UID SEARCH SINCE 01-Aug-2025 BEFORE 31-Aug-2025\r\n"),
+      channel.sentText.contains("a003 UID SEARCH SINCE 01-Aug-2025 BEFORE 01-Sep-2025\r\n"),
       channel.sentText)
   }
 
