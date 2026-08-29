@@ -2,61 +2,6 @@ import Foundation
 import NomiCore
 import NomiIngest
 
-/// **The mail transport does not exist, and this is what stands in its place.**
-///
-/// U2b's assignment had three deliverables. Two landed — the Keychain store and
-/// the `MailConnectionService` conformance — and the first, "a `MailFetching`
-/// implementation: connect, EXAMINE, UID SEARCH, UID FETCH BODY.PEEK[], IDLE
-/// while foregrounded", did not. Its own first commit says so
-/// (`93582ce ... parser blocked`). Everything *above* the socket shipped and is
-/// tested: `IMAPCommand`, `NIOIMAPResponseReader`, `IMAPFetchSequencer`. The
-/// NWConnection/TLS layer that drives them was never written, and grepping the
-/// repo for conformers finds only test doubles.
-///
-/// U8 composes against the seam, so the composition root is complete and
-/// correct; it has nothing real to put behind it. This type is that nothing,
-/// named for what it is.
-///
-/// **It fails loudly rather than plausibly.** The tempting alternative — return
-/// an empty mailbox, an empty UID list, a zero `SyncSummary` — would make a
-/// missing transport indistinguishable from "you have no new transactions",
-/// which is the exact silent-zero failure §2.16 arranged the whole read path to
-/// avoid. Throwing puts `.failed` on the connection state, which
-/// `SyncStatusRow` and `SettingsScreen` already render.
-public struct UnavailableMailFetcher: MailFetching {
-  public init() {}
-
-  public func connect(_ credentials: IMAPCredentials) async throws {
-    throw MailError.unknown("Mail sync is not available in this build: no IMAP transport is present.")
-  }
-
-  /// Succeeds, alone among these. `IMAPMailConnectionService.disconnect`
-  /// deletes the stored credential in a `defer` after this call, and a throw
-  /// here would leave a password in the Keychain for a mailbox the user just
-  /// disconnected.
-  public func disconnect() async throws {}
-
-  public func selectMailbox(_ name: String) async throws -> MailboxState {
-    throw MailError.connectionFailed
-  }
-
-  public func uids(since date: Date, in mailbox: String) async throws -> [UInt32] {
-    throw MailError.connectionFailed
-  }
-
-  public func uids(since: Date, before: Date, in mailbox: String) async throws -> [UInt32] {
-    throw MailError.connectionFailed
-  }
-
-  public func uids(after uid: UInt32, in mailbox: String) async throws -> [UInt32] {
-    throw MailError.connectionFailed
-  }
-
-  public func fetch(uids: [UInt32], in mailbox: String) async throws -> [MailMessage] {
-    throw MailError.connectionFailed
-  }
-}
-
 /// The assembled mail side: engine, connection service, and the cursor's
 /// persistence.
 ///

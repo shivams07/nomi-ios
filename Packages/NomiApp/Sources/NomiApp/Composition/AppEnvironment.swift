@@ -36,11 +36,17 @@ public final class AppEnvironment: ObservableObject {
 
   public var mailConnectionService: any MailConnectionService { mail.service }
 
+  /// Every default here is the real implementation; this is the one place that
+  /// chooses. `mailFetcher` is U2c's `NWConnection`/TLS transport — until §2.23
+  /// it defaulted to a stub that threw on every call, and that stub no longer
+  /// exists. The parameters stay injectable so a test can substitute a double,
+  /// but nothing does today: `NomiAppScene.shared` is the only construction and
+  /// it takes all four defaults.
   public init(
     container: ModelContainer,
     preferences: any KeyValueStoring = UserDefaultsKeyValueStore(),
     credentials: any MailCredentialStoring = KeychainCredentialStore(),
-    mailFetcher: any MailFetching = UnavailableMailFetcher(),
+    mailFetcher: any MailFetching = NWIMAPFetcher(),
     scheduler: any BudgetNotificationScheduling = BudgetNotificationScheduler()
   ) {
     self.container = container

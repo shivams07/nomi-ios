@@ -9,9 +9,11 @@ import SwiftUI
 ///
 /// **Both steps can be left, and that is not a convenience.** Mail is one of two
 /// ingest routes — the other is CSV/XLSX import — so a user who does not want to
-/// hand this app a mailbox password must still reach the app. And with no IMAP
-/// transport in the build (`UnavailableMailFetcher`), connecting *cannot*
-/// succeed; without a way past, first run would be a dead end.
+/// hand this app a mailbox password must still reach the app. And connecting
+/// can fail for a reason the user cannot fix on this screen: a Google app
+/// password needs 2-Step Verification, and is not issued at all for
+/// work/school or Advanced Protection accounts (R3). Without a way past, first
+/// run would be a dead end for them.
 struct OnboardingFlow: View {
   @ObservedObject var environment: AppEnvironment
   let step: OnboardingStep
