@@ -63,7 +63,10 @@ final class StreamHubTests: XCTestCase {
     let stream = hub.stream()
     hub.publish(3)
 
-    XCTAssertEqual(await collect(stream, count: 2), [2, 3])
+    // Hoisted: XCTAssertEqual takes autoclosures, and an autoclosure
+    // cannot carry an `await`.
+    let replayedAndNew = await collect(stream, count: 2)
+    XCTAssertEqual(replayedAndNew, [2, 3])
   }
 
   func testASubscriberWithNoPublishedValueYetReceivesNothingUpFront() async {
@@ -71,7 +74,8 @@ final class StreamHubTests: XCTestCase {
     let stream = hub.stream()
     hub.publish(7)
 
-    XCTAssertEqual(await collect(stream, count: 1), [7])
+    let received = await collect(stream, count: 1)
+    XCTAssertEqual(received, [7])
   }
 
   func testFinishEndsExistingStreams() async {
