@@ -6,27 +6,30 @@ import NomiCore
 /// tables, parsed via SwiftSoup; a true legacy BIFF `.xls` throws
 /// `.unsupportedLegacyXLS` (R7).
 ///
-/// Produces mapped rows only — never writes a `Transaction` to the store.
-/// `ImportDedupeStore` is this unit's stand-in for the real write path
-/// (U4's `IngestSink`, not yet built) so that re-importing the same file is
-/// still idempotent within this service's lifetime.
+/// Mapped rows are handed to `IngestPipeline` (via `DraftIngesting`, same
+/// seam `MailSyncEngine` uses) as `TransactionDraft`s — the pipeline's own
+/// dedupe is what makes re-importing the same file idempotent; this service
+/// no longer tracks that itself.
 public final class FileImportServiceImpl: FileImportService, @unchecked Sendable {
   private let mappingStore: ColumnMappingStore
-  private let dedupeStore: ImportDedupeStore
+  private let pipeline: any DraftIngesting
   private let calendar: Calendar
+  private let now: @Sendable () -> Date
 
   public init(
     mappingStore: ColumnMappingStore = InMemoryColumnMappingStore(),
-    dedupeStore: ImportDedupeStore = InMemoryImportDedupeStore(),
+    pipeline: any DraftIngesting,
     calendar: Calendar = {
       var cal = Calendar(identifier: .gregorian)
       cal.timeZone = TimeZone(identifier: "Asia/Kolkata") ?? .current
       return cal
-    }()
+    }(),
+    now: @escaping @Sendable () -> Date = { Date() }
   ) {
     self.mappingStore = mappingStore
-    self.dedupeStore = dedupeStore
+    self.pipeline = pipeline
     self.calendar = calendar
+    self.now = now
   }
 
   public func inspect(_ url: URL) async throws -> ImportPreview {
@@ -84,25 +87,22 @@ public final class FileImportServiceImpl: FileImportService, @unchecked Sendable
       throw ImportError.noParseableRows
     }
 
-    // Two rows in the SAME file sharing a dedupeKey (e.g. a duplicated export
-    // row) only count once each: the first occurrence is "created", the rest
-    // "merged" — exactly like merging against a prior import.
-    var seenThisRun: Set<String> = []
-    var created = 0
-    var merged = 0
-    for row in parsed {
-      let alreadyKnown = seenThisRun.contains(row.dedupeKey)
-        || !dedupeStore.containsAny(of: [row.dedupeKey]).isEmpty
-      if alreadyKnown {
-        merged += 1
-      } else {
-        created += 1
-        seenThisRun.insert(row.dedupeKey)
-      }
+    let capturedAt = now()
+    let drafts = parsed.map { row in
+      TransactionDraft(
+        date: row.date,
+        descriptionText: row.descriptionText,
+        amountMinor: row.amountMinor,
+        direction: row.direction,
+        accountID: accountID,
+        source: .file,
+        externalID: row.externalID,
+        capturedAt: capturedAt
+      )
     }
-    dedupeStore.record(seenThisRun)
 
-    return ImportSummary(created: created, merged: merged, skipped: skipped)
+    let result = try await pipeline.ingest(drafts)
+    return ImportSummary(created: result.created, merged: result.merged, skipped: skipped)
   }
 
   public func saveMapping(_ mapping: ColumnMapping, signature: String, bankLabel: String) throws {
