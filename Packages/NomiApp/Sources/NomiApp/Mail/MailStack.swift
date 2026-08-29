@@ -123,7 +123,11 @@ public actor MailStack {
   /// without retyping an app password. Silent by design: a missing credential
   /// is the ordinary "never connected" case, not an error to surface.
   public func reconnectFromKeychain(_ store: any MailCredentialStoring) async {
-    guard let stored = try? store.load(), let credentials = stored else { return }
+    // One `guard let`, not two. `load()` returns `IMAPCredentials?` and `try?`
+    // flattens rather than nesting, so there is no second layer to unwrap —
+    // "no credential stored" and "the keychain read failed" arrive as the same
+    // nil, and both mean the same thing here: nothing to reconnect to.
+    guard let credentials = try? store.load() else { return }
     try? await connectionService.connect(credentials)
   }
 
