@@ -80,13 +80,20 @@ public final class AppEnvironment: ObservableObject {
     self.mail = mail
     self.sync = AppSyncCoordinator(mail: mail, pipeline: pipeline)
 
-    // `FileImportServiceImpl` maps rows and returns counts; it does not write.
-    // Its own doc comment says so, naming "U4's `IngestSink`, not yet built" —
-    // which now exists as `IngestPipeline.ingest`. Bridging the two needs
-    // `RowMapper` and `ParsedRow`, both `internal` to `NomiIngest`, so it
-    // cannot be done from this package. Wired anyway so the import UI is real;
-    // flagged in this unit's PR as work for `NomiIngest/File/**`.
-    self.fileImportService = FileImportServiceImpl()
+    // File import writes through the same pipeline mail does. U3b (#17) closed
+    // the gap this unit reported: `commit` used to map rows, count them against
+    // an in-memory dedupe set and return an `ImportSummary` without ever
+    // writing a `Transaction`.
+    //
+    // It was fixed from the other side of the seam — `FileImportServiceImpl`
+    // now takes `any DraftIngesting` — rather than by exposing `RowMapper` and
+    // `ParsedRow`, which is what this comment previously said was needed. That
+    // is the better fix: the drafts never leave `NomiIngest`, and the composition
+    // root supplies the sink instead of reimplementing the mapping.
+    //
+    // Same `pipeline` instance the mail stack and the sync coordinator hold, so
+    // both ingest routes serialize through one actor and one dedupe pass.
+    self.fileImportService = FileImportServiceImpl(pipeline: pipeline)
 
     // MARK: Post-commit wiring
     //
