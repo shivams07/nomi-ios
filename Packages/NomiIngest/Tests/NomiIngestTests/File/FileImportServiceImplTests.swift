@@ -11,8 +11,10 @@ final class FileImportServiceImplTests: XCTestCase {
       .appendingPathComponent(name)
   }
 
-  private func makeService() -> FileImportServiceImpl {
-    FileImportServiceImpl()
+  private func makeService() async -> FileImportServiceImpl {
+    let store = FakePipelineStore()
+    let pipeline = await Fixture.pipeline(store: store)
+    return FileImportServiceImpl(pipeline: pipeline, now: Fixture.clock)
   }
 
   // MARK: - Provisional bank presets auto-map with zero user input
@@ -27,7 +29,7 @@ final class FileImportServiceImplTests: XCTestCase {
     ]
 
     for (file, bankLabel) in presetFixtures {
-      let service = makeService()
+      let service = await makeService()
       let preview = try await service.inspect(fixture(file))
       XCTAssertEqual(preview.detectedBankLabel, bankLabel, "\(file) should auto-detect \(bankLabel)")
       XCTAssertNotNil(preview.suggestedMapping, "\(file) should suggest a mapping with zero input")
@@ -36,7 +38,7 @@ final class FileImportServiceImplTests: XCTestCase {
   }
 
   func testPresetCommitProducesExpectedDirectionsAndAmounts() async throws {
-    let service = makeService()
+    let service = await makeService()
     let preview = try await service.inspect(fixture("sbi_preset.csv"))
     let mapping = try XCTUnwrap(preview.suggestedMapping)
 
@@ -49,7 +51,7 @@ final class FileImportServiceImplTests: XCTestCase {
   // MARK: - Unknown format
 
   func testUnknownFormatReturnsNilMappingWithHeadersAndSamples() async throws {
-    let service = makeService()
+    let service = await makeService()
     let preview = try await service.inspect(fixture("unknown_format.csv"))
 
     XCTAssertNil(preview.suggestedMapping)
@@ -62,7 +64,7 @@ final class FileImportServiceImplTests: XCTestCase {
   // MARK: - Zero-row file
 
   func testZeroRowFileReportsZeroParseableRows() async throws {
-    let service = makeService()
+    let service = await makeService()
     let preview = try await service.inspect(fixture("zero_rows.csv"))
 
     XCTAssertEqual(preview.parseableRowCount, 0)
@@ -71,7 +73,7 @@ final class FileImportServiceImplTests: XCTestCase {
   // MARK: - Bad encoding
 
   func testBadEncodingThrowsUnreadableEncoding() async throws {
-    let service = makeService()
+    let service = await makeService()
     do {
       _ = try await service.inspect(fixture("bad_encoding.csv"))
       XCTFail("expected .unreadableEncoding")
@@ -83,7 +85,7 @@ final class FileImportServiceImplTests: XCTestCase {
   // MARK: - True legacy BIFF .xls
 
   func testLegacyBIFFThrowsUnsupportedLegacyXLS() async throws {
-    let service = makeService()
+    let service = await makeService()
     do {
       _ = try await service.inspect(fixture("legacy_biff.xls"))
       XCTFail("expected .unsupportedLegacyXLS")
@@ -95,7 +97,7 @@ final class FileImportServiceImplTests: XCTestCase {
   // MARK: - Content-sniffing: HTML masquerading as .xls
 
   func testHTMLDisguisedAsXLSIsContentSniffedAndParsed() async throws {
-    let service = makeService()
+    let service = await makeService()
     let preview = try await service.inspect(fixture("html_statement.xls"))
 
     XCTAssertEqual(preview.detectedBankLabel, "Kotak")
@@ -106,7 +108,7 @@ final class FileImportServiceImplTests: XCTestCase {
   // MARK: - Saved mapping reuse
 
   func testSavedMappingIsReusedForSameHeaderSignature() async throws {
-    let service = makeService()
+    let service = await makeService()
     let firstPreview = try await service.inspect(fixture("unknown_format.csv"))
     XCTAssertNil(firstPreview.suggestedMapping)
 
@@ -128,7 +130,7 @@ final class FileImportServiceImplTests: XCTestCase {
   // MARK: - Idempotent re-import survives row reordering
 
   func testReimportWithShuffledRowsProducesZeroNewTransactions() async throws {
-    let service = makeService()
+    let service = await makeService()
     let preview = try await service.inspect(fixture("sbi_preset.csv"))
     let mapping = try XCTUnwrap(preview.suggestedMapping)
 
