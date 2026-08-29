@@ -33,16 +33,23 @@ public struct LedgerScreen: View {
     self.categoryStore = categoryStore
   }
 
+  // `id` carries no unique constraint anywhere in NomiCore (R5 — CloudKit
+  // doesn't support them), so two devices can genuinely insert
+  // `Category`/`Account` rows sharing an id before first sync reconciles
+  // them (nothing reconciles Category/Account duplicates the way
+  // `IngestPipeline.reconcile()` does for `Transaction`). `uniqueKeysWithValues:`
+  // traps on a duplicate key; `uniquingKeysWith:` doesn't. Same guard Park
+  // added to `SwiftDataInsightsStore.categoryMap()` for the identical reason.
   private var categoryNamesByID: [UUID: String] {
-    Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0.name) })
+    Dictionary(categories.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
   }
 
   private var categoryPaletteSlotByID: [UUID: Int] {
-    Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0.paletteSlot) })
+    Dictionary(categories.map { ($0.id, $0.paletteSlot) }, uniquingKeysWith: { first, _ in first })
   }
 
   private var accountNamesByID: [UUID: String] {
-    Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0.displayName) })
+    Dictionary(accounts.map { ($0.id, $0.displayName) }, uniquingKeysWith: { first, _ in first })
   }
 
   private var filtered: [NomiCore.Transaction] {
