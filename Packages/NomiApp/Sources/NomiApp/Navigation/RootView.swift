@@ -74,7 +74,10 @@ struct RootView: View {
 
     case .ledger:
       NavigationStack {
-        LedgerScreen(insightsStore: environment.insightsStore, cache: environment.cache)
+        // A placeholder until U14 builds the screen and U8b swaps it in
+        // (§2.19(2)). `LedgerTabHost` takes the whole environment so that swap
+        // stays inside one file.
+        LedgerTabHost(environment: environment)
       }
 
     case .reports:
