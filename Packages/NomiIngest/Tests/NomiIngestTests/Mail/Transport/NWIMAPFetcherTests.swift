@@ -63,33 +63,39 @@ private final class ScriptedChannel: IMAPByteChannel, @unchecked Sendable {
   }
 
   func open(host: String, port: Int) async throws {
-    lock.lock()
-    log.append(.open(host: host, port: port))
-    lock.unlock()
+    record(.open(host: host, port: port))
   }
 
   func send(_ bytes: [UInt8]) async throws {
-    lock.lock()
-    log.append(.send(bytes))
-    lock.unlock()
+    record(.send(bytes))
   }
 
   func receive() async throws -> [UInt8] {
-    lock.lock()
-    log.append(.receive)
-    guard !replies.isEmpty else {
-      lock.unlock()
-      throw IMAPTransportError.connectionClosed
-    }
-    let next = replies.removeFirst()
-    lock.unlock()
+    guard let next = takeNextReply() else { throw IMAPTransportError.connectionClosed }
     return next
   }
 
   func close() async {
+    record(.close)
+  }
+
+  // The lock is taken only in synchronous helpers. `NSLock.lock()` inside an
+  // `async` function is a warning today and an error in the Swift 6 language
+  // mode — same reason `NWConnectionChannel.close()` delegates to
+  // `takeConnection()`.
+
+  private func record(_ operation: Operation) {
     lock.lock()
-    log.append(.close)
+    log.append(operation)
     lock.unlock()
+  }
+
+  private func takeNextReply() -> [UInt8]? {
+    lock.lock()
+    defer { lock.unlock() }
+    log.append(.receive)
+    guard !replies.isEmpty else { return nil }
+    return replies.removeFirst()
   }
 }
 

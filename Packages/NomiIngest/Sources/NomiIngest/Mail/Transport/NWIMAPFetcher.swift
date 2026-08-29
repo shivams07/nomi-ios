@@ -86,7 +86,8 @@ public final class NWConnectionChannel: IMAPByteChannel, @unchecked Sendable {
     )
     setConnection(connection)
 
-    try await perform(timeout: timeouts.connect) { finish in
+    try await perform(timeout: timeouts.connect) {
+      (finish: @escaping @Sendable (Result<Void, Error>) -> Void) in
       connection.stateUpdateHandler = { state in
         switch state {
         case .ready:
@@ -113,7 +114,8 @@ public final class NWConnectionChannel: IMAPByteChannel, @unchecked Sendable {
 
   public func send(_ bytes: [UInt8]) async throws {
     let connection = try requireConnection()
-    try await perform(timeout: timeouts.write) { finish in
+    try await perform(timeout: timeouts.write) {
+      (finish: @escaping @Sendable (Result<Void, Error>) -> Void) in
       connection.send(
         content: Data(bytes),
         completion: .contentProcessed { error in
@@ -129,7 +131,8 @@ public final class NWConnectionChannel: IMAPByteChannel, @unchecked Sendable {
 
   public func receive() async throws -> [UInt8] {
     let connection = try requireConnection()
-    return try await perform(timeout: timeouts.read) { finish in
+    return try await perform(timeout: timeouts.read) {
+      (finish: @escaping @Sendable (Result<[UInt8], Error>) -> Void) in
       // `minimumIncompleteLength: 1` — take whatever arrived. Asking for more
       // would block until the peer happened to send it, and at this layer there
       // is no framing to predict a length from.
@@ -149,13 +152,22 @@ public final class NWConnectionChannel: IMAPByteChannel, @unchecked Sendable {
   }
 
   public func close() async {
-    lock.lock()
-    let existing = connection
-    connection = nil
-    lock.unlock()
-
+    // The lock is taken in a synchronous helper, not here: calling
+    // `NSLock.lock()` directly in an async function is a warning today and an
+    // error in the Swift 6 language mode, because a suspension while holding a
+    // non-async lock is a deadlock waiting to happen. Nothing suspends inside
+    // `takeConnection`, which is what makes it safe.
+    let existing = takeConnection()
     existing?.stateUpdateHandler = nil
     existing?.cancel()
+  }
+
+  private func takeConnection() -> NWConnection? {
+    lock.lock()
+    defer { lock.unlock() }
+    let existing = connection
+    connection = nil
+    return existing
   }
 
   // MARK: -
@@ -185,9 +197,12 @@ public final class NWConnectionChannel: IMAPByteChannel, @unchecked Sendable {
   ///   `await` alone would leave the underlying callback pending forever and
   ///   leak the connection. The cancel forces it to complete, and the guard
   ///   absorbs whichever arrives second.
+  /// The completion is `@Sendable` because Network.framework's callbacks are:
+  /// `stateUpdateHandler`, `send(completion:)` and `receive` all take
+  /// `@Sendable` closures, so anything they capture has to be too.
   private func perform<T>(
     timeout: TimeInterval,
-    _ body: (@escaping (Result<T, Error>) -> Void) -> Void
+    _ body: (@escaping @Sendable (Result<T, Error>) -> Void) -> Void
   ) async throws -> T {
     let resumeGuard = ResumeGuard()
     return try await withCheckedThrowingContinuation { continuation in
