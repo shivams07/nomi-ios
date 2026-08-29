@@ -52,12 +52,16 @@ public actor AppSyncCoordinator {
 
   /// `scenePhase` became `.active`.
   ///
-  /// The design's "IDLE start/stop" belongs here and is **not implemented**,
-  /// because there is nothing to idle: `MailConnectionService` declares no IDLE
-  /// method — it was to be internal to the `MailFetching` implementation, which
-  /// does not exist (see `UnavailableMailFetcher`). What is implemented is the
-  /// lifecycle the IDLE loop would have hung off: sync on activate, stop on
-  /// background. When a transport lands, IDLE starts and stops on these same
+  /// The design's "IDLE start/stop" belongs here and is **not implemented**.
+  /// U2c landed the transport, so "there is no socket to idle on" is no longer
+  /// the reason. The reason now is that nothing here can reach an IDLE loop:
+  /// neither `MailFetching` nor `MailConnectionService` declares an IDLE entry
+  /// point, so wiring one changes U2's and U1's contracts as well as this file.
+  /// `IMAPCommand.idle(tag:)` and `idleDoneWireText` are written and waiting on
+  /// that.
+  ///
+  /// What *is* implemented is the lifecycle the IDLE loop would hang off: sync
+  /// on activate, stop on background. IDLE would start and stop on these same
   /// two calls.
   public func didBecomeActive() {
     foregroundTask?.cancel()
