@@ -74,10 +74,14 @@ struct RootView: View {
 
     case .ledger:
       NavigationStack {
-        // A placeholder until U14 builds the screen and U8b swaps it in
-        // (§2.19(2)). `LedgerTabHost` takes the whole environment so that swap
-        // stays inside one file.
-        LedgerTabHost(environment: environment)
+        LedgerScreen(
+          transactionStore: environment.transactionStore,
+          categoryStore: environment.categoryStore
+        )
+        // `LedgerScreen` is a tab-root screen and sets no title of its own —
+        // same as `DashboardView`, and the same reason Dashboard and Reports
+        // get theirs here.
+        .navigationTitle("Ledger")
       }
 
     case .reports:
