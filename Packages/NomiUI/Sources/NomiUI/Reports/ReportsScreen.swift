@@ -15,13 +15,27 @@ import SwiftUI
 public struct ReportsScreen: View {
   public let insightsStore: InsightsStore
 
+  /// Never read. `InsightsCache` lives in `NomiApp`, which `NomiUI` cannot
+  /// depend on, so the composition root republishes its generation as this
+  /// plain `Int` and passes a new value in on every write. SwiftUI
+  /// re-invokes `body` when a stored property of a view value changes
+  /// regardless of whether `body` reads it — that's what makes this work,
+  /// not a coincidence of it being unused. Do not delete it for looking dead.
+  public let refreshToken: Int
+
   @State private var basis: PeriodBasis
   @State private var anchor: Date
   @State private var exportURL: URL?
   @State private var exportError = false
 
-  public init(insightsStore: InsightsStore, initialBasis: PeriodBasis = .calendarMonth, initialAnchor: Date = Date()) {
+  public init(
+    insightsStore: InsightsStore,
+    initialBasis: PeriodBasis = .calendarMonth,
+    initialAnchor: Date = Date(),
+    refreshToken: Int = 0
+  ) {
     self.insightsStore = insightsStore
+    self.refreshToken = refreshToken
     _basis = State(initialValue: initialBasis)
     _anchor = State(initialValue: initialAnchor)
   }
@@ -142,6 +156,16 @@ public struct ReportsScreen: View {
       return
     }
     exportURL = url
+  }
+}
+
+/// Manual conformance because `InsightsStore` is an `AnyObject` protocol,
+/// not an `Equatable` one — identity stands in for value equality there.
+/// Exists so a test can assert that two otherwise-identical view values
+/// differing only in `refreshToken` compare as different.
+extension ReportsScreen: Equatable {
+  public static func == (lhs: ReportsScreen, rhs: ReportsScreen) -> Bool {
+    lhs.insightsStore === rhs.insightsStore && lhs.refreshToken == rhs.refreshToken
   }
 }
 
