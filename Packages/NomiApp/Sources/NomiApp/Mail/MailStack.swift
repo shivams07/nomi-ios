@@ -76,13 +76,14 @@ public actor MailStack {
   /// part-way.
   ///
   /// `AppSyncCoordinator` reads it to decide whether to ask iOS for the backfill
-  /// processing task. **In memory, not in `preferences`, and that is a real
-  /// limit**: the path that matters survives it, because `didEnterBackground()`
-  /// runs on the way into suspension while this object is still alive, but a
-  /// crash or a force-quit mid-backfill is not recovered — the next launch has
-  /// no idea a scan was unfinished. Persisting it needs a key in
-  /// `PreferenceKey`, which is in `Support/KeyValueStore.swift` and outside this
-  /// unit's file list.
+  /// processing task.
+  ///
+  /// Persisted, under `PreferenceKey.mailBackfillUnfinished`. It was in memory
+  /// when D1 shipped, which covered the ordinary case — `didEnterBackground()`
+  /// runs on the way into suspension while this object is still alive — and
+  /// covered nothing else: a crash or a force-quit mid-backfill left the next
+  /// launch with no idea a scan was unfinished, and the first run's remaining
+  /// months were never fetched by anything.
   public var backfillIsUnfinished: Bool { persisting.backfillIsUnfinished }
 
   /// Restores the last session on launch, so a returning user is connected
@@ -111,17 +112,13 @@ public actor MailStack {
 /// leave the unpersisting service reachable underneath, which is the bug this
 /// type exists to close.
 ///
-/// Not an actor. Its own state is one `Bool` behind a lock, and everything else
-/// it does is forwarding — an actor here would add a hop to every sync to
-/// serialise a flag that `NSLock` serialises for free, and `MailSyncEngine` is
-/// already the actor that makes the cursor read consistent.
+/// Not an actor, and it now holds no mutable state of its own at all: the cursor
+/// is `MailSyncEngine`'s and the unfinished-backfill marker is `preferences`'.
+/// An actor here would add a hop to every sync in order to serialise nothing.
 final class CursorPersistingMailConnectionService: MailConnectionService, @unchecked Sendable {
   private let upstream: any MailConnectionService
   private let engine: MailSyncEngine
   private let preferences: any KeyValueStoring
-
-  private let lock = NSLock()
-  private var unfinishedBackfill = false
 
   init(
     upstream: any MailConnectionService,
@@ -137,17 +134,22 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   var backfillProgress: AsyncStream<BackfillProgress> { upstream.backfillProgress }
 
   var backfillIsUnfinished: Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    return unfinishedBackfill
+    preferences.bool(forKey: PreferenceKey.mailBackfillUnfinished)
   }
 
   func connect(_ credentials: IMAPCredentials) async throws {
     try await upstream.connect(credentials)
   }
 
+  /// Clears the unfinished-backfill marker, because there is no longer anything
+  /// to resume: the user has turned collection off, and a background task that
+  /// went on asking to finish a scan of a mailbox they disconnected would be
+  /// asking for the one thing they just said no to. It deletes no transactions
+  /// — that is `IMAPMailConnectionService.disconnect`'s acceptance criterion and
+  /// is unaffected.
   func disconnect() async throws {
     try await upstream.disconnect()
+    setUnfinishedBackfill(false)
   }
 
   /// The cursor is saved **after** the call whether it threw or not, and that is
@@ -192,16 +194,25 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   /// behaviour change and telling the two apart needs a contract this unit does
   /// not have.
   func startBackfill(months: Int) async throws {
+    let wasUnfinished = backfillIsUnfinished
     setUnfinishedBackfill(true)
     do {
       try await upstream.startBackfill(months: months)
       await persistCursor()
       setUnfinishedBackfill(false)
     } catch IMAPTransportError.notConnected {
-      // Nothing started, so there is nothing to resume. Leaving the flag set
-      // would ask iOS for a processing task that can only fail the same way,
-      // once per backgrounding, for as long as the mailbox stays disconnected.
-      setUnfinishedBackfill(false)
+      // Nothing started, so nothing new to resume — the marker goes back to
+      // whatever it was rather than to `false`. Clearing it outright was right
+      // while this lived in memory and is wrong now that it survives a launch:
+      // a scan interrupted yesterday is still unfinished this morning, and
+      // `bootstrap()` reconnects from the Keychain *after* the app is running,
+      // so a background task arriving first would otherwise forget it forever.
+      //
+      // A mailbox that stays disconnected therefore keeps asking for a
+      // processing task, once per backgrounding. That is the honest state —
+      // and `disconnect()` above clears the marker, which is the case where the
+      // user has actually said no.
+      setUnfinishedBackfill(wasUnfinished)
       throw IMAPTransportError.notConnected
     } catch {
       await persistCursor()
@@ -215,8 +226,6 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   }
 
   private func setUnfinishedBackfill(_ value: Bool) {
-    lock.lock()
-    unfinishedBackfill = value
-    lock.unlock()
+    preferences.set(value, forKey: PreferenceKey.mailBackfillUnfinished)
   }
 }

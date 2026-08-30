@@ -78,4 +78,10 @@ public enum PreferenceKey {
   public static let hasCompletedFirstRun = "nomi.hasCompletedFirstRun"
   public static let notificationSettings = "nomi.notificationSettings"
   public static let mailSyncCursor = "nomi.mailSyncCursor"
+
+  /// Set while a backfill is running and cleared when one completes, so an
+  /// interrupted six-month scan is still known about after the process dies.
+  /// Read by `AppSyncCoordinator` to decide whether to ask iOS for the backfill
+  /// processing task. See `CursorPersistingMailConnectionService`.
+  public static let mailBackfillUnfinished = "nomi.mailBackfillUnfinished"
 }
