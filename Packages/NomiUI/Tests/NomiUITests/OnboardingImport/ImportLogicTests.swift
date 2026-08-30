@@ -82,4 +82,35 @@ final class ImportLogicTests: XCTestCase {
   private func preview(count: Int) -> ImportPreview {
     ImportPreview(formatSignature: "s", detectedBankLabel: nil, suggestedMapping: nil, headers: [], sampleRows: [], parseableRowCount: count)
   }
+
+  // finding 5: saveMapping was called with the imported file's
+  // `url.lastPathComponent` instead of `preview.formatSignature`. A file
+  // named "statement (1).csv" and a re-download named "statement (2).csv"
+  // are the same bank format with two different names — the saved key must
+  // track the format, not the name.
+  func testSavedMappingKeySignatureIsThePreviewsFormatSignatureNotAFileName() {
+    let preview = ImportPreview(
+      formatSignature: "col-sig-3f9a", detectedBankLabel: "HDFC Bank",
+      suggestedMapping: nil, headers: [], sampleRows: [], parseableRowCount: 1
+    )
+    let key = SavedMappingKey.make(from: preview)
+    XCTAssertEqual(key.signature, preview.formatSignature)
+    XCTAssertNotEqual(key.signature, "statement (2).csv")
+  }
+
+  func testSavedMappingKeyUsesDetectedBankLabelWhenPresent() {
+    let preview = ImportPreview(
+      formatSignature: "col-sig-3f9a", detectedBankLabel: "HDFC Bank",
+      suggestedMapping: nil, headers: [], sampleRows: [], parseableRowCount: 1
+    )
+    XCTAssertEqual(SavedMappingKey.make(from: preview).bankLabel, "HDFC Bank")
+  }
+
+  func testSavedMappingKeyFallsBackToSignatureWhenNoBankLabelDetected() {
+    let preview = ImportPreview(
+      formatSignature: "col-sig-3f9a", detectedBankLabel: nil,
+      suggestedMapping: nil, headers: [], sampleRows: [], parseableRowCount: 1
+    )
+    XCTAssertEqual(SavedMappingKey.make(from: preview).bankLabel, "col-sig-3f9a")
+  }
 }

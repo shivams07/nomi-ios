@@ -40,6 +40,19 @@ enum ColumnMappingFormGate {
   }
 }
 
+/// What `saveMapping` is called with — pulled out of the commit closure so a
+/// test can reach the decision. `preview.formatSignature` is the file's real
+/// signature (finding 5: the view body was calling `saveMapping` with the
+/// file name instead, which meant every re-import of a renamed copy of the
+/// same file missed its saved mapping). `bankLabel` falls back to the
+/// signature itself when nothing was detected, so it never needs the file
+/// name either.
+enum SavedMappingKey {
+  static func make(from preview: ImportPreview) -> (signature: String, bankLabel: String) {
+    (preview.formatSignature, preview.detectedBankLabel ?? preview.formatSignature)
+  }
+}
+
 /// Formats the import preview's row-count line, and is the single place that
 /// decides whether the screen is in the "no transactions found" state.
 enum ImportPreviewSummary {

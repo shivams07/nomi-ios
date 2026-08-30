@@ -13,7 +13,7 @@ enum ImportFlowState {
   case preview(url: URL, preview: ImportPreview, mapping: ColumnMapping)
   case noRows
   case failed(ImportError)
-  case importing(url: URL, mapping: ColumnMapping)
+  case importing(url: URL, mapping: ColumnMapping, signature: String, bankLabel: String)
   case done(ImportSummary)
 }
 
@@ -124,8 +124,11 @@ public struct ImportEntryView: View {
       }
       Section {
         Button("Adjust Mapping") { isMappingPresented = true }
-        Button("Import") { commit(url: url, mapping: mapping) }
-          .disabled(!ColumnMappingFormGate.isValid(mapping, headerCount: preview.headers.count))
+        Button("Import") {
+          let key = SavedMappingKey.make(from: preview)
+          commit(url: url, mapping: mapping, signature: key.signature, bankLabel: key.bankLabel)
+        }
+        .disabled(!ColumnMappingFormGate.isValid(mapping, headerCount: preview.headers.count))
       }
     }
     .scrollContentBackground(.hidden)
@@ -206,13 +209,13 @@ public struct ImportEntryView: View {
     }
   }
 
-  private func commit(url: URL, mapping: ColumnMapping) {
-    flow = .importing(url: url, mapping: mapping)
+  private func commit(url: URL, mapping: ColumnMapping, signature: String, bankLabel: String) {
+    flow = .importing(url: url, mapping: mapping, signature: signature, bankLabel: bankLabel)
     let accessed = url.startAccessingSecurityScopedResource()
     Task {
       defer { if accessed { url.stopAccessingSecurityScopedResource() } }
       do {
-        try fileImportService.saveMapping(mapping, signature: url.lastPathComponent, bankLabel: url.deletingPathExtension().lastPathComponent)
+        try fileImportService.saveMapping(mapping, signature: signature, bankLabel: bankLabel)
         let summary = try await fileImportService.commit(url, mapping: mapping, accountID: selectedAccountID)
         flow = .done(summary)
       } catch let importError as ImportError {
