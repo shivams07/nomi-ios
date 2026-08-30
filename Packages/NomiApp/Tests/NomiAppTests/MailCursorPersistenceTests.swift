@@ -392,10 +392,10 @@ final class RecordingMailFetcher: MailFetching, @unchecked Sendable {
   }
 
   func fetch(uids: [UInt32], in mailbox: String) async throws -> [MailMessage] {
-    lock.lock()
-    recorded.fetches += 1
-    let index = recorded.fetches
-    lock.unlock()
+    // Through a synchronous helper for the same reason as `noteCancellation`
+    // below: an `NSLock` taken directly in an async function is a warning today
+    // and an error under the Swift 6 language mode.
+    let index = countFetch()
 
     if let failFetchAfterBatches, index > failFetchAfterBatches {
       throw IMAPTransportError.serverClosedMidCommand(tag: "A1", text: "BYE")
@@ -417,11 +417,17 @@ final class RecordingMailFetcher: MailFetching, @unchecked Sendable {
     } catch {
       // Through a synchronous helper, not `lock.lock()` inline: taking an
       // `NSLock` directly in an async function is a warning today and an error
-      // under the Swift 6 language mode, because the lock would be held across
-      // a potential suspension. Nothing suspends inside `noteCancellation`.
+      // under the Swift 6 language mode. Nothing suspends inside the helper.
       noteCancellation()
       throw error
     }
+  }
+
+  private func countFetch() -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    recorded.fetches += 1
+    return recorded.fetches
   }
 
   private func noteCancellation() {
