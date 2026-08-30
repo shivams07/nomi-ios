@@ -2,6 +2,28 @@ import NomiCore
 import NomiPreview
 import SwiftUI
 
+/// Where the scan stands, derived from `BackfillScreen`'s own `@State` so the
+/// appear-triggered decision below can be tested without a view or a `Task`.
+enum BackfillPhase: Equatable {
+  case notStarted
+  case running
+  case cancelled
+  case completed
+}
+
+/// The rule that lets `.onDisappear`'s cancel go away without silently
+/// double-starting the scan: appearing only kicks off `startBackfill` from
+/// `.notStarted`. Leaving mid-scan and coming back finds `.running` and
+/// does nothing — the in-flight task (never cancelled now) is still the one
+/// driving `backfillProgress`. A cancelled scan stays paused until the user
+/// taps Resume; it does not silently resume just because the screen
+/// reappeared.
+enum BackfillLifecycle {
+  static func shouldStartOnAppear(phase: BackfillPhase) -> Bool {
+    phase == .notStarted
+  }
+}
+
 /// The app's first impression (U7 notes: "the hero screen"). Determinate bar,
 /// live scanned/found counts, rows animating in as they land — never a
 /// spinner. `BackfillProgress` carries aggregate counts only, no per-
@@ -28,6 +50,13 @@ public struct BackfillScreen: View {
     self.months = months
   }
 
+  private var currentPhase: BackfillPhase {
+    if completionSummary != nil { return .completed }
+    if isCancelled { return .cancelled }
+    if backfillTask != nil { return .running }
+    return .notStarted
+  }
+
   public var body: some View {
     VStack(spacing: NomiSpacing.lg) {
       Spacer()
@@ -50,8 +79,11 @@ public struct BackfillScreen: View {
         }
       }
     }
-    .onAppear { start() }
-    .onDisappear { backfillTask?.cancel() }
+    .onAppear {
+      if BackfillLifecycle.shouldStartOnAppear(phase: currentPhase) {
+        start()
+      }
+    }
   }
 
   private var scanningView: some View {
