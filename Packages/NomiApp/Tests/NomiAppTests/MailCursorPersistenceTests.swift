@@ -175,6 +175,76 @@ final class MailCursorPersistenceTests: XCTestCase {
     XCTAssertFalse(unfinished)
   }
 
+  /// What persisting the marker buys, and the only thing it buys: the in-memory
+  /// version read `false` here, so a scan the OS interrupted by killing the
+  /// process was never finished by anything.
+  func testAnUnfinishedBackfillSurvivesIntoTheNextLaunch() async throws {
+    let preferences = InMemoryKeyValueStore()
+    let searchStarted = StartSignal()
+    let stack = makeStack(
+      fetcher: RecordingMailFetcher(uids: [1, 2, 3], blockOnSearch: searchStarted),
+      preferences: preferences
+    )
+
+    try await stack.service.connect(.test)
+    let backfill = Task { try? await stack.service.startBackfill(months: 6) }
+    await searchStarted.wait()
+    backfill.cancel()
+    _ = await backfill.value
+
+    // A relaunch: same preferences, everything above them built from scratch.
+    let relaunched = makeStack(
+      fetcher: RecordingMailFetcher(uids: [1, 2, 3]),
+      preferences: preferences
+    )
+
+    let unfinished = await relaunched.backfillIsUnfinished
+    XCTAssertTrue(unfinished)
+  }
+
+  /// Disconnecting is the user turning collection off. Continuing to ask iOS to
+  /// finish a scan of the mailbox they just disconnected would be asking for the
+  /// one thing they said no to.
+  func testDisconnectingClearsTheUnfinishedMarker() async throws {
+    let searchStarted = StartSignal()
+    let stack = makeStack(
+      fetcher: RecordingMailFetcher(uids: [1, 2, 3], blockOnSearch: searchStarted))
+
+    try await stack.service.connect(.test)
+    let backfill = Task { try? await stack.service.startBackfill(months: 6) }
+    await searchStarted.wait()
+    backfill.cancel()
+    _ = await backfill.value
+
+    let interrupted = await stack.backfillIsUnfinished
+    XCTAssertTrue(interrupted, "precondition")
+
+    try await stack.service.disconnect()
+
+    let afterDisconnect = await stack.backfillIsUnfinished
+    XCTAssertFalse(afterDisconnect)
+  }
+
+  /// A backfill attempted before the Keychain reconnect has happened throws
+  /// `notConnected` without starting anything. It must leave an *earlier*
+  /// launch's unfinished scan alone: clearing it here would mean the background
+  /// task that arrives first on a cold launch forgets the scan permanently.
+  func testAFailedAttemptDoesNotForgetAnEarlierUnfinishedBackfill() async {
+    let preferences = InMemoryKeyValueStore()
+    preferences.set(true, forKey: PreferenceKey.mailBackfillUnfinished)
+    let stack = makeStack(fetcher: RecordingMailFetcher(uids: [1]), preferences: preferences)
+
+    do {
+      try await stack.service.startBackfill(months: 6)
+      XCTFail("a disconnected mailbox was supposed to throw")
+    } catch {
+      XCTAssertEqual(error as? IMAPTransportError, .notConnected)
+    }
+
+    let unfinished = await stack.backfillIsUnfinished
+    XCTAssertTrue(unfinished)
+  }
+
   // MARK: -
 
   private func persistedCursor(in preferences: InMemoryKeyValueStore) throws -> MailSyncCursor? {
@@ -322,10 +392,10 @@ final class RecordingMailFetcher: MailFetching, @unchecked Sendable {
   }
 
   func fetch(uids: [UInt32], in mailbox: String) async throws -> [MailMessage] {
-    lock.lock()
-    recorded.fetches += 1
-    let index = recorded.fetches
-    lock.unlock()
+    // Through a synchronous helper for the same reason as `noteCancellation`
+    // below: an `NSLock` taken directly in an async function is a warning today
+    // and an error under the Swift 6 language mode.
+    let index = countFetch()
 
     if let failFetchAfterBatches, index > failFetchAfterBatches {
       throw IMAPTransportError.serverClosedMidCommand(tag: "A1", text: "BYE")
@@ -345,11 +415,25 @@ final class RecordingMailFetcher: MailFetching, @unchecked Sendable {
     do {
       try await Task.sleep(nanoseconds: 5_000_000_000)
     } catch {
-      lock.lock()
-      cancellationSeen = true
-      lock.unlock()
+      // Through a synchronous helper, not `lock.lock()` inline: taking an
+      // `NSLock` directly in an async function is a warning today and an error
+      // under the Swift 6 language mode. Nothing suspends inside the helper.
+      noteCancellation()
       throw error
     }
+  }
+
+  private func countFetch() -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    recorded.fetches += 1
+    return recorded.fetches
+  }
+
+  private func noteCancellation() {
+    lock.lock()
+    cancellationSeen = true
+    lock.unlock()
   }
 
   private func record(_ mutate: (inout Calls) -> Void) {
