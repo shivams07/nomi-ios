@@ -53,7 +53,12 @@ struct RootView: View {
       NavigationStack {
         DashboardView(
           insightsStore: environment.insightsStore,
-          mailConnectionService: environment.mailConnectionService
+          mailConnectionService: environment.mailConnectionService,
+          // Stored and never read by the screen — see `DashboardView`'s note.
+          // It is what makes SwiftUI re-invoke `body` after a write, and it is
+          // only doing that job because it *changes*: passing a literal here
+          // would compile, satisfy the parameter, and fix nothing.
+          refreshToken: environment.insightsGeneration
         )
         .navigationTitle("Home")
         .toolbar {
@@ -86,8 +91,11 @@ struct RootView: View {
 
     case .reports:
       NavigationStack {
-        ReportsScreen(insightsStore: environment.insightsStore)
-          .navigationTitle("Reports")
+        ReportsScreen(
+          insightsStore: environment.insightsStore,
+          refreshToken: environment.insightsGeneration
+        )
+        .navigationTitle("Reports")
       }
 
     case .settings:

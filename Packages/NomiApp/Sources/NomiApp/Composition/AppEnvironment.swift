@@ -34,6 +34,22 @@ public final class AppEnvironment: ObservableObject {
   private let pipeline: IngestPipeline
   private let credentials: any MailCredentialStoring
 
+  /// `InsightsCache.generation`, republished so `RootView` can hand it to
+  /// `DashboardView` and `ReportsScreen` as their `refreshToken`.
+  ///
+  /// **This is a package boundary, not indirection.** `InsightsCache` lives in
+  /// `NomiApp`; `NomiApp` depends on `NomiUI` and not the reverse, so a NomiUI
+  /// screen cannot hold the cache and cannot observe it. The signal has to cross
+  /// as a plain value, and this is the value.
+  ///
+  /// Without it those two screens never redraw after a background sync. They
+  /// hold no `@Query` — they compute their numbers in `body` through
+  /// `InsightsStore` — so SwiftData's change tracking never reaches them, and
+  /// nothing else on `AppEnvironment` changes when the pipeline commits. The
+  /// dashboard showed whatever was true the last time something unrelated made
+  /// it re-render.
+  @Published public private(set) var insightsGeneration = 0
+
   public var mailConnectionService: any MailConnectionService { mail.service }
 
   /// Every default here is the real implementation; this is the one place that
@@ -99,7 +115,17 @@ public final class AppEnvironment: ObservableObject {
     //
     // Same `pipeline` instance the mail stack and the sync coordinator hold, so
     // both ingest routes serialize through one actor and one dedupe pass.
-    self.fileImportService = FileImportServiceImpl(pipeline: pipeline)
+    //
+    // `mappingStore` is passed rather than defaulted. Its default is
+    // `InMemoryColumnMappingStore`, which only remembers mappings saved during
+    // its own lifetime — so a user who mapped their bank's columns once was
+    // asked again on the next launch, and `ImportPreview.detectedBankLabel`
+    // could only ever come from `BankPresets`. `ColumnMappingRecord` has been in
+    // the schema since U1 with nothing writing to it.
+    self.fileImportService = FileImportServiceImpl(
+      mappingStore: SwiftDataColumnMappingStore(container: container),
+      pipeline: pipeline
+    )
 
     // MARK: Post-commit wiring
     //
@@ -138,6 +164,18 @@ public final class AppEnvironment: ObservableObject {
     notificationSettings.onAlertsEnabled = { [contextProvider] in
       await contextProvider.suppressCurrentCrossings()
     }
+
+    // MARK: Refresh signal
+    //
+    // Last, because `assign(to:)` needs a fully initialised `self`.
+    //
+    // `assign(to: &$x)` rather than a `sink` holding an `AnyCancellable`: the
+    // subscription's lifetime is then tied to the `@Published` property itself,
+    // so there is no cancellable to store and none to forget to store. Both
+    // ends are `@MainActor` and `generation` only ever moves on the main actor,
+    // so no `receive(on:)` is needed or wanted — hopping would put the redraw a
+    // runloop turn behind the write.
+    cache.$generation.assign(to: &$insightsGeneration)
   }
 
   /// Runs once per launch, before the first frame the user acts on.
