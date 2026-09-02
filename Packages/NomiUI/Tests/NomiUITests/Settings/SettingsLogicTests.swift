@@ -67,4 +67,27 @@ final class SettingsLogicTests: XCTestCase {
     XCTAssertFalse(calls.contains("disconnect"))
     XCTAssertFalse(calls.contains("connect"))
   }
+
+  func testRescanReturnsTheSyncSummaryRatherThanDiscardingIt() async throws {
+    let spy = SpyMailConnectionService()
+    let summary = try await SettingsActions.rescan(using: spy)
+    XCTAssertEqual(summary.scanned, 5)
+  }
+
+  func testUnmatchedSenderRowsNamesDomainAndCount() {
+    let rows = UnmatchedSenderDisplay.rows(for: [UnmatchedSender(domain: "chase.com", count: 3)])
+    XCTAssertEqual(rows, ["chase.com — 3"])
+  }
+
+  func testUnmatchedSenderRowsIsEmptyForNoneUnmatchedRatherThanAnEmptySection() {
+    XCTAssertEqual(UnmatchedSenderDisplay.rows(for: []), [])
+  }
+
+  func testUnmatchedSenderRowsNeverEmitsAnAddress() {
+    let rows = UnmatchedSenderDisplay.rows(for: [
+      UnmatchedSender(domain: "chase.com", count: 3),
+      UnmatchedSender(domain: "boa.com", count: 1),
+    ])
+    XCTAssertFalse(rows.contains { $0.contains("@") })
+  }
 }

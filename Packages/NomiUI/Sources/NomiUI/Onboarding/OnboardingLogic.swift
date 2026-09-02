@@ -84,10 +84,15 @@ enum BackfillMath {
 /// `heuristicMatched`) reported as plain text, not a chart or a badge.
 enum BackfillCompletionSummary {
   static func lines(for summary: SyncSummary) -> [String] {
-    [
+    var lines = [
       "\(summary.scanned) emails scanned",
       "\(summary.created) transactions found",
       "\(summary.packMatched) matched a known bank format, \(summary.heuristicMatched) matched generically",
     ]
+    if !summary.unmatchedSenders.isEmpty {
+      let named = summary.unmatchedSenders.map { "\($0.domain) (\($0.count))" }.joined(separator: ", ")
+      lines.append("Not matched: \(named)")
+    }
+    return lines
   }
 }

@@ -24,3 +24,14 @@ enum SettingsActions {
     try await service.syncNow()
   }
 }
+
+/// The unmatched-sender rows shown after a manual re-scan (§2.5.1,
+/// `ui-unmatched-senders`). Domain and count only — `UnmatchedSender` cannot
+/// carry a full address, but the guard is repeated here at the display layer.
+/// An empty list renders as no rows, never an empty section — the screen
+/// decides whether to show the section at all from this same emptiness.
+enum UnmatchedSenderDisplay {
+  static func rows(for senders: [UnmatchedSender]) -> [String] {
+    senders.map { "\($0.domain) — \($0.count)" }
+  }
+}
