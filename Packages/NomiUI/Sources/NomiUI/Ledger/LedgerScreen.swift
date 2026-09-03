@@ -4,6 +4,19 @@ import NomiPreview
 import SwiftData
 import SwiftUI
 
+/// The day header's text. Pulled out as a pure function, same reasoning as
+/// `HeroIncomeExpense` in `HeroTotalCard.swift`: this just wraps
+/// `NomiFormatters.dayMonthAdaptive`, but a test against that formatter alone
+/// can't fail against an unmodified `LedgerScreen` — it doesn't reference this
+/// file at all. Routing `dayHeader` through this lets `LedgerDayHeaderTests`
+/// exercise the actual seam this screen calls, not just the formatter it
+/// happens to wrap.
+enum LedgerDayHeaderText {
+  static func string(for day: Date, relativeTo referenceDate: Date) -> String {
+    NomiFormatters.dayMonthAdaptive(day, relativeTo: referenceDate)
+  }
+}
+
 /// The Ledger screen (U14) — the transaction list the UI direction specified
 /// and no unit was ever given (design §2.19(2)). A tab-root screen like
 /// `DashboardView`, not a pushed one: no `NavigationStack`/`.navigationTitle`
@@ -46,6 +59,10 @@ public struct LedgerScreen: View {
 
   private var categoryPaletteSlotByID: [UUID: Int] {
     Dictionary(categories.map { ($0.id, $0.paletteSlot) }, uniquingKeysWith: { first, _ in first })
+  }
+
+  private var categorySymbolNameByID: [UUID: String] {
+    Dictionary(categories.map { ($0.id, $0.symbolName) }, uniquingKeysWith: { first, _ in first })
   }
 
   private var accountNamesByID: [UUID: String] {
@@ -143,7 +160,7 @@ public struct LedgerScreen: View {
 
   private func dayHeader(_ group: LedgerDayGroup<NomiCore.Transaction>) -> some View {
     HStack {
-      Text(NomiFormatters.dayMonth.string(from: group.day))
+      Text(LedgerDayHeaderText.string(for: group.day, relativeTo: Date()))
         .nomiTextStyle(.caption)
         .foregroundStyle(NomiColor.textSecondary)
       Spacer()
@@ -154,8 +171,8 @@ public struct LedgerScreen: View {
     .padding(.horizontal, NomiSpacing.screenGutter)
     .padding(.vertical, NomiSpacing.xs)
     // Opaque so pinned content beneath doesn't show through while this
-    // sticks — canvas colour, not the (interim) row colour, since the
-    // header sits above the row stack, not inside it.
+    // sticks — canvas colour, not the row colour, since the header sits
+    // above the row stack, not inside it.
     .background(NomiColor.surfaceCanvas)
   }
 
@@ -163,6 +180,7 @@ public struct LedgerScreen: View {
 
   private func row(for transaction: NomiCore.Transaction) -> some View {
     let slot = transaction.categoryID.flatMap { categoryPaletteSlotByID[$0] }
+    let symbolName = transaction.categoryID.flatMap { categorySymbolNameByID[$0] }
     let barColor = slot.map(paletteSlot) ?? CategoryPalette.other
     let fraction = LedgerMagnitude.fraction(amountMinor: transaction.amountMinor, maxAmountMinor: maxAmountMinor)
 
@@ -170,9 +188,10 @@ public struct LedgerScreen: View {
       TransactionRow(
         transaction: transaction,
         categoryName: transaction.categoryID.flatMap { categoryNamesByID[$0] },
-        accountName: transaction.accountID.flatMap { accountNamesByID[$0] }
+        accountName: transaction.accountID.flatMap { accountNamesByID[$0] },
+        categorySymbolName: symbolName,
+        categoryPaletteSlot: slot
       )
-      .padding(.horizontal, NomiSpacing.screenGutter)
 
       GeometryReader { proxy in
         Rectangle()
@@ -180,18 +199,13 @@ public struct LedgerScreen: View {
           .frame(width: proxy.size.width * max(fraction, 0.02))
       }
       .frame(height: 2)
-      .padding(.horizontal, NomiSpacing.screenGutter)
       .padding(.bottom, NomiSpacing.xxs)
-
-      Rectangle()
-        .fill(NomiColor.separator)
-        .frame(height: 1)
     }
-    // NomiColor has no `surface-row` (#1C1C1C) token yet — DESIGN.md/the
-    // design doc names it for exactly this row background but it was never
-    // added to Design/** (frozen since U5). Escalated to Andrews; using
-    // `surfaceRaised` as the closest existing frozen token in the interim.
-    .background(NomiColor.surfaceRaised)
+    .padding(.horizontal, NomiSpacing.sm)
+    .background(NomiColor.surfaceRow)
+    .nomiCornerRadius(NomiRadius.tile)
+    .padding(.horizontal, NomiSpacing.screenGutter)
+    .padding(.bottom, NomiSpacing.xs)
     .contextMenu {
       if transaction.needsReview {
         Button("Mark reviewed") { try? transactionStore.dismissReview(transaction.id) }

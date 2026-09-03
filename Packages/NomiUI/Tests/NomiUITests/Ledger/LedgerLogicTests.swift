@@ -139,6 +139,27 @@ final class LedgerMagnitudeTests: XCTestCase {
   }
 }
 
+/// `LedgerScreen.dayHeader` renders `LedgerDayHeaderText.string(for:relativeTo:)`
+/// — a pure wrapper defined in `LedgerScreen.swift` itself, not the general
+/// `NomiFormatters.dayMonthAdaptive` it wraps, so this exercises this unit's
+/// own code. A test against the formatter alone would pass whether or not
+/// `dayHeader` was ever wired up to it.
+final class LedgerDayHeaderTests: XCTestCase {
+  func testDayHeaderOmitsYearForACurrentYearGroup() {
+    let reference = date("2026-09-03")
+    let sameYear = date("2026-08-20")
+    let text = LedgerDayHeaderText.string(for: sameYear, relativeTo: reference)
+    XCTAssertFalse(text.contains("2026"))
+  }
+
+  func testDayHeaderIncludesYearForAPriorYearGroup() {
+    let reference = date("2026-09-03")
+    let priorYear = date("2025-12-31")
+    let text = LedgerDayHeaderText.string(for: priorYear, relativeTo: reference)
+    XCTAssertTrue(text.contains("2025"))
+  }
+}
+
 final class LedgerDayTotalTextTests: XCTestCase {
   func testPositiveTotalGetsPlusSign() {
     XCTAssertEqual(LedgerDayTotalText.string(minor: 500), "+" + NomiFormatters.amountString(minor: 500))
