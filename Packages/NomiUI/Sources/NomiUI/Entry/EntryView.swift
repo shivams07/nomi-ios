@@ -91,6 +91,9 @@ public struct EntryView: View {
           if sanitized != newValue { amountText = sanitized }
         }
     }
+    .padding(NomiSpacing.sm)
+    .background(NomiColor.surfaceInput)
+    .nomiCornerRadius(NomiRadius.tile)
   }
 
   private var chipsRow: some View {
@@ -116,7 +119,7 @@ public struct EntryView: View {
       .nomiTextStyle(.body)
       .foregroundStyle(NomiColor.textPrimary)
       .padding(NomiSpacing.sm)
-      .background(NomiColor.surface)
+      .background(NomiColor.surfaceInput)
       .nomiCornerRadius(NomiRadius.tile)
   }
 

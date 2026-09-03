@@ -62,7 +62,7 @@ public struct RecentTransactionsCard: View {
           .nomiTextStyle(.body)
           .foregroundStyle(NomiColor.textPrimary)
           .lineLimit(1)
-        Text(NomiFormatters.dayMonth.string(from: transaction.date))
+        Text(NomiFormatters.dayMonthAdaptive(transaction.date, relativeTo: Date()))
           .nomiTextStyle(.caption)
           .foregroundStyle(NomiColor.textTertiary)
       }
