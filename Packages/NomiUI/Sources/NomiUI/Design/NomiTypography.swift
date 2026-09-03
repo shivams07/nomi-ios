@@ -23,7 +23,7 @@ public enum NomiFont {
   public static let montserratMedium = "Montserrat-Medium"
   public static let montserratSemiBold = "Montserrat-SemiBold"
   public static let montserratBold = "Montserrat-Bold"
-  public static let interRegular = "Inter"
+  public static let interRegular = "Inter-Regular"
 
   /// One-time registration for the four bundled font files, in case the
   /// hosting app has not already registered them via `UIAppFonts`.
@@ -36,7 +36,9 @@ public enum NomiFont {
     ]
     for name in names {
       guard let url = Bundle.module.url(forResource: name, withExtension: nil) else { continue }
-      CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+      var registrationError: Unmanaged<CFError>?
+      let didRegister = CTFontManagerRegisterFontsForURL(url as CFURL, .process, &registrationError)
+      assert(didRegister, "Failed to register \(name): \(String(describing: registrationError))")
     }
   }
 }
