@@ -58,18 +58,23 @@ public struct BackfillScreen: View {
   }
 
   public var body: some View {
-    VStack(spacing: NomiSpacing.lg) {
-      Spacer()
-      if let completionSummary {
-        completionView(completionSummary)
-      } else if isCancelled {
-        cancelledView
-      } else {
-        scanningView
+    GeometryReader { proxy in
+      ScrollView {
+        VStack(spacing: NomiSpacing.lg) {
+          Spacer(minLength: NomiSpacing.lg)
+          if let completionSummary {
+            completionView(completionSummary)
+          } else if isCancelled {
+            cancelledView
+          } else {
+            scanningView
+          }
+          Spacer(minLength: NomiSpacing.lg)
+        }
+        .frame(minHeight: proxy.size.height)
+        .padding(NomiSpacing.screenGutter)
       }
-      Spacer()
     }
-    .padding(NomiSpacing.screenGutter)
     .background(NomiColor.surfaceCanvas)
     .task {
       for await update in mailConnectionService.backfillProgress {

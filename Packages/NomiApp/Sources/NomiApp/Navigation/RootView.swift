@@ -23,16 +23,21 @@ struct RootView: View {
   @ObservedObject var environment: AppEnvironment
   @State private var selection: RootTab = .dashboard
   @State private var isPresentingEntry = false
+  @State private var tabBarHeight: CGFloat = 0
 
   var body: some View {
     NomiTabShell {
       ZStack(alignment: .bottom) {
         destination
+          .safeAreaInset(edge: .bottom) {
+            Color.clear.frame(height: TabBarInsetHeight.reserved(barHeight: tabBarHeight))
+          }
         NomiFloatingTabBar(selection: $selection, onAdd: { isPresentingEntry = true })
           .padding(.horizontal, NomiSpacing.screenGutter)
           .padding(.bottom, NomiSpacing.xs)
       }
     }
+    .onPreferenceChange(TabBarHeightKey.self) { tabBarHeight = $0 }
     .sheet(isPresented: $isPresentingEntry) {
       // The "Add" bottom sheet. `EntryView` reads categories through `@Query`,
       // so the container has to reach it — a sheet is a new presentation
@@ -130,6 +135,31 @@ struct RootView: View {
   }
 }
 
+/// Publishes `NomiFloatingTabBar`'s rendered height so `RootView` can reserve
+/// exactly that much space — the bar has no fixed frame anywhere (it is
+/// intrinsically sized from an icon, a `.caption` label and its own padding),
+/// so a named constant would be one more number to keep in sync by hand, and
+/// wrong the moment Dynamic Type grows the label.
+private struct TabBarHeightKey: PreferenceKey {
+  static var defaultValue: CGFloat = 0
+  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+    value = nextValue()
+  }
+}
+
+/// The space every tab root and every pushed screen must reserve at the
+/// bottom: the bar's own measured height, plus the same bottom margin
+/// (`NomiSpacing.xs`) `RootView` already lifts the bar off the screen edge
+/// by. Pulled out as a pure function — not a duplicate literal, the existing
+/// spacing token the call site already applies for the identical purpose —
+/// so `TabBarLayoutTests` can assert the relationship directly instead of
+/// inferring it from a rendered view.
+enum TabBarInsetHeight {
+  static func reserved(barHeight: CGFloat) -> CGFloat {
+    barHeight + NomiSpacing.xs
+  }
+}
+
 /// The floating glass pill bar, over U5's `NomiFloatingTabBarBackground`.
 ///
 /// The centre `+` is a solid blue circle — Estate-Ease's send button doing a
@@ -154,6 +184,11 @@ struct NomiFloatingTabBar: View {
     .padding(.vertical, NomiSpacing.xs)
     .padding(.horizontal, NomiSpacing.xs)
     .background(NomiFloatingTabBarBackground())
+    .background(
+      GeometryReader { proxy in
+        Color.clear.preference(key: TabBarHeightKey.self, value: proxy.size.height)
+      }
+    )
   }
 
   private func tabButton(_ tab: RootTab) -> some View {
