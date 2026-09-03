@@ -275,7 +275,7 @@ final class MailSyncEngineTests: XCTestCase {
     _ = try await engine.syncNow()
 
     XCTAssertEqual(fetcher.uidsAfterCalls, [], "must not trust the old cursor")
-    XCTAssertEqual(fetcher.uidsSinceCalls.count, 1)
+    XCTAssertEqual(fetcher.windowCalls.count, 6, "windowed since park/mail-first-sync-window")
     let loaded = await engine.cursor
     XCTAssertEqual(try XCTUnwrap(loaded).uidValidity, 777_777)
   }
@@ -289,6 +289,63 @@ final class MailSyncEngineTests: XCTestCase {
     XCTAssertEqual(summary.scanned, 0)
     XCTAssertTrue(summary.unmatchedSenders.isEmpty)
     XCTAssertTrue(pipeline.received.isEmpty)
+  }
+
+  // MARK: - The first sync is windowed too
+
+  /// `syncNow()` with no cursor was `UID SEARCH SINCE 1-Jan-1970` — the whole
+  /// mailbox on one SEARCH line, and on a ten-year-old account that means
+  /// reading 2009 to show someone this month's spending.
+  ///
+  /// Six months, the same horizon `AppSyncCoordinator.backfillMonths` uses, and
+  /// through the same `monthlyWindows` walk the backfill already had. A first
+  /// sync that is not a backfill has no business reaching further back than one
+  /// that is.
+  func testAFirstSyncWindowsItsSearchInsteadOfReadingTheWholeMailbox() async throws {
+    let now = Date(timeIntervalSince1970: 1_787_000_000)
+    let messages = [try message("axis_debit_atm.eml", uid: 40)]
+    let fetcher = StubFetcher(messages: messages)
+    let engine = MailSyncEngine(
+      fetcher: fetcher, pipeline: RecordingPipeline(), now: { now })
+
+    _ = try await engine.syncNow()
+
+    XCTAssertTrue(
+      fetcher.uidsSinceCalls.isEmpty,
+      "SINCE 1970 is the unbounded search this unit exists to remove")
+    XCTAssertEqual(fetcher.windowCalls.count, 6, "six months, one window each")
+
+    let since = try XCTUnwrap(fetcher.windowCalls.first?.since)
+    let months = Calendar(identifier: .gregorian)
+      .dateComponents([.month], from: since, to: now).month
+    XCTAssertEqual(months, 6, "the horizon is six months, not the whole mailbox")
+
+    // StubFetcher returns every UID from every window, so this is the dedupe
+    // doing its job on the syncNow path and not only on the backfill path.
+    XCTAssertEqual(fetcher.fetched, [[40]])
+  }
+
+  /// The other branch that had no cursor to trust. A UIDVALIDITY change still
+  /// rescans rather than skipping — it just stops rescanning back to 1970 to do
+  /// it.
+  func testAUIDValidityMismatchWindowsItsRescanTheSameWay() async throws {
+    let now = Date(timeIntervalSince1970: 1_787_000_000)
+    let messages = [try message("axis_debit_atm.eml", uid: 40)]
+    let fetcher = StubFetcher(
+      messages: messages,
+      state: MailboxState(name: "INBOX", uidValidity: 777_777, uidNext: 999))
+    let engine = MailSyncEngine(
+      fetcher: fetcher,
+      pipeline: RecordingPipeline(),
+      cursor: MailSyncCursor(mailbox: "INBOX", uidValidity: 900_100, lastSeenUID: 39),
+      now: { now }
+    )
+
+    _ = try await engine.syncNow()
+
+    XCTAssertEqual(fetcher.uidsAfterCalls, [], "must not trust the old cursor")
+    XCTAssertTrue(fetcher.uidsSinceCalls.isEmpty)
+    XCTAssertEqual(fetcher.windowCalls.count, 6)
   }
 
   // MARK: - Backfill

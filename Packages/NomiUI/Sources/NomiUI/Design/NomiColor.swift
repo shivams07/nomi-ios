@@ -13,6 +13,10 @@ public enum NomiColor {
   public static let surface = Color(hex: 0x292929)
   /// Dashboard cards and other content sitting on the canvas.
   public static let surfaceRaised = Color(hex: 0x212121)
+  /// Ledger rows once they become cards (`ui-ledger-surfaces`).
+  public static let surfaceRow = Color(hex: 0x1C1C1C)
+  /// Text inputs — amount field, note field.
+  public static let surfaceInput = Color(hex: 0x1E1E1E)
 
   // MARK: - Glass
 
@@ -44,12 +48,12 @@ public enum NomiColor {
 
   public static let separator = Color(red: 84.0 / 255, green: 84.0 / 255, blue: 88.0 / 255, opacity: 0.6)
 
-  // MARK: - Direction (sign carries meaning, no hue)
+  // MARK: - Direction
 
-  /// Credits: full white, `+` prefix supplies the sign.
-  public static let creditText = textPrimary
-  /// Debits: one opacity step down. No hue on either side.
-  public static let debitText = textSecondary
+  /// Credits. 9.68:1 on `surfaceCanvas`, 8.43:1 on `surfaceRow` — both AA.
+  public static let creditText = Color(hex: 0x30D158)
+  /// Debits. 5.74:1 on `surfaceCanvas`, 5.00:1 on `surfaceRow` — both AA.
+  public static let debitText = Color(hex: 0xFF453A)
 
   // MARK: - Over-budget
 

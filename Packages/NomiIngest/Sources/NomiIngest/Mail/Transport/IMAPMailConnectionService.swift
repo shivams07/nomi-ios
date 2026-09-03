@@ -106,12 +106,20 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
 
   // MARK: - Sync
 
+  /// Reconnects once and reissues, on a transport error that means the socket is
+  /// gone (see `reconnectingOnce`).
+  ///
+  /// This is the ordinary case, not an edge one: iOS suspends the app, the
+  /// server drops an idle connection, and the very next sync's first command
+  /// comes back on a socket that no longer exists. Without this the user has to
+  /// notice a `.failed` and reconnect by hand — every time the phone has been in
+  /// a pocket for an hour.
   @discardableResult
   public func syncNow() async throws -> SyncSummary {
     let address = try requireConnectedAddress()
 
     do {
-      let summary = try await engine.syncNow()
+      let summary = try await reconnectingOnce { try await self.engine.syncNow() }
       recordSync(at: now())
       stateContinuation.yield(.connected(address: address, lastSync: currentLastSync()))
       return summary
@@ -151,6 +159,54 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
   }
 
   // MARK: -
+
+  /// Runs `work`; if it fails because the socket is gone, reloads the stored
+  /// credential, reconnects and runs it exactly once more.
+  ///
+  /// **Once, and not a loop.** A server that is genuinely unreachable has to
+  /// produce a `.failed` the user can see; a quiet retry loop behind a spinner
+  /// is the failure mode where nothing works and nothing says so. And not a
+  /// reachability observer either — this needs to know that *this* socket is
+  /// dead, which is a different question from whether the network is up.
+  ///
+  /// `fetcher.connect` directly rather than `self.connect(_:)`: the latter
+  /// re-saves the credential and yields `.connecting`/`.connected`, which would
+  /// flicker the UI for a repair the user never needed to know about.
+  ///
+  /// `startBackfill` deliberately does NOT do this — see the PR. A backfill that
+  /// restarted mid-run would replay `BackfillProgress` from zero and run the
+  /// banner backwards, and it is the foreground run the user is watching, not
+  /// the one that finds a socket dead after an hour in a pocket.
+  private func reconnectingOnce<T>(_ work: () async throws -> T) async throws -> T {
+    do {
+      return try await work()
+    } catch {
+      // `try?` flattens the store's `IMAPCredentials?` rather than nesting it,
+      // so this is one optional and not two. No stored credential means nothing
+      // to reconnect with, and the original error stands.
+      guard Self.meansTheSocketIsGone(error), let stored = try? credentials.load()
+      else { throw error }
+
+      try await fetcher.connect(stored)
+      return try await work()
+    }
+  }
+
+  /// "The socket is gone", as distinct from "the server said no".
+  ///
+  /// Only these are worth a reconnect. `commandFailed` and `malformedResponse`
+  /// would fail identically on a fresh connection, and retrying an
+  /// `authenticationFailed` against a provider that counts failed logins is how
+  /// an account gets locked.
+  private static func meansTheSocketIsGone(_ error: Error) -> Bool {
+    guard let transportError = error as? IMAPTransportError else { return false }
+    switch transportError {
+    case .notConnected, .connectionClosed, .serverClosedMidCommand:
+      return true
+    case .authenticationFailed, .commandFailed, .malformedResponse:
+      return false
+    }
+  }
 
   private func requireConnectedAddress() throws -> String {
     lock.lock()
