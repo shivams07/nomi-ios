@@ -42,6 +42,54 @@ final class MailParsingTests: XCTestCase {
     XCTAssertEqual(MailAmount.largestAmount(in: text), 1_840_000)
   }
 
+  // MARK: - Block boundaries survive the HTML
+
+  /// FAILS today. `text()` puts a single space between two `<td>`s, so nothing
+  /// downstream can tell "end of cell" from "next word". A newline is the
+  /// terminator `clauseAroundFirstAmount` and the amount rule both need.
+  func testPlainTextKeepsABoundaryBetweenAdjacentCells() {
+    let html = "<table><tr><td>Rs.100.00 debited</td><td>Available Balance Rs.900.00</td></tr></table>"
+    let text = MailHTML.plainText(fromHTML: html)
+
+    XCTAssertTrue(text.contains("\n"), "no block boundary survived: " + text)
+    XCTAssertEqual(
+      text.split(separator: "\n").first?.trimmingCharacters(in: .whitespaces),
+      "Rs.100.00 debited")
+  }
+
+  /// The other half: collapsing whitespace must not undo it. Spaces and tabs
+  /// collapse; newlines do not.
+  func testNormalizeWhitespaceCollapsesSpacesButKeepsNewlines() {
+    XCTAssertEqual(MailHTML.normalizeWhitespace("a   \t  b"), "a b")
+    XCTAssertEqual(MailHTML.normalizeWhitespace("a  \n   b"), "a\nb")
+    XCTAssertEqual(MailHTML.normalizeWhitespace("a \n \n\n b"), "a\nb")
+  }
+
+  /// `rejoinSplitDecimals` has to keep working once the cells are separated by
+  /// a newline instead of a space — the split-decimal shape is *why* the cells
+  /// were adjacent in the first place.
+  func testASplitDecimalStillRejoinsAcrossACellBoundary() {
+    XCTAssertEqual(
+      MailHTML.normalizeWhitespace("Rs 4,500\n.00 debited"), "Rs 4,500.00 debited")
+  }
+
+  // MARK: - RFC 5322 4.3: the obsolete zone names
+
+  /// FAILS today. Only numeric offsets parse, so a legal `Date:` header ending
+  /// in `GMT` returns nil and `RFC822Message` files the message under 1970.
+  func testAnObsoleteZoneNameParsesRatherThanFallingBackToTheEpoch() {
+    let parsed = MailDate.parseHeaderDate("Mon, 17 Aug 2026 09:15:00 GMT")
+
+    XCTAssertNotNil(parsed, "GMT is RFC 5322 4.3 legal and must parse")
+    XCTAssertEqual(parsed, Date(timeIntervalSince1970: 1_787_303_700))
+  }
+
+  func testTheNumericOffsetFormStillParses() {
+    XCTAssertEqual(
+      MailDate.parseHeaderDate("Mon, 17 Aug 2026 14:45:00 +0530"),
+      Date(timeIntervalSince1970: 1_787_303_700))
+  }
+
   // MARK: - R6: the split amount
 
   func testASplitDecimalIsRejoinedInAllThreeShapes() {

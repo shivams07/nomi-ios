@@ -9,6 +9,7 @@ import XCTest
 final class MailLayerTwoTests: XCTestCase {
 
   private let unknownBank = "unknown_bank_layer2.eml"
+  private let runningBalance = "unknown_bank_running_balance.eml"
 
   func testASenderWithNoPackEntryStillYieldsATransactionViaLayerTwo() throws {
     let message = try MailFixtures.message(unknownBank)
@@ -35,6 +36,33 @@ final class MailLayerTwoTests: XCTestCase {
     XCTAssertEqual(summary.heuristicMatched, 1)
     XCTAssertEqual(summary.packMatched, 1)
     XCTAssertEqual(summary.scanned, 2)
+  }
+
+  // MARK: - The running balance in the next cell
+
+  /// FAILS today. Two sibling `<td>`s: the transaction in one, the running
+  /// balance in the next. `text()` joins siblings with a single space and no
+  /// sentence terminator, so `clauseAroundFirstAmount` runs straight past the
+  /// cell boundary and the narration swallows "Available Balance".
+  func testTheNarrationStopsAtTheCellBoundaryAndExcludesTheRunningBalance() throws {
+    let message = try MailFixtures.message(runningBalance)
+    let draft = try XCTUnwrap(MailTransactionExtractor().outcome(for: message).draft)
+
+    XCTAssertFalse(
+      draft.descriptionText.lowercased().contains("balance"),
+      "narration ran into the next cell: " + draft.descriptionText)
+  }
+
+  /// FAILS today. Largest-wins picks Rs.48,900.00 — the balance — over the
+  /// Rs.3,275.50 that was actually spent. A plausible, wrong number is R6's
+  /// worst outcome, and it is the reason Layer 2's amount rule has to be about
+  /// where the verb is rather than which number is biggest.
+  func testLayerTwoTakesTheTransactionAmountNotTheLargerRunningBalance() throws {
+    let message = try MailFixtures.message(runningBalance)
+    let draft = try XCTUnwrap(MailTransactionExtractor().outcome(for: message).draft)
+
+    XCTAssertEqual(draft.amountMinor, 327_550, "3,275.50 is the transaction")
+    XCTAssertNotEqual(draft.amountMinor, 4_890_000, "48,900.00 is the balance")
   }
 
   // MARK: - unmatchedSenders: domain only, never an address
