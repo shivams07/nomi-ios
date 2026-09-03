@@ -1,0 +1,10 @@
+From: HDFC Bank Offers <offers@hdfcbank.net>
+To: <user@example.com>
+Subject: You paid Rs.1,850 last month - earn Rs.100 back this time
+Date: Wed, 19 Aug 2026 07:50:00 +0530
+X-Fixture-Note: HDFC PayZapp biller promotion. Real phrasing: it recites a past bill payment to sell the next one, so it carries a clean 'paid' with a clean amount.
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>td{padding:4px}</style></head><body><table width="100%"><tr><td align="center"><p>You paid Rs.1,850 towards your electricity bill last month. Pay it through PayZapp this time and get Rs.100 cashback. Offer valid on the first transaction only. T&amp;C apply.</p><p></p></td></tr></table></body></html>

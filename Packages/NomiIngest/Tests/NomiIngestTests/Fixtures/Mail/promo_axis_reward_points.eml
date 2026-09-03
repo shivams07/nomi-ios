@@ -1,0 +1,10 @@
+From: Axis Bank Rewards <rewards@axisbank.com>
+To: <user@example.com>
+Subject: Congratulations - your reward points are worth Rs.1,250
+Date: Sat, 15 Aug 2026 11:00:00 +0530
+X-Fixture-Note: Axis EDGE rewards statement. Real phrasing: points expressed in rupees and 'credited', which reads to the verb gate exactly like a deposit.
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>td{padding:4px}</style></head><body><table width="100%"><tr><td align="center"><p>Congratulations, you have earned 12,500 EDGE reward points worth Rs.1,250. They have been credited to your rewards account and can be redeemed against any purchase. Offer ends 30-09-2026.</p><p></p></td></tr></table></body></html>

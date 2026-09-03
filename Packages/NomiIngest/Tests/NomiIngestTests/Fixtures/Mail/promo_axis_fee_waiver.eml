@@ -1,0 +1,10 @@
+From: Axis Bank <offers@axisbank.com>
+To: <user@example.com>
+Subject: Congratulations - your annual fee of Rs.1,500 is on us
+Date: Thu, 20 Aug 2026 13:05:00 +0530
+X-Fixture-Note: Axis annual-fee reversal notice. Real phrasing: the fee genuinely was charged, so the mail is half alert and half marketing - and the half that matters was already ingested from the real debit alert.
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>td{padding:4px}</style></head><body><table width="100%"><tr><td align="center"><p>Congratulations! The annual fee of Rs.1,500 charged to your Axis Bank Card XX9930 on 01-08-2026 has been waived under our spend-based offer. Keep spending to keep it waived next year.</p><p></p></td></tr></table></body></html>

@@ -16,11 +16,24 @@ public struct SenderPack: Codable, Sendable, Equatable {
   /// Substrings that make an unknown domain a candidate — `bank`, `card`, `upi`.
   /// Wider still, and the reason `unmatchedSenders` has anything to report.
   public let candidateDomainTokens: [String]
+  /// The pre-filter's fourth, NEGATIVE condition: promo language that rejects a
+  /// message which has already cleared the domain, amount and verb gates.
+  ///
+  /// Data for the same reason the entries are (§2.5.1). This list is expected
+  /// to be wrong in both directions and correcting it must not need a unit — a
+  /// phrase that is too common rejects real alerts, and that failure is silent.
+  ///
+  /// OPTIONAL, and deliberately so. A non-optional field here would mean a
+  /// `senders.json` that omits the key fails to decode at all, `bundled` falls
+  /// back to `.empty`, and the domain gate then rejects EVERY sender — an app
+  /// that silently ingests nothing, from one missing key. Absent decodes to
+  /// `nil` and the promo gate rejects nothing, which is the smaller failure.
+  public let promotionalPhrases: [String]?
   public let entries: [SenderPackEntry]
 
   enum CodingKeys: String, CodingKey {
     case readme = "_readme"
-    case version, candidateDomains, candidateDomainTokens, entries
+    case version, candidateDomains, candidateDomainTokens, promotionalPhrases, entries
   }
 
   public func entry(forDomain domain: String, subject: String) -> SenderPackEntry? {
@@ -41,7 +54,8 @@ public struct SenderPack: Codable, Sendable, Equatable {
   public static let bundled: SenderPack = load() ?? .empty
 
   static let empty = SenderPack(
-    readme: "", version: 0, candidateDomains: [], candidateDomainTokens: [], entries: [])
+    readme: "", version: 0, candidateDomains: [], candidateDomainTokens: [],
+    promotionalPhrases: [], entries: [])
 
   /// `Bundle.module` is synthesised per target, so the test target cannot name
   /// NomiIngest's. This is how a test reaches it.
@@ -59,12 +73,14 @@ public struct SenderPack: Codable, Sendable, Equatable {
     version: Int,
     candidateDomains: [String],
     candidateDomainTokens: [String],
+    promotionalPhrases: [String]? = nil,
     entries: [SenderPackEntry]
   ) {
     self.readme = readme
     self.version = version
     self.candidateDomains = candidateDomains
     self.candidateDomainTokens = candidateDomainTokens
+    self.promotionalPhrases = promotionalPhrases
     self.entries = entries
   }
 }

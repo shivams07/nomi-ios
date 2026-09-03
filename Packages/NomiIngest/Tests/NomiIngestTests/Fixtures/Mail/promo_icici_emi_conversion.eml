@@ -1,0 +1,10 @@
+From: ICICI Bank <offers@icicibank.com>
+To: <user@example.com>
+Subject: You spent Rs.25,000 last month - convert it to EMI
+Date: Mon, 17 Aug 2026 10:45:00 +0530
+X-Fixture-Note: ICICI EMI-conversion pitch, which quotes the customer's own spend back at them. Real phrasing: a true past-tense verb about a transaction that has already been ingested, so admitting this creates a duplicate row.
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>td{padding:4px}</style></head><body><table width="100%"><tr><td align="center"><p>You have spent Rs.25,000 on your ICICI Bank Credit Card XX8812 last month. Convert it to EMI at 0% interest under our no-cost EMI offer. T&amp;C apply.</p><p></p></td></tr></table></body></html>

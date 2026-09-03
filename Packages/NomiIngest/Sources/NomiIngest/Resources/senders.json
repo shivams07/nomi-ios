@@ -1,5 +1,5 @@
 {
-  "_readme": "PROVISIONAL PACK - NOT A CLAIM ABOUT WHICH BANKS THE USER HAS. These five entries are defaults chosen for coverage of the most commonly encountered Indian retail alert formats (design section 2.5). Nobody asked the user which banks he uses and nobody read his mail to find out (2.5.1, 2.5.2). The real list is discovered on the user's own device at first backfill, via SyncSummary.unmatchedSenders. If entries here are wrong the app still works: those senders fall through to the Layer-2 heuristic extractor, every row is flagged needsReview, and the domains show up in unmatchedSenders. Correcting an entry is a data edit to this file - no code change, no unit, no re-plan.",
+  "_readme": "PROVISIONAL PACK - NOT A CLAIM ABOUT WHICH BANKS THE USER HAS. These five entries are defaults chosen for coverage of the most commonly encountered Indian retail alert formats (design section 2.5). Nobody asked the user which banks he uses and nobody read his mail to find out (2.5.1, 2.5.2). The real list is discovered on the user's own device at first backfill, via SyncSummary.unmatchedSenders. If entries here are wrong the app still works: those senders fall through to the Layer-2 heuristic extractor, every row is flagged needsReview, and the domains show up in unmatchedSenders. Correcting an entry is a data edit to this file - no code change, no unit, no re-plan. candidateDomains is an ADMISSION list and it sits IN FRONT of candidateDomainTokens, which admits any domain whose text merely CONTAINS bank, card, upi, netbanking, alerts, paytm, phonepe or npci - so adding canarabank.com, or anything else carrying one of those eight tokens, changes nothing at all. Only tokenless domains belong on this list; if the domain you are about to add contains a token, it is already admitted. Admission is the cheap half: a domain here only sends the mail to the Layer-2 heuristic extractor, which flags every row needsReview. Do not add banks to entries below on the same reasoning - that list is five regexes per bank and it is wrong in the expensive direction. promotionalPhrases is the pre-filter's fourth, NEGATIVE condition: a message that clears the domain, amount and verb gates is still rejected as .promotional if it carries one of these, matched on word boundaries and case-insensitively. It is held here for the same reason the entries are - it WILL be wrong in both directions, and correcting it must not need a unit. A phrase that is too common rejects real alerts silently, which is the expensive direction: check SyncSummary before adding one.",
   "version": 1,
   "candidateDomains": [
     "sbi.co.in",
@@ -23,7 +23,25 @@
     "federalbank.co.in",
     "paytmbank.com",
     "phonepe.com",
-    "npci.org.in"
+    "npci.org.in",
+    "standardchartered.com",
+    "sc.com",
+    "hsbc.co.in",
+    "citi.com",
+    "dbs.com",
+    "idbi.co.in",
+    "iob.in",
+    "pnbindia.in",
+    "sib.co.in",
+    "csb.co.in",
+    "tmb.in",
+    "equitas.in",
+    "ujjivansfb.in",
+    "bobfinancial.com",
+    "bajajfinserv.in",
+    "cred.club",
+    "fi.money",
+    "razorpay.com"
   ],
   "candidateDomainTokens": [
     "bank",
@@ -34,6 +52,15 @@
     "paytm",
     "phonepe",
     "npci"
+  ],
+  "promotionalPhrases": [
+    "offer",
+    "cashback",
+    "apply now",
+    "T&C",
+    "limited period",
+    "pre-approved",
+    "congratulations"
   ],
   "entries": [
     {
