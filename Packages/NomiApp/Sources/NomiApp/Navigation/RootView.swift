@@ -140,7 +140,7 @@ struct RootView: View {
 /// intrinsically sized from an icon, a `.caption` label and its own padding),
 /// so a named constant would be one more number to keep in sync by hand, and
 /// wrong the moment Dynamic Type grows the label.
-private struct TabBarHeightKey: PreferenceKey {
+private struct TabBarHeightKey: SwiftUI.PreferenceKey {
   static var defaultValue: CGFloat = 0
   static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
     value = nextValue()
