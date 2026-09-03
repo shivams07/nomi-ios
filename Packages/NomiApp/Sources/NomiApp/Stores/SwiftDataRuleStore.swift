@@ -35,13 +35,40 @@ public final class SwiftDataRuleStore: RuleStore {
     self.now = now
   }
 
+  /// **A new rule goes to the FRONT of precedence, not the back.**
+  ///
+  /// `RuleEngine.precedenceOrdered` sorts ascending and `firstMatch` stops at
+  /// the first hit, so lower `priority` wins. This used to assign
+  /// `max() + 1`, which put every rule the user wrote *last* — losing to
+  /// everything already in the store.
+  ///
+  /// That was invisible while a fresh install had no rules at all. Once
+  /// `DefaultRuleSeed` shipped 47 of them, the very first rule a user wrote lost
+  /// to all 47, and there was nothing on screen to explain why.
+  ///
+  /// **Why not a reserved priority band for the seed.** Giving seeded rules a
+  /// high band and user rules a low one looks equivalent and is not: `reorder`
+  /// below rewrites `priority` to the array index across *every* rule, so a
+  /// single drag-to-reorder gesture flattens the band and the bug returns with
+  /// nothing to show for it. Front-insertion is defined relative to whatever
+  /// `reorder` last wrote, so it cannot be collapsed that way.
+  ///
+  /// `?? 1` rather than `?? 0` so the first rule in an empty store lands on 0
+  /// rather than -1 — cosmetic, but it keeps a fresh install's rule list reading
+  /// 0, -1, -2 instead of -1, -2, -3.
+  ///
+  /// One consequence worth naming: this reverses precedence *between* two user
+  /// rules. The newest now wins where the oldest used to. That is the behaviour
+  /// the + button implies — a rule you just wrote should take effect — and
+  /// `RulesScreen` sorts by `priority`, so the new rule also appears at the top
+  /// of the list where the user is looking. Drag-to-reorder overrides both.
   @discardableResult
   public func create(pattern: String, categoryID: UUID) throws -> RuleApplyResult {
     let existing = try context.fetch(FetchDescriptor<Rule>())
     let rule = Rule(
       pattern: pattern,
       categoryID: categoryID,
-      priority: (existing.map(\.priority).max() ?? -1) + 1
+      priority: (existing.map(\.priority).min() ?? 1) - 1
     )
     context.insert(rule)
     try context.save()

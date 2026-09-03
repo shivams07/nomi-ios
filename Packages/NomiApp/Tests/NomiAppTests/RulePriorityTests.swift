@@ -27,9 +27,9 @@ final class RulePriorityTests: XCTestCase {
     let (store, context) = try makeStore()
     try seedRules(in: context, priorities: [0, 1, 2])
 
-    try store.create(pattern: "*SWIGGY*", categoryID: UUID())
+    try store.create(pattern: "*MYOWNRULE*", categoryID: UUID())
 
-    let created = try XCTUnwrap(rule(pattern: "*SWIGGY*", in: context))
+    let created = try XCTUnwrap(rule(pattern: "*MYOWNRULE*", in: context))
     XCTAssertLessThan(
       created.priority, 0,
       "a new rule must sort ahead of priorities \(priorities(in: context))")
@@ -45,9 +45,17 @@ final class RulePriorityTests: XCTestCase {
     let seeded = try context.fetch(FetchDescriptor<Rule>())
     XCTAssertEqual(seeded.count, DefaultRuleSeed.specs.count, "the seed is the fixture here")
 
-    try store.create(pattern: "*SWIGGY*", categoryID: UUID())
+    // The pattern must be one the seed does not already carry. `*SWIGGY*` does
+    // — it is the seed's first merchant rule — so looking the created rule up
+    // by pattern would find the seeded one instead, and the test would report
+    // on a row it did not create.
+    XCTAssertFalse(
+      DefaultRuleSeed.specs.map(\.pattern).contains("*MYOWNRULE*"),
+      "pick a pattern the seed cannot supply")
 
-    let created = try XCTUnwrap(rule(pattern: "*SWIGGY*", in: context))
+    try store.create(pattern: "*MYOWNRULE*", categoryID: UUID())
+
+    let created = try XCTUnwrap(rule(pattern: "*MYOWNRULE*", in: context))
     let lowestSeeded = try XCTUnwrap(seeded.map(\.priority).min())
     XCTAssertLessThan(
       created.priority, lowestSeeded,
@@ -89,9 +97,9 @@ final class RulePriorityTests: XCTestCase {
     try store.reorder(existing.map(\.id))
     XCTAssertEqual(priorities(in: context).sorted(), [0, 1, 2], "reorder flattened the band")
 
-    try store.create(pattern: "*SWIGGY*", categoryID: UUID())
+    try store.create(pattern: "*MYOWNRULE*", categoryID: UUID())
 
-    let created = try XCTUnwrap(rule(pattern: "*SWIGGY*", in: context))
+    let created = try XCTUnwrap(rule(pattern: "*MYOWNRULE*", in: context))
     XCTAssertLessThan(
       created.priority, 0,
       "a band-based fix passes every other test here and fails this one")
@@ -100,9 +108,9 @@ final class RulePriorityTests: XCTestCase {
   func testTheFirstRuleInAnEmptyStoreIsAccepted() throws {
     let (store, context) = try makeStore()
 
-    try store.create(pattern: "*SWIGGY*", categoryID: UUID())
+    try store.create(pattern: "*MYOWNRULE*", categoryID: UUID())
 
-    XCTAssertEqual(try XCTUnwrap(rule(pattern: "*SWIGGY*", in: context)).priority, 0)
+    XCTAssertEqual(try XCTUnwrap(rule(pattern: "*MYOWNRULE*", in: context)).priority, 0)
   }
 
   // MARK: - The fake store must agree
@@ -120,10 +128,10 @@ final class RulePriorityTests: XCTestCase {
       Rule(pattern: "*B*", categoryID: UUID(), priority: 1),
     ], matchPool: [])
 
-    try fake.create(pattern: "*SWIGGY*", categoryID: UUID())
+    try fake.create(pattern: "*MYOWNRULE*", categoryID: UUID())
 
-    let created = try XCTUnwrap(fake.rules.first { $0.pattern == "*SWIGGY*" })
-    let others = fake.rules.filter { $0.pattern != "*SWIGGY*" }.map(\.priority)
+    let created = try XCTUnwrap(fake.rules.first { $0.pattern == "*MYOWNRULE*" })
+    let others = fake.rules.filter { $0.pattern != "*MYOWNRULE*" }.map(\.priority)
     let lowestOther = try XCTUnwrap(others.min())
     XCTAssertLessThan(created.priority, lowestOther)
   }
@@ -136,15 +144,15 @@ final class RulePriorityTests: XCTestCase {
 
     let (store, context) = try makeStore()
     try seedRules(in: context, priorities: starting)
-    try store.create(pattern: "*SWIGGY*", categoryID: UUID())
-    let realRule = try XCTUnwrap(rule(pattern: "*SWIGGY*", in: context))
+    try store.create(pattern: "*MYOWNRULE*", categoryID: UUID())
+    let realRule = try XCTUnwrap(rule(pattern: "*MYOWNRULE*", in: context))
     let real = realRule.priority
 
     let fake = FakeRuleStore(
       rules: starting.map { Rule(pattern: "*\($0)*", categoryID: UUID(), priority: $0) },
       matchPool: [])
-    try fake.create(pattern: "*SWIGGY*", categoryID: UUID())
-    let fakeRule = try XCTUnwrap(fake.rules.first { $0.pattern == "*SWIGGY*" })
+    try fake.create(pattern: "*MYOWNRULE*", categoryID: UUID())
+    let fakeRule = try XCTUnwrap(fake.rules.first { $0.pattern == "*MYOWNRULE*" })
     let faked = fakeRule.priority
 
     XCTAssertEqual(real, faked, "the preview stack must not demonstrate the old behaviour")

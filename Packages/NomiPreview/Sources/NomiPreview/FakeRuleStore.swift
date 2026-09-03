@@ -11,9 +11,21 @@ public final class FakeRuleStore: RuleStore {
     self.matchPool = matchPool
   }
 
+  /// Front-insertion, matching `SwiftDataRuleStore.create` — see the long note
+  /// there for why the back of the list is wrong and why a reserved band does
+  /// not work either.
+  ///
+  /// `priority: rules.count` was the same bug in a different spelling. It has to
+  /// move with the real store or every preview and every screen built against
+  /// this one demonstrates the behaviour that was just fixed, which is worse
+  /// than having no fake at all.
   @discardableResult
   public func create(pattern: String, categoryID: UUID) throws -> RuleApplyResult {
-    let rule = Rule(pattern: pattern, categoryID: categoryID, priority: rules.count)
+    let rule = Rule(
+      pattern: pattern,
+      categoryID: categoryID,
+      priority: (rules.map(\.priority).min() ?? 1) - 1
+    )
     rules.append(rule)
     let matched = matchPool.filter { globMatches(pattern: pattern, value: $0) }.count
     return RuleApplyResult(matched: matched, recategorized: matched)
