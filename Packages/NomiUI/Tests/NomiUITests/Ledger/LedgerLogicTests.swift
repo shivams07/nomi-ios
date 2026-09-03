@@ -139,23 +139,23 @@ final class LedgerMagnitudeTests: XCTestCase {
   }
 }
 
-/// The day header (`LedgerScreen.dayHeader`) renders
-/// `NomiFormatters.dayMonthAdaptive(group.day, relativeTo:)` directly — that
-/// is the seam `ui-surfaces-and-dates` defined for this unit to consume, so
-/// exercising it here with ledger-shaped group-day values is what verifies
-/// the header's actual behaviour without a view-inspection library.
+/// `LedgerScreen.dayHeader` renders `LedgerDayHeaderText.string(for:relativeTo:)`
+/// — a pure wrapper defined in `LedgerScreen.swift` itself, not the general
+/// `NomiFormatters.dayMonthAdaptive` it wraps, so this exercises this unit's
+/// own code. A test against the formatter alone would pass whether or not
+/// `dayHeader` was ever wired up to it.
 final class LedgerDayHeaderTests: XCTestCase {
   func testDayHeaderOmitsYearForACurrentYearGroup() {
     let reference = date("2026-09-03")
     let sameYear = date("2026-08-20")
-    let text = NomiFormatters.dayMonthAdaptive(sameYear, relativeTo: reference)
+    let text = LedgerDayHeaderText.string(for: sameYear, relativeTo: reference)
     XCTAssertFalse(text.contains("2026"))
   }
 
   func testDayHeaderIncludesYearForAPriorYearGroup() {
     let reference = date("2026-09-03")
     let priorYear = date("2025-12-31")
-    let text = NomiFormatters.dayMonthAdaptive(priorYear, relativeTo: reference)
+    let text = LedgerDayHeaderText.string(for: priorYear, relativeTo: reference)
     XCTAssertTrue(text.contains("2025"))
   }
 }

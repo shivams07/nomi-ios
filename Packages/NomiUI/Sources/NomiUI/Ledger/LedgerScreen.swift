@@ -4,6 +4,19 @@ import NomiPreview
 import SwiftData
 import SwiftUI
 
+/// The day header's text. Pulled out as a pure function, same reasoning as
+/// `HeroIncomeExpense` in `HeroTotalCard.swift`: this just wraps
+/// `NomiFormatters.dayMonthAdaptive`, but a test against that formatter alone
+/// can't fail against an unmodified `LedgerScreen` — it doesn't reference this
+/// file at all. Routing `dayHeader` through this lets `LedgerDayHeaderTests`
+/// exercise the actual seam this screen calls, not just the formatter it
+/// happens to wrap.
+enum LedgerDayHeaderText {
+  static func string(for day: Date, relativeTo referenceDate: Date) -> String {
+    NomiFormatters.dayMonthAdaptive(day, relativeTo: referenceDate)
+  }
+}
+
 /// The Ledger screen (U14) — the transaction list the UI direction specified
 /// and no unit was ever given (design §2.19(2)). A tab-root screen like
 /// `DashboardView`, not a pushed one: no `NavigationStack`/`.navigationTitle`
@@ -147,7 +160,7 @@ public struct LedgerScreen: View {
 
   private func dayHeader(_ group: LedgerDayGroup<NomiCore.Transaction>) -> some View {
     HStack {
-      Text(NomiFormatters.dayMonthAdaptive(group.day, relativeTo: Date()))
+      Text(LedgerDayHeaderText.string(for: group.day, relativeTo: Date()))
         .nomiTextStyle(.caption)
         .foregroundStyle(NomiColor.textSecondary)
       Spacer()
