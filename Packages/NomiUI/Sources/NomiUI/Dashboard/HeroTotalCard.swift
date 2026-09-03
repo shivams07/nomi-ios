@@ -34,15 +34,41 @@ enum HeroCountUp {
   }
 }
 
-/// Card 1: the period's spend total against the prior period. The AC is
-/// explicit that this figure — and only this figure on the dashboard — uses
-/// PROPORTIONAL digits (`NomiTextStyle.dashboardHeroTotal`, a plain custom
-/// font, not `TabularFigures`); every ranked list and axis tick elsewhere
-/// uses the tabular helper instead.
+/// The two nested tiles inside the accent-filled hero card (`nomi.md`
+/// "UI direction — v4"). Pulled out as a pure function, same reasoning as
+/// `HeroDelta`/`HeroCountUp` above: this package's `swift test` runner has no
+/// view-inspection library, so what the card is supposed to show is tested as
+/// data rather than by rendering.
+enum HeroIncomeExpense {
+  struct Tile: Equatable {
+    let title: String
+    let amountText: String
+  }
+
+  static func tiles(for insights: PeriodInsights) -> [Tile] {
+    [
+      Tile(title: "Income", amountText: NomiFormatters.amountString(minor: insights.creditMinor)),
+      Tile(title: "Expenses", amountText: NomiFormatters.amountString(minor: insights.debitMinor)),
+    ]
+  }
+}
+
+/// Card 1: the period's spend total against the prior period, now
+/// accent-filled with two nested Income/Expenses tiles and `NomiGlow` — the
+/// v4 change U9 specified but never wired up (`nomi-ui-reference-comparison.md`
+/// §3). The AC is explicit that the headline figure — and only this figure on
+/// the dashboard — uses PROPORTIONAL digits (`NomiTextStyle.dashboardHeroTotal`,
+/// a plain custom font, not `TabularFigures`); every ranked list and axis tick
+/// elsewhere uses the tabular helper instead.
+///
+/// Deliberately not `DashboardCard`: that shell is contractually `#212121`
+/// per U9's own done-when, so this card builds its own accent-filled
+/// container instead of touching that shared shell's contract.
 public struct HeroTotalCard: View {
   public let insights: PeriodInsights
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @State private var displayedMinor: Int
 
   public init(insights: PeriodInsights) {
@@ -51,18 +77,24 @@ public struct HeroTotalCard: View {
   }
 
   public var body: some View {
-    DashboardCard {
+    VStack(alignment: .leading, spacing: NomiSpacing.sm) {
       VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
         Text("Spent this period")
           .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.textTertiary)
+          .foregroundStyle(NomiColor.textPrimary.opacity(0.7))
         Text(NomiFormatters.amountString(minor: displayedMinor))
           .nomiTextStyle(.dashboardHeroTotal)
           .foregroundStyle(NomiColor.textPrimary)
           .contentTransition(.numericText(value: Double(displayedMinor)))
         deltaView
       }
+      tilesRow
     }
+    .padding(NomiSpacing.cardPadding)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(NomiColor.accent)
+    .nomiCornerRadius(NomiRadius.card)
+    .nomiGlow()
     .onAppear { animateIn() }
     .onChange(of: insights.debitMinor) { _, _ in animateIn() }
   }
@@ -80,12 +112,51 @@ public struct HeroTotalCard: View {
     if let delta = HeroDelta.compute(current: insights.debitMinor, prior: insights.priorDebitMinor) {
       Text("\(delta.isIncrease ? "▲" : "▼") \(HeroDelta.percentText(delta.percent)) vs last period")
         .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textTertiary)
+        .foregroundStyle(NomiColor.textPrimary.opacity(0.7))
     } else {
       Text("No prior period to compare")
         .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textTertiary)
+        .foregroundStyle(NomiColor.textPrimary.opacity(0.7))
     }
+  }
+
+  // At accessibility Dynamic Type sizes the tiles stack instead of fighting
+  // each other for horizontal space, same rule as `TransactionRow`.
+  private var tilesRow: some View {
+    Group {
+      if dynamicTypeSize.isAccessibilitySize {
+        VStack(spacing: NomiSpacing.xs) {
+          ForEach(HeroIncomeExpense.tiles(for: insights), id: \.title) { tile in
+            tileView(tile)
+          }
+        }
+      } else {
+        HStack(spacing: NomiSpacing.xs) {
+          ForEach(HeroIncomeExpense.tiles(for: insights), id: \.title) { tile in
+            tileView(tile)
+          }
+        }
+      }
+    }
+  }
+
+  private func tileView(_ tile: HeroIncomeExpense.Tile) -> some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+      Text(tile.title)
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.textPrimary.opacity(0.7))
+      Text(tile.amountText)
+        .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 14))
+        .foregroundStyle(NomiColor.textPrimary)
+    }
+    .padding(NomiSpacing.sm)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(NomiColor.glassFill)
+    .overlay(
+      RoundedRectangle(cornerRadius: NomiRadius.tile, style: NomiRadius.cardSheetStyle)
+        .stroke(NomiColor.glassHairline, lineWidth: 1)
+    )
+    .nomiCornerRadius(NomiRadius.tile)
   }
 }
 
