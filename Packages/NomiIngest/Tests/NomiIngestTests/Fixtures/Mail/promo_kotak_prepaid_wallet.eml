@@ -1,0 +1,10 @@
+From: Kotak Bank Offers <offers@kotak.com>
+To: <user@example.com>
+Subject: Load your Kotak prepaid card and get Rs.200 back
+Date: Tue, 18 Aug 2026 16:20:00 +0530
+X-Fixture-Note: Kotak prepaid wallet top-up offer. Carries the word 'prepaid' deliberately: before word-boundary matching this was admitted by the 'paid' verb alone, with no other verb anywhere in the mail.
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>td{padding:4px}</style></head><body><table width="100%"><tr><td align="center"><p>Load Rs.2,000 on your Kotak prepaid card and Rs.200 cashback will be credited instantly. Limited period offer, valid till 30-09-2026.</p><p></p></td></tr></table></body></html>
