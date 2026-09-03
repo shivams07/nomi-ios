@@ -51,7 +51,7 @@ final class BootstrapOrderTests: XCTestCase {
 
     // Before any credential is stored: this is the real ordering, where the
     // scene goes active while `bootstrap()` is still working.
-    context.coordinator.didBecomeActive()
+    await context.coordinator.didBecomeActive()
 
     await context.stack.reconnectFromKeychain(context.credentials)
     let attempt = await context.coordinator.syncAfterConnect()
