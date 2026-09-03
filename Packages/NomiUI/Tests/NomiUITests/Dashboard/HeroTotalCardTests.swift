@@ -1,4 +1,5 @@
 import Foundation
+import NomiCore
 import XCTest
 @testable import NomiUI
 
@@ -41,5 +42,34 @@ final class HeroTotalCardTests: XCTestCase {
 
   func testMotionEnabledStartsFromZeroForCountUp() {
     XCTAssertEqual(HeroCountUp.initialDisplayValue(target: 42_318_00, reduceMotion: false), 0)
+  }
+
+  func testTilesRenderBothIncomeAndExpenseFiguresFromPeriodInsights() {
+    let insights = PeriodInsights(
+      period: .month(year: 2026, month: 8),
+      debitMinor: 42_318_00,
+      creditMinor: 60_000_00,
+      netMinor: 17_682_00,
+      priorDebitMinor: 38_000_00,
+      priorCreditMinor: 55_000_00,
+      transactionCount: 74,
+      byDay: [],
+      byCategory: [],
+      topMerchants: [],
+      needsReviewCount: 0,
+      uncategorizedCount: 0
+    )
+
+    let tiles = HeroIncomeExpense.tiles(for: insights)
+
+    XCTAssertEqual(tiles.count, 2)
+    XCTAssertEqual(
+      tiles.first { $0.title == "Income" }?.amountText,
+      NomiFormatters.amountString(minor: 60_000_00)
+    )
+    XCTAssertEqual(
+      tiles.first { $0.title == "Expenses" }?.amountText,
+      NomiFormatters.amountString(minor: 42_318_00)
+    )
   }
 }
