@@ -180,22 +180,39 @@ public final class AppEnvironment: ObservableObject {
 
   /// Runs once per launch, before the first frame the user acts on.
   ///
-  /// Order matters. Seeding first: a reconcile that ran before the categories
-  /// existed would be reconciling an empty store, and the mail reconnect can
-  /// produce transactions that reference a seeded category.
+  /// Order matters, in three places.
+  ///
+  /// **Seeding first.** A reconcile that ran before the categories existed would
+  /// be reconciling an empty store, and the mail reconnect can produce
+  /// transactions that reference a seeded category.
+  ///
+  /// **Categories before rules.** Every seeded rule names a seeded category by
+  /// id, so a rule that landed first would point at a row that does not exist
+  /// yet. Both seeds are idempotent by id and both are retried every launch, so
+  /// a half-applied pair heals — but only in this order.
+  ///
+  /// **Sync last, and after the reconnect has returned.** This used to end at
+  /// the reconnect, and nothing synced on launch at all: `didBecomeActive` fires
+  /// on the first `.active` scene phase, which is before this method finishes,
+  /// so it found no mailbox and gave up. The user had to background and
+  /// foreground the app to get their first sync. `syncAfterConnect()` is the
+  /// call that closes it, and it waits out that foreground task rather than
+  /// letting the idle guard mistake it for a sync already in progress.
   public func bootstrap() async {
     do {
       try DefaultCategorySeed.apply(in: container.mainContext)
+      try DefaultRuleSeed.apply(in: container.mainContext)
       cache.invalidate()
     } catch {
       // A failed seed is survivable — the app runs with no categories and every
       // row reads "Uncategorized" — where a trap here would mean the app cannot
-      // launch at all. The next launch retries, because the seed is idempotent
-      // by id.
-      assertionFailure("Default category seed failed: \(error)")
+      // launch at all. The next launch retries, because both seeds are
+      // idempotent by id.
+      assertionFailure("Default seed failed: \(error)")
     }
 
     await sync.reconcile()
     await mail.reconnectFromKeychain(credentials)
+    await sync.syncAfterConnect()
   }
 }

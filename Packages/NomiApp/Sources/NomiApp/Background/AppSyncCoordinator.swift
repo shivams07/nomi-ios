@@ -108,14 +108,63 @@ public actor AppSyncCoordinator {
     }
   }
 
-  private func syncIfIdle() async {
-    guard !isSyncing else { return }
+  /// What a sync request actually did.
+  ///
+  /// It used to return nothing and swallow everything through `try?`, which made
+  /// two very different outcomes identical to every caller: a sync that ran, and
+  /// a sync that was refused because no mailbox is connected yet. The second is
+  /// the launch case — `didBecomeActive` fires before `bootstrap()` has
+  /// reconnected — and losing it is how the first sync after a launch went
+  /// missing.
+  public enum SyncAttempt: Sendable, Equatable {
+    case ran
+    case alreadyRunning
+    /// Refused: there is no connected mailbox. A sync that is *owed*, not one
+    /// that failed, and `syncAfterConnect()` is what settles it.
+    case noMailboxConnected
+    case failed
+  }
+
+  @discardableResult
+  func syncIfIdle() async -> SyncAttempt {
+    guard !isSyncing else { return .alreadyRunning }
     isSyncing = true
     defer { isSyncing = false }
-    // Errors are the connection service's to report: it yields `.failed` on
-    // its state stream, which `SyncStatusRow` and `SettingsScreen` render.
-    // Re-throwing here would have nowhere to go — nobody awaits a scene phase.
-    _ = try? await mail.syncNow()
+
+    do {
+      _ = try await mail.syncNow()
+      return .ran
+    } catch let error as IMAPTransportError where error == .notConnected {
+      // Named rather than swallowed. Nothing is wrong and there is nothing to
+      // report to the user — there is simply no mailbox yet.
+      return .noMailboxConnected
+    } catch {
+      // Other errors are the connection service's to report: it yields `.failed`
+      // on its state stream, which `SyncStatusRow` and `SettingsScreen` render.
+      // Re-throwing here would have nowhere to go — nobody awaits a scene phase.
+      return .failed
+    }
+  }
+
+  /// The sync that follows a reconnect, issued by `AppEnvironment.bootstrap()`
+  /// once `reconnectFromKeychain` has returned.
+  ///
+  /// Before this existed, launch ended at the reconnect. `didBecomeActive` had
+  /// already run — it fires on the first `.active` scene phase, which is before
+  /// `bootstrap()` finishes — found no mailbox, and swallowed the
+  /// `.notConnected`. So nothing synced until the user backgrounded and
+  /// foregrounded the app by hand.
+  ///
+  /// **It waits out that in-flight foreground task rather than being dropped by
+  /// the idle guard.** A `didBecomeActive` that got there first is, by
+  /// definition, the sync that ran with nothing connected; letting the guard
+  /// treat it as "a sync is already happening" is the same bug wearing a
+  /// different hat. Awaiting inside the actor is safe — the actor suspends at
+  /// the await, so the foreground task's own actor-isolated work can proceed.
+  @discardableResult
+  public func syncAfterConnect() async -> SyncAttempt {
+    await foregroundTask?.value
+    return await syncIfIdle()
   }
 
   /// The backfill half of `syncIfIdle`, guarded by the same flag so a backfill
