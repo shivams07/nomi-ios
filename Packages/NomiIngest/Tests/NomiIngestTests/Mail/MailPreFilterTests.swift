@@ -63,6 +63,26 @@ final class MailPreFilterTests: XCTestCase {
     XCTAssertTrue(MailDirection.containsTransactionVerb("has a debit by transfer of Rs 500"))
   }
 
+  /// Substring matching admits three whole classes of non-transaction mail:
+  /// `prepaid`/`postpaid` card marketing, `recharged` telecom and wallet
+  /// promos, and `unpaid` dues reminders. All three hold a bank domain and an
+  /// amount, so the verb is the only gate left standing — and it lets them
+  /// through. The fix is `\bpaid\b`, never `contains("paid")`.
+  func testTransactionVerbsMatchOnWordBoundariesNotSubstrings() {
+    XCTAssertFalse(MailDirection.containsTransactionVerb("Your prepaid card is ready"))
+    XCTAssertFalse(MailDirection.containsTransactionVerb("Recharged successfully for Rs.399"))
+    XCTAssertFalse(MailDirection.containsTransactionVerb("Amount unpaid: Rs.1,240"))
+  }
+
+  /// The other half of the same change: narrowing to word boundaries must not
+  /// cost a single real alert.
+  func testWordBoundaryMatchingStillAdmitsRealAlerts() {
+    XCTAssertTrue(MailDirection.containsTransactionVerb("Rs.500 has been debited"))
+    XCTAssertTrue(MailDirection.containsTransactionVerb("You have paid Rs.500 to Swiggy"))
+    XCTAssertTrue(MailDirection.containsTransactionVerb("has a debit by transfer of Rs 500"))
+    XCTAssertTrue(MailDirection.containsTransactionVerb("A transaction of Rs.500 was made"))
+  }
+
   /// …but once a message is already a candidate, bare `debit` resolves the
   /// direction. SBI's alert never uses the -ed form.
   func testBareDebitStillResolvesDirectionOnceAdmitted() {
