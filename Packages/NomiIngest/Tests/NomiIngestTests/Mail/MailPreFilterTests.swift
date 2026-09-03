@@ -47,6 +47,90 @@ final class MailPreFilterTests: XCTestCase {
     }
   }
 
+  /// The reason, not just the outcome. `SyncSummary` is what tells us whether
+  /// this gate is too tight, and it can only do that if a promotion rejected on
+  /// the vocabulary is distinguishable from one that never had a verb.
+  func testPromotionsRejectedByTheFourthConditionSaySo() throws {
+    let filter = MailPreFilter()
+
+    for file in Self.promotionsPastTheVerbGate {
+      let message = try MailFixtures.message(file)
+      XCTAssertEqual(filter.verdict(for: message), .rejected(.promotional), file)
+    }
+  }
+
+  /// The vocabulary is DATA (design point 3), so this asserts it actually came
+  /// off `senders.json` and is not a Swift literal that happens to work.
+  func testTheVocabularyIsLoadedFromTheResource() {
+    let phrases = MailPreFilter().promotionalPhrases
+
+    XCTAssertFalse(phrases.isEmpty, "promotionalPhrases missing from senders.json")
+    let fromTheDesign = [
+      "offer", "cashback", "apply now", "T&C", "limited period", "pre-approved",
+      "congratulations",
+    ]
+    for expected in fromTheDesign {
+      XCTAssertTrue(phrases.contains(expected), "missing phrase: " + expected)
+    }
+  }
+
+  /// A vocabulary entry that matches nothing is invisible: the gate compiles,
+  /// the fixtures still pass on the OTHER entries, and the dead phrase sits
+  /// there forever looking like coverage. Assert over the whole set, never
+  /// per phrase - the same trap a glob-pattern seed walks into.
+  func testEveryPromotionalPhraseMatchesItself() {
+    let filter = MailPreFilter()
+
+    for phrase in filter.promotionalPhrases {
+      XCTAssertFalse(phrase.isEmpty, "empty phrase in promotionalPhrases")
+      XCTAssertTrue(
+        filter.containsPromotionalLanguage("Dear customer, " + phrase + " today."),
+        "dead promo phrase: " + phrase)
+    }
+  }
+
+  /// Word boundaries here too. `offer` must not fire on `offered`, and the
+  /// vocabulary must not reject an alert for quoting a merchant.
+  func testPromotionalPhrasesDoNotFireInsideLongerWords() {
+    let filter = MailPreFilter()
+
+    XCTAssertFalse(filter.containsPromotionalLanguage("Rs.500 was offered and debited"))
+    XCTAssertFalse(filter.containsPromotionalLanguage("Paid Rs.240 to CASHBACKERS PVT LTD"))
+    XCTAssertTrue(filter.containsPromotionalLanguage("Get Rs.500 cashback"))
+  }
+
+  /// The cost side of the trade, asserted rather than assumed. A negative
+  /// condition can only be wrong in one expensive way - rejecting real mail -
+  /// and it fails silently when it does.
+  func testNoExistingBankFixtureIsRejectedAsPromotional() throws {
+    let filter = MailPreFilter()
+    let files =
+      MailFixtures.packFixtures + ["unknown_bank_layer2.eml", "unparseable_candidate.eml"]
+
+    for file in files {
+      let verdict = filter.verdict(for: try MailFixtures.message(file))
+      XCTAssertNotEqual(verdict, .rejected(.promotional), file)
+    }
+  }
+
+  /// A `senders.json` with no `promotionalPhrases` key must degrade to "reject
+  /// nothing", never to "reject everything" and never to a pack that fails to
+  /// decode at all - which would take the domain gate down with it.
+  func testAMissingVocabularyRejectsNothing() throws {
+    let pack = SenderPack(
+      readme: "", version: 1,
+      candidateDomains: ["hdfcbank.net"], candidateDomainTokens: [],
+      promotionalPhrases: nil, entries: [])
+    let filter = MailPreFilter(pack: pack)
+
+    XCTAssertTrue(filter.promotionalPhrases.isEmpty)
+    XCTAssertFalse(filter.containsPromotionalLanguage("Get Rs.500 cashback, T&C apply"))
+    XCTAssertEqual(
+      filter.verdict(for: try MailFixtures.message("promo_hdfc_cashback_credited.eml")),
+      .candidate,
+      "a missing vocabulary must disable the gate, not the filter")
+  }
+
   /// Six promo fixtures existed at `92d90c5`, so "at least six" would have been
   /// satisfied by adding none. This asserts the new floor, and - the half that
   /// matters more - that every promo file on disk is named in one of the three
