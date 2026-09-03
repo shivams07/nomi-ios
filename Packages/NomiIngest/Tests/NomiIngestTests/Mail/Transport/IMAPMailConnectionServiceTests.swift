@@ -60,21 +60,33 @@ private final class FlakyFetcher: MailFetching, @unchecked Sendable {
   }
 
   func connect(_ credentials: IMAPCredentials) async throws {
-    lock.lock()
-    connectCount += 1
-    lock.unlock()
+    countConnect()
     if let connectError { throw connectError }
   }
 
   func disconnect() async throws { disconnectCount += 1 }
 
   func selectMailbox(_ name: String) async throws -> MailboxState {
-    lock.lock()
-    let shouldFail = selectMailboxFailures < failSelectMailboxTimes
-    if shouldFail { selectMailboxFailures += 1 }
-    lock.unlock()
-    if shouldFail { throw selectMailboxError }
+    if claimSelectMailboxFailure() { throw selectMailboxError }
     return try await inner.selectMailbox(name)
+  }
+
+  // Both through synchronous helpers rather than `lock.lock()` inline: taking an
+  // `NSLock` in an async function is a warning today and an error under the
+  // Swift 6 language mode. Nothing suspends inside either.
+
+  private func countConnect() {
+    lock.lock()
+    connectCount += 1
+    lock.unlock()
+  }
+
+  private func claimSelectMailboxFailure() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard selectMailboxFailures < failSelectMailboxTimes else { return false }
+    selectMailboxFailures += 1
+    return true
   }
   func uids(since date: Date, in mailbox: String) async throws -> [UInt32] {
     try await inner.uids(since: date, in: mailbox)

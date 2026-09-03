@@ -86,29 +86,55 @@ public final class NWConnectionChannel: IMAPByteChannel, @unchecked Sendable {
     )
     setConnection(connection)
 
-    try await perform(timeout: timeouts.connect) {
-      (finish: @escaping @Sendable (Result<Void, Error>) -> Void) in
-      connection.stateUpdateHandler = { state in
-        switch state {
-        case .ready:
-          finish(.success(()))
-        case .failed(let error):
-          finish(.failure(error))
-        case .waiting(let error):
-          // `.waiting` is NWConnection saying "no route, I will retry when
-          // conditions change". For a foreground sync that is a failure the
-          // user should see now, not a retry loop behind a spinner — and
-          // failing here gives the real reason rather than a timeout.
-          finish(.failure(error))
-        case .cancelled:
-          finish(.failure(IMAPTransportError.connectionClosed))
-        case .setup, .preparing:
-          break
-        @unknown default:
-          break
+    do {
+      try await perform(timeout: timeouts.connect) {
+        (finish: @escaping @Sendable (Result<Void, Error>) -> Void) in
+        // This handler is installed for the LIFE of the connection, not just for
+        // the handshake: `finish` is one-shot behind a `ResumeGuard`, but the
+        // callbacks keep arriving. So `.failed` and `.cancelled` after `.ready`
+        // land here too, and until now they were dropped on the floor.
+        //
+        // Dropping them costs a whole read timeout. Network.framework knows the
+        // socket is gone the moment it is gone; without this, the next `receive`
+        // sits on it for the full 60 seconds to learn the same thing, and the
+        // sync the user is waiting on hangs for a minute before failing.
+        //
+        // `connection` is captured weakly. A handler installed ON the connection
+        // that also holds it strongly is a retain cycle broken only by `close()`
+        // or `forget(_:)`, and neither is guaranteed to run.
+        connection.stateUpdateHandler = { [weak self, weak connection] state in
+          switch state {
+          case .ready:
+            finish(.success(()))
+          case .failed(let error):
+            if let connection { self?.forget(connection) }
+            finish(.failure(error))
+          case .waiting(let error):
+            // `.waiting` is NWConnection saying "no route, I will retry when
+            // conditions change". For a foreground sync that is a failure the
+            // user should see now, not a retry loop behind a spinner — and
+            // failing here gives the real reason rather than a timeout.
+            finish(.failure(error))
+          case .cancelled:
+            if let connection { self?.forget(connection) }
+            finish(.failure(IMAPTransportError.connectionClosed))
+          case .setup, .preparing:
+            break
+          @unknown default:
+            break
+          }
         }
+        connection.start(queue: self.queue)
       }
-      connection.start(queue: self.queue)
+    } catch {
+      // A connect that failed for any reason leaves nothing behind to write
+      // to. The state handler covers `.failed` and `.cancelled` but not
+      // `.waiting`, and not the deadline — and which of the three a refused
+      // connection reports is the OS's business rather than ours. Dropping it
+      // here makes "open threw" and "there is no connection" the same
+      // statement, whichever path got there.
+      forget(connection)
+      throw error
     }
   }
 
@@ -160,6 +186,23 @@ public final class NWConnectionChannel: IMAPByteChannel, @unchecked Sendable {
     let existing = takeConnection()
     existing?.stateUpdateHandler = nil
     existing?.cancel()
+  }
+
+  /// Drops `dead` if it is still the current connection, so the next `send` or
+  /// `receive` throws `notConnected` at once instead of waiting out a timeout.
+  ///
+  /// Identity-checked: `open()` cancels the old connection before starting a new
+  /// one, so a late `.cancelled` for the previous socket must not take the
+  /// replacement down with it.
+  private func forget(_ dead: NWConnection) {
+    lock.lock()
+    let isCurrent = connection === dead
+    if isCurrent { connection = nil }
+    lock.unlock()
+
+    guard isCurrent else { return }
+    dead.stateUpdateHandler = nil
+    dead.cancel()
   }
 
   private func takeConnection() -> NWConnection? {
@@ -260,7 +303,10 @@ public actor NWIMAPFetcher: MailFetching {
 
   private var tags = IMAPTagGenerator()
   private var pendingTag: String?
-  private var isConnected = false
+  /// Follows the socket, not the last thing anyone asked it to do. It goes false
+  /// the moment a command finds the connection gone, so a caller that reconnects
+  /// on a dead socket has something true to read.
+  public private(set) var isConnected = false
   private var selectedMailbox: String?
   private var selectedUIDValidity: UInt32 = 0
 
@@ -472,7 +518,25 @@ public actor NWIMAPFetcher: MailFetching {
 
   private func send(_ command: IMAPCommand) async throws {
     pendingTag = command.tag
-    try await channel.send(command.wireBytes)
+    do {
+      try await channel.send(command.wireBytes)
+    } catch {
+      markDisconnected()
+      throw error
+    }
+  }
+
+  /// A command has just discovered the socket is gone.
+  ///
+  /// `selectedMailbox` is cleared with it, and that is the load-bearing half:
+  /// `examine(force: false)` skips the EXAMINE when the mailbox is unchanged, so
+  /// a fetcher that reconnected while still believing INBOX was selected would
+  /// issue `UID SEARCH` against a connection with no selected mailbox and fail
+  /// on every command after the reconnect.
+  private func markDisconnected() {
+    isConnected = false
+    selectedMailbox = nil
+    selectedUIDValidity = 0
   }
 
   /// Reads until the tagged completion for `tag`.
@@ -504,6 +568,7 @@ public actor NWIMAPFetcher: MailFetching {
         chunk = try await channel.receive()
       } catch {
         pendingTag = nil
+        markDisconnected()
         throw IMAPTransportError.serverClosedMidCommand(tag: tag, text: "\(error)")
       }
 
@@ -521,6 +586,7 @@ public actor NWIMAPFetcher: MailFetching {
 
         case .connectionClosing(let text):
           pendingTag = nil
+          markDisconnected()
           throw IMAPTransportError.serverClosedMidCommand(tag: tag, text: text)
 
         default:
