@@ -8,13 +8,23 @@ public struct TransactionRow: View {
   public let transaction: NomiCore.Transaction
   public let categoryName: String?
   public let accountName: String?
+  public let categorySymbolName: String?
+  public let categoryPaletteSlot: Int?
 
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-  public init(transaction: NomiCore.Transaction, categoryName: String?, accountName: String?) {
+  public init(
+    transaction: NomiCore.Transaction,
+    categoryName: String?,
+    accountName: String?,
+    categorySymbolName: String? = nil,
+    categoryPaletteSlot: Int? = nil
+  ) {
     self.transaction = transaction
     self.categoryName = categoryName
     self.accountName = accountName
+    self.categorySymbolName = categorySymbolName
+    self.categoryPaletteSlot = categoryPaletteSlot
   }
 
   private var isCredit: Bool {
@@ -50,12 +60,16 @@ public struct TransactionRow: View {
     Group {
       if dynamicTypeSize.isAccessibilitySize {
         VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-          header
+          HStack(alignment: .top, spacing: NomiSpacing.sm) {
+            iconTile
+            header
+          }
           amountView
             .frame(maxWidth: .infinity, alignment: .leading)
         }
       } else {
         HStack(alignment: .top, spacing: NomiSpacing.sm) {
+          iconTile
           header
           Spacer(minLength: NomiSpacing.xs)
           amountView
@@ -104,6 +118,19 @@ public struct TransactionRow: View {
     return size.width
   }
 
+  private var iconTint: Color {
+    categoryPaletteSlot.map(paletteSlot) ?? CategoryPalette.other
+  }
+
+  private var iconTile: some View {
+    Image(systemName: categorySymbolName ?? "questionmark")
+      .font(.system(size: 14))
+      .foregroundStyle(iconTint)
+      .frame(width: 32, height: 32)
+      .background(iconTint.opacity(0.16))
+      .nomiCornerRadius(NomiRadius.tile)
+  }
+
   private var mergeFlag: some View {
     Text("\(transaction.mergedCount)")
       .nomiTextStyle(.caption)
@@ -126,10 +153,12 @@ public struct TransactionRow: View {
   TransactionRow(
     transaction: PreviewData.transactions.first { $0.mergedCount == 1 && !$0.needsReview }!,
     categoryName: "Food & Dining",
-    accountName: "HDFC •• 4471"
+    accountName: "HDFC •• 4471",
+    categorySymbolName: "fork.knife",
+    categoryPaletteSlot: 0
   )
   .padding()
-  .background(NomiColor.surfaceRaised)
+  .background(NomiColor.surfaceRow)
   .preferredColorScheme(.dark)
 }
 
@@ -140,20 +169,26 @@ public struct TransactionRow: View {
     accountName: nil
   )
   .padding()
-  .background(NomiColor.surfaceRaised)
+  .background(NomiColor.surfaceRow)
   .preferredColorScheme(.dark)
 }
 
 #Preview("Merged row — flag and both sources") {
   let merged = PreviewData.transactions.first { $0.mergedCount > 1 }!
   VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-    TransactionRow(transaction: merged, categoryName: "Food & Dining", accountName: "HDFC •• 4471")
+    TransactionRow(
+      transaction: merged,
+      categoryName: "Food & Dining",
+      accountName: "HDFC •• 4471",
+      categorySymbolName: "fork.knife",
+      categoryPaletteSlot: 0
+    )
     Text(merged.sourceRefs.map { $0.source.rawValue }.joined(separator: " + "))
       .nomiTextStyle(.caption)
       .foregroundStyle(NomiColor.textTertiary)
   }
   .padding()
-  .background(NomiColor.surfaceRaised)
+  .background(NomiColor.surfaceRow)
   .preferredColorScheme(.dark)
 }
 
@@ -161,10 +196,12 @@ public struct TransactionRow: View {
   TransactionRow(
     transaction: PreviewData.transactions.first!,
     categoryName: "Food & Dining",
-    accountName: "HDFC •• 4471"
+    accountName: "HDFC •• 4471",
+    categorySymbolName: "fork.knife",
+    categoryPaletteSlot: 0
   )
   .padding()
-  .background(NomiColor.surfaceRaised)
+  .background(NomiColor.surfaceRow)
   .environment(\.dynamicTypeSize, .accessibility3)
   .preferredColorScheme(.dark)
 }

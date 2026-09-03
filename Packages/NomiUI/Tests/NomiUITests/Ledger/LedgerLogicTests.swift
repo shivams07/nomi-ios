@@ -139,6 +139,27 @@ final class LedgerMagnitudeTests: XCTestCase {
   }
 }
 
+/// The day header (`LedgerScreen.dayHeader`) renders
+/// `NomiFormatters.dayMonthAdaptive(group.day, relativeTo:)` directly — that
+/// is the seam `ui-surfaces-and-dates` defined for this unit to consume, so
+/// exercising it here with ledger-shaped group-day values is what verifies
+/// the header's actual behaviour without a view-inspection library.
+final class LedgerDayHeaderTests: XCTestCase {
+  func testDayHeaderOmitsYearForACurrentYearGroup() {
+    let reference = date("2026-09-03")
+    let sameYear = date("2026-08-20")
+    let text = NomiFormatters.dayMonthAdaptive(sameYear, relativeTo: reference)
+    XCTAssertFalse(text.contains("2026"))
+  }
+
+  func testDayHeaderIncludesYearForAPriorYearGroup() {
+    let reference = date("2026-09-03")
+    let priorYear = date("2025-12-31")
+    let text = NomiFormatters.dayMonthAdaptive(priorYear, relativeTo: reference)
+    XCTAssertTrue(text.contains("2025"))
+  }
+}
+
 final class LedgerDayTotalTextTests: XCTestCase {
   func testPositiveTotalGetsPlusSign() {
     XCTAssertEqual(LedgerDayTotalText.string(minor: 500), "+" + NomiFormatters.amountString(minor: 500))
