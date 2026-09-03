@@ -43,16 +43,22 @@ public struct EntryView: View {
 
   public var body: some View {
     NavigationStack {
-      VStack(spacing: NomiSpacing.lg) {
-        amountField
-        chipsRow
-        DirectionToggle(direction: $direction)
-        noteField
-        Spacer()
-        savePill
+      ScrollView {
+        VStack(spacing: NomiSpacing.lg) {
+          amountField
+          chipsRow
+          DirectionToggle(direction: $direction)
+          noteField
+        }
+        .padding(NomiSpacing.screenGutter)
       }
-      .padding(NomiSpacing.screenGutter)
       .background(NomiColor.surfaceCanvas)
+      .safeAreaInset(edge: .bottom) {
+        savePill
+          .padding(.horizontal, NomiSpacing.screenGutter)
+          .padding(.bottom, NomiSpacing.sm)
+          .background(NomiColor.surfaceCanvas)
+      }
       .navigationTitle("Add transaction")
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
