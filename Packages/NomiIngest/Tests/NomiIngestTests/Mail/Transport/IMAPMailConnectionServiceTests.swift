@@ -39,24 +39,42 @@ private final class MemoryCredentialStore: MailCredentialStoring, @unchecked Sen
   }
 }
 
-/// A fetcher whose `connect` can be made to fail.
+/// A fetcher whose `connect` can be made to fail, and whose `selectMailbox` can
+/// be made to fail a scripted number of times before succeeding.
+///
+/// `selectMailbox` is the first thing every sync does, so it is where a socket
+/// that died while the app was backgrounded actually surfaces.
 private final class FlakyFetcher: MailFetching, @unchecked Sendable {
   private let inner: StubFetcher
+  private let lock = NSLock()
   var connectError: Error?
+  /// Thrown from `selectMailbox` this many times, then it starts succeeding.
+  var failSelectMailboxTimes = 0
+  var selectMailboxError: Error = IMAPTransportError.connectionClosed
   private(set) var disconnectCount = 0
+  private(set) var connectCount = 0
+  private var selectMailboxFailures = 0
 
   init(messages: [MailMessage] = []) {
     inner = StubFetcher(messages: messages)
   }
 
   func connect(_ credentials: IMAPCredentials) async throws {
+    lock.lock()
+    connectCount += 1
+    lock.unlock()
     if let connectError { throw connectError }
   }
 
   func disconnect() async throws { disconnectCount += 1 }
 
   func selectMailbox(_ name: String) async throws -> MailboxState {
-    try await inner.selectMailbox(name)
+    lock.lock()
+    let shouldFail = selectMailboxFailures < failSelectMailboxTimes
+    if shouldFail { selectMailboxFailures += 1 }
+    lock.unlock()
+    if shouldFail { throw selectMailboxError }
+    return try await inner.selectMailbox(name)
   }
   func uids(since date: Date, in mailbox: String) async throws -> [UInt32] {
     try await inner.uids(since: date, in: mailbox)
@@ -143,6 +161,50 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
     var seen: [MailConnectionState] = []
     for await state in service.state.prefix(3) { seen.append(state) }
     XCTAssertEqual(seen[2], .failed(.authenticationFailed))
+  }
+
+  // MARK: - A socket that died while the app was away
+
+  /// The failure this exists for: iOS suspends the app, the server drops the
+  /// idle connection, and the next sync's first command comes back
+  /// `.connectionClosed` on a service that still believes it is connected.
+  ///
+  /// One reconnect and one reissue. `connect` twice in total — the user's, and
+  /// this one.
+  func testASyncOnADeadSocketReconnectsOnceAndReturnsASummary() async throws {
+    let fetcher = FlakyFetcher(
+      messages: [try MailFixtures.message("hdfc_debit_netbanking.eml", uid: 10)])
+    fetcher.failSelectMailboxTimes = 1
+    let (service, _, _, _) = makeService(fetcher: fetcher)
+
+    try await service.connect(credentials)
+    let summary = try await service.syncNow()
+
+    XCTAssertEqual(summary.scanned, 1, "the reissued sync must return the real summary")
+    XCTAssertEqual(fetcher.connectCount, 2, "the user's connect, plus exactly one reconnect")
+  }
+
+  /// One retry, not a loop. A server that is genuinely gone must produce a
+  /// `.failed` the user can see, not an endless quiet reconnect.
+  func testASecondFailureAfterTheReconnectFailsRatherThanLooping() async throws {
+    let fetcher = FlakyFetcher()
+    fetcher.failSelectMailboxTimes = 2
+    let (service, _, _, _) = makeService(fetcher: fetcher)
+
+    try await service.connect(credentials)
+
+    do {
+      _ = try await service.syncNow()
+      XCTFail("syncNow should have rethrown after the retry also failed")
+    } catch let error as IMAPTransportError {
+      XCTAssertEqual(error, .connectionClosed)
+    }
+
+    XCTAssertEqual(fetcher.connectCount, 2, "one retry, not a loop")
+
+    var seen: [MailConnectionState] = []
+    for await state in service.state.prefix(4) { seen.append(state) }
+    XCTAssertEqual(seen.last, .failed(.connectionFailed))
   }
 
   // MARK: - Disconnect
