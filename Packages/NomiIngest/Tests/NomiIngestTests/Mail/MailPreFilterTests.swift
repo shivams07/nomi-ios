@@ -233,4 +233,97 @@ final class MailPreFilterTests: XCTestCase {
     XCTAssertEqual(MailDirection.direction(in: "has a credit by transfer of Rs 3,000.00"), .credit)
     XCTAssertNil(MailDirection.direction(in: "your statement is ready"))
   }
+
+  // MARK: - candidateDomains widening (design point 4)
+
+  /// The domains this unit adds to `senders.json`'s `candidateDomains`.
+  ///
+  /// Every one of them is TOKENLESS, and that is the entire selection rule.
+  /// Ring 3 of `isCandidateDomain` is `domain.contains(token)` over the eight
+  /// `candidateDomainTokens`, so any domain carrying `bank`, `card`, `upi`,
+  /// `netbanking`, `alerts`, `paytm`, `phonepe` or `npci` was already admitted
+  /// before anyone typed it. Measured at `92d90c5`: 17 of the 22 entries then on
+  /// the list are dead weight for exactly that reason, and only five -
+  /// `sbi.co.in`, `kotak.com`, `americanexpress.com`, `pnb.co.in`,
+  /// `indusind.com` - carry any admission at all. This list is the same shape as
+  /// those five, and it is deliberately tens of domains rather than hundreds.
+  ///
+  /// `entries` is untouched. That is the five-regexes-per-bank precision list
+  /// §2.5.1 forbids writing blind; a domain here admits mail to Layer 2, which
+  /// extracts heuristically and flags every row for review. Admission is the
+  /// cheap half.
+  static let domainsAddedByThisUnit = [
+    // Banks whose own sender domain carries no bank-ish token.
+    "standardchartered.com", "sc.com", "hsbc.co.in", "citi.com", "dbs.com",
+    "idbi.co.in", "iob.in", "pnbindia.in", "sib.co.in", "csb.co.in", "tmb.in",
+    "equitas.in", "ujjivansfb.in",
+    // Card issuers and NBFCs that send their own transaction alerts.
+    "bobfinancial.com", "bajajfinserv.in", "cred.club",
+    // Neobanks and gateways whose retail mail is receipts, not statements.
+    // `jupiter.money` is NOT here: "jupiter" contains "upi", so ring 3 admits it
+    // already. That is not a hypothetical - it was on this list until the
+    // assertion below threw it out.
+    "fi.money", "razorpay.com",
+  ]
+
+  /// FAILS before `senders.json` is widened, and cannot pass any other way: the
+  /// tokenless rule below is exactly the guarantee that no other ring admits
+  /// these.
+  func testEveryDomainAddedByThisUnitIsAdmitted() {
+    let filter = MailPreFilter()
+    let onTheList = Set(SenderPack.bundled.candidateDomains)
+
+    for domain in Self.domainsAddedByThisUnit {
+      XCTAssertTrue(onTheList.contains(domain), "missing from candidateDomains: " + domain)
+      XCTAssertTrue(filter.isCandidateDomain(domain), "not admitted: " + domain)
+      // Suffix matching too, with a host prefix the token ring cannot rescue -
+      // `alerts.` would pass on ring 3 and prove nothing.
+      XCTAssertTrue(filter.isCandidateDomain("mailer." + domain), "subdomain: " + domain)
+    }
+  }
+
+  /// The half that matters. Without it this unit could be "satisfied" by pasting
+  /// in fifty more `*bank*.com` domains, every one of which `isCandidateDomain`
+  /// already returns true for - a list that grows while admission does not move
+  /// at all, and a diff that reads like widening while doing nothing.
+  func testEveryDomainAddedByThisUnitIsTokenless() {
+    let tokens = SenderPack.bundled.candidateDomainTokens
+    XCTAssertEqual(tokens.count, 8, "the token ring changed - re-measure the list")
+
+    for domain in Self.domainsAddedByThisUnit {
+      for token in tokens {
+        XCTAssertFalse(
+          domain.contains(token),
+          "the token ring already admits this, so adding it is a no-op: " + domain
+            + " contains " + token)
+      }
+    }
+  }
+
+  /// Five of the 22 `candidateDomains` at `92d90c5` were tokenless, so a floor of
+  /// "at least five" would have been met by changing nothing - the same trap the
+  /// promo-fixture count carries. This one holds the widening in place against a
+  /// later edit that quietly drops it.
+  func testTheTokenlessPartOfTheListGrew() {
+    let tokens = SenderPack.bundled.candidateDomainTokens
+    let tokenless = SenderPack.bundled.candidateDomains.filter { domain in
+      !tokens.contains { domain.contains($0) }
+    }
+
+    XCTAssertGreaterThanOrEqual(
+      tokenless.count, 5 + Self.domainsAddedByThisUnit.count, "tokenless candidateDomains")
+  }
+
+  /// `isCandidateDomain` lowercases the domain it is handed and compares it
+  /// against the pack verbatim, so one capital letter in `senders.json` is a
+  /// domain that can never match anything - silently, for the life of the file.
+  /// A duplicate is cheaper but says the same thing about how it was edited.
+  func testTheCandidateListIsLowercasedAndFreeOfDuplicates() {
+    let domains = SenderPack.bundled.candidateDomains
+
+    for domain in domains {
+      XCTAssertEqual(domain, domain.lowercased(), "unmatchable, not lowercased: " + domain)
+    }
+    XCTAssertEqual(Set(domains).count, domains.count, "duplicate in candidateDomains")
+  }
 }
