@@ -1,4 +1,5 @@
 import Foundation
+import NomiCore
 import XCTest
 @testable import NomiUI
 
