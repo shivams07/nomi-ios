@@ -275,7 +275,7 @@ final class MailSyncEngineTests: XCTestCase {
     _ = try await engine.syncNow()
 
     XCTAssertEqual(fetcher.uidsAfterCalls, [], "must not trust the old cursor")
-    XCTAssertEqual(fetcher.uidsSinceCalls.count, 1)
+    XCTAssertEqual(fetcher.windowCalls.count, 6, "windowed since park/mail-first-sync-window")
     let loaded = await engine.cursor
     XCTAssertEqual(try XCTUnwrap(loaded).uidValidity, 777_777)
   }

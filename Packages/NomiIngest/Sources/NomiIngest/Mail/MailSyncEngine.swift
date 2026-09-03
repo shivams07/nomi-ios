@@ -53,6 +53,14 @@ public actor MailSyncEngine {
     self.now = now
   }
 
+  /// The horizon of a sync that has no cursor to work from. Six months, which is
+  /// the value `AppSyncCoordinator.backfillMonths` carries.
+  ///
+  /// It is declared here and not read from there because the dependency runs one
+  /// way: NomiApp imports NomiIngest, never the reverse. The two constants have
+  /// to move together and nothing in the build will say so if they do not.
+  public static let firstSyncMonths = 6
+
   /// Incremental: everything with a UID above the cursor.
   ///
   /// A UIDVALIDITY change invalidates every stored UID, so the mailbox is
@@ -60,12 +68,17 @@ public actor MailSyncEngine {
   /// re-ingest that the pipeline's exact-key dedupe absorbs; the alternative is
   /// losing transactions with no signal that it happened.
   ///
-  /// **That rescan is the one remaining unwindowed SEARCH.** `SINCE 1970` over a
-  /// whole mailbox returns every UID on one line, and windowing it by month
-  /// would mean walking from whenever the account was opened — which is not
-  /// obviously better. It is bounded by the framer's 256 KB line ceiling
-  /// (§2.17), and it is rare: UIDVALIDITY changing at all is a server-side event
-  /// most mailboxes never see. Flagged rather than silently decided.
+  /// **Both cursorless branches window their search**, through the same walk the
+  /// backfill uses. `SINCE 1970` returned every UID in the mailbox on one SEARCH
+  /// line — bounded only by the framer's 256 KB ceiling (§2.17), and on an
+  /// account opened in 2009 it meant reading 2009 to show someone this month's
+  /// spending. A first sync that is not a backfill has no business reaching
+  /// further back than one that is.
+  ///
+  /// A UIDVALIDITY change still rescans rather than skipping. What it no longer
+  /// does is rescan to the beginning of time to do it — a mailbox rebuilt on the
+  /// server does not make mail older than six months newly interesting, and the
+  /// backfill is what exists for that.
   @discardableResult
   public func syncNow() async throws -> SyncSummary {
     let state = try await fetcher.selectMailbox(mailboxName)
@@ -74,7 +87,7 @@ public actor MailSyncEngine {
     if let cursor, cursor.uidValidity == state.uidValidity, cursor.mailbox == mailboxName {
       uids = try await fetcher.uids(after: cursor.lastSeenUID, in: mailboxName)
     } else {
-      uids = try await fetcher.uids(since: Date(timeIntervalSince1970: 0), in: mailboxName)
+      uids = try await windowedSearch(months: Self.firstSyncMonths)
     }
 
     return try await process(uids: uids, state: state, onProgress: nil)
@@ -99,15 +112,22 @@ public actor MailSyncEngine {
     onProgress: (@Sendable (BackfillProgress) -> Void)? = nil
   ) async throws -> SyncSummary {
     let state = try await fetcher.selectMailbox(mailboxName)
+    let uids = try await windowedSearch(months: months)
 
+    return try await process(uids: uids, state: state, onProgress: onProgress)
+  }
+
+  /// The month-at-a-time walk, and the only one. Both callers dedupe through the
+  /// same `Set` because the windows overlap by a day on purpose — see
+  /// `monthlyWindows`.
+  private func windowedSearch(months: Int) async throws -> [UInt32] {
     var found = Set<UInt32>()
     for window in Self.monthlyWindows(months: months, endingAt: now()) {
       let uids = try await fetcher.uids(
         since: window.since, before: window.before, in: mailboxName)
       found.formUnion(uids)
     }
-
-    return try await process(uids: found.sorted(), state: state, onProgress: onProgress)
+    return found.sorted()
   }
 
   // MARK: - Search windows
