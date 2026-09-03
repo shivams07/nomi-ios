@@ -1,8 +1,32 @@
 import NomiCore
+import SwiftUI
 import XCTest
 @testable import NomiUI
 
 final class DesignTokenTests: XCTestCase {
+  func testFiveOpaqueSurfaceStepsMatchTheDesignScale() {
+    let environment = EnvironmentValues()
+    let steps: [(Color, UInt32)] = [
+      (NomiColor.surfaceCanvas, 0x0c0c0c),
+      (NomiColor.surface, 0x292929),
+      (NomiColor.surfaceRaised, 0x212121),
+      (NomiColor.surfaceRow, 0x1C1C1C),
+      (NomiColor.surfaceInput, 0x1E1E1E),
+    ]
+    for (actual, hex) in steps {
+      let resolvedActual = actual.resolve(in: environment)
+      let resolvedExpected = Color(hex: hex).resolve(in: environment)
+      XCTAssertEqual(resolvedActual.red, resolvedExpected.red, accuracy: 0.001)
+      XCTAssertEqual(resolvedActual.green, resolvedExpected.green, accuracy: 0.001)
+      XCTAssertEqual(resolvedActual.blue, resolvedExpected.blue, accuracy: 0.001)
+    }
+  }
+
+  func testDirectionColorsNoLongerBorrowTextHierarchy() {
+    XCTAssertNotEqual(NomiColor.creditText, NomiColor.textPrimary)
+    XCTAssertNotEqual(NomiColor.debitText, NomiColor.textSecondary)
+  }
+
   func testSevenSlotPaletteHasNoRepeatedHueAndNoBlue() {
     XCTAssertEqual(CategoryPalette.slots.count, 7)
   }
