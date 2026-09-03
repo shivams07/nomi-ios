@@ -491,6 +491,62 @@ final class NWIMAPFetcherTests: XCTestCase {
     }
   }
 
+  // MARK: - Liveness
+
+  /// `isConnected` has to follow the socket, not the last thing anyone asked it
+  /// to do. Before this it was set true by `connect` and false by `disconnect`
+  /// and by nothing else — write-only state that stayed true over a socket the
+  /// server had already dropped.
+  func testAHangupMidCommandLeavesTheFetcherDisconnected() async throws {
+    // Nothing queued after the login, so the next read hits EOF — the scripted
+    // form of a server that hung up while the app was suspended.
+    let (fetcher, _) = try await connected(replies: [])
+
+    var connected = await fetcher.isConnected
+    XCTAssertTrue(connected, "the login succeeded")
+
+    do {
+      _ = try await fetcher.selectMailbox("INBOX")
+      XCTFail("there is no reply queued; EXAMINE must throw")
+    } catch {
+      // expected
+    }
+
+    connected = await fetcher.isConnected
+    XCTAssertFalse(connected, "a socket that hung up mid-command is not a connection")
+  }
+
+  /// The half of `markDisconnected` that is not the flag.
+  ///
+  /// `examine(force: false)` skips the EXAMINE when the mailbox has not changed.
+  /// A fetcher that lost its socket while still believing INBOX was selected
+  /// would reconnect and then issue `UID SEARCH` with nothing selected, failing
+  /// every command after the repair — so the selection has to be forgotten with
+  /// the connection.
+  func testAHangupAlsoForgetsTheSelectedMailboxSoAReconnectReExamines() async throws {
+    let (fetcher, channel) = try await connected(replies: [examineOK])
+
+    _ = try await fetcher.selectMailbox("INBOX")
+    do {
+      _ = try await fetcher.uids(after: 10, in: "INBOX")
+      XCTFail("no reply queued; the search must throw")
+    } catch {
+      // expected
+    }
+
+    let before = channel.sentText
+    let examinesBefore = before.components(separatedBy: "EXAMINE").count - 1
+
+    // A fresh command after the hangup must EXAMINE again rather than trusting
+    // the selection it made on the dead socket.
+    _ = try? await fetcher.uids(after: 10, in: "INBOX")
+    let examinesAfter = channel.sentText.components(separatedBy: "EXAMINE").count - 1
+
+    XCTAssertGreaterThan(
+      examinesAfter, examinesBefore,
+      "the selected mailbox must not survive the connection it was selected on")
+  }
+
   // MARK: - Disconnect
 
   func testDisconnectLogsOutThenClosesTheSocket() async throws {
@@ -582,6 +638,42 @@ final class NWConnectionChannelTests: XCTestCase {
     } catch {
       // Bounded, and bounded by *our* deadline rather than by luck.
       XCTAssertLessThan(Date().timeIntervalSince(started), 20, "the deadline did not fire")
+    }
+  }
+
+  /// A connection that reached `.failed` is dropped, so the next call fails at
+  /// once rather than waiting out a write timeout on a socket Network.framework
+  /// already knows is gone.
+  ///
+  /// This is the only `.failed`-after-`open` path CI can actually reach. The one
+  /// that matters in production — `.failed` arriving *after* `.ready`, on an
+  /// idle connection the server dropped — needs a real server and is named as
+  /// unverified in this unit's PR.
+  func testARefusedConnectionLeavesNoConnectionBehindToWriteTo() async throws {
+    let channel = NWConnectionChannel(timeouts: .init(connect: 5, read: 5, write: 5))
+
+    var opened = false
+    do {
+      try await channel.open(host: "127.0.0.1", port: 1)
+      opened = true
+    } catch {
+      // expected: nothing listens on port 1
+    }
+
+    if opened {
+      await channel.close()
+      throw XCTSkip("something is listening on 127.0.0.1:1; cannot assert a refused connection")
+    }
+
+    let started = Date()
+    do {
+      try await channel.send(Array("a001 NOOP\r\n".utf8))
+      XCTFail("writing to a refused connection must throw")
+    } catch let error as IMAPTransportError {
+      XCTAssertEqual(error, .notConnected, "the dead connection must have been dropped")
+      XCTAssertLessThan(
+        Date().timeIntervalSince(started), 4,
+        "it must fail immediately, not wait out the 5s write timeout")
     }
   }
 }
