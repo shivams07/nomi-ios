@@ -21,6 +21,7 @@ public struct SettingsScreen: View {
   @State private var connectionState: MailConnectionState = .disconnected
   @State private var permissionDenied = false
   @State private var isRescanning = false
+  @State private var lastSyncSummary: SyncSummary?
   private let forcedPermissionDenied: Bool?
 
   public init(
@@ -60,6 +61,15 @@ public struct SettingsScreen: View {
   public var body: some View {
     List {
       mailSection
+      if !unmatchedSenderRows.isEmpty {
+        Section("Not Matched") {
+          ForEach(unmatchedSenderRows, id: \.self) { row in
+            Text(row)
+              .nomiTextStyle(.caption)
+              .foregroundStyle(NomiColor.textTertiary)
+          }
+        }
+      }
       Section("Organize") {
         NavigationLink("Categories") {
           CategoriesScreen(categoryStore: categoryStore)
@@ -156,11 +166,16 @@ public struct SettingsScreen: View {
     }
   }
 
+  private var unmatchedSenderRows: [String] {
+    guard let lastSyncSummary else { return [] }
+    return UnmatchedSenderDisplay.rows(for: lastSyncSummary.unmatchedSenders)
+  }
+
   private func rescan() {
     isRescanning = true
     Task {
       defer { isRescanning = false }
-      try? await SettingsActions.rescan(using: mailConnectionService)
+      lastSyncSummary = try? await SettingsActions.rescan(using: mailConnectionService)
     }
   }
 }

@@ -66,4 +66,34 @@ final class OnboardingLogicTests: XCTestCase {
     XCTAssertTrue(lines.contains("91 transactions found"))
     XCTAssertTrue(lines.contains("70 matched a known bank format, 21 matched generically"))
   }
+
+  func testBackfillCompletionSummaryOmitsUnmatchedLineWhenNoneUnmatched() {
+    let summary = SyncSummary(scanned: 1200, created: 91, merged: 4, flagged: 6, packMatched: 70, heuristicMatched: 21, unmatchedSenders: [])
+    let lines = BackfillCompletionSummary.lines(for: summary)
+    XCTAssertFalse(lines.contains { $0.contains("Not matched") })
+  }
+
+  func testBackfillCompletionSummaryNamesEveryUnmatchedDomainAndCount() {
+    let unmatched = [
+      UnmatchedSender(domain: "chase.com", count: 3),
+      UnmatchedSender(domain: "boa.com", count: 1),
+    ]
+    let summary = SyncSummary(scanned: 1200, created: 91, merged: 4, flagged: 6, packMatched: 70, heuristicMatched: 21, unmatchedSenders: unmatched)
+    let lines = BackfillCompletionSummary.lines(for: summary)
+    let unmatchedLine = lines.first { $0.contains("Not matched") }
+    XCTAssertNotNil(unmatchedLine)
+    for sender in unmatched {
+      XCTAssertTrue(unmatchedLine!.contains("\(sender.domain) (\(sender.count))"))
+    }
+  }
+
+  func testBackfillCompletionSummaryNeverEmitsAnAddress() {
+    let unmatched = [
+      UnmatchedSender(domain: "chase.com", count: 3),
+      UnmatchedSender(domain: "boa.com", count: 1),
+    ]
+    let summary = SyncSummary(scanned: 1200, created: 91, merged: 4, flagged: 6, packMatched: 70, heuristicMatched: 21, unmatchedSenders: unmatched)
+    let lines = BackfillCompletionSummary.lines(for: summary)
+    XCTAssertFalse(lines.contains { $0.contains("@") })
+  }
 }
