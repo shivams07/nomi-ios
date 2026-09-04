@@ -135,11 +135,17 @@ final class MailParsingTests: XCTestCase {
     XCTAssertEqual(MailAmount.allAmounts(in: "Rs 1,200 Rs 3,400"), [120_000, 340_000])
   }
 
-  func testHTMLTablesBecomeSpacedTextAndInlineTagsDoNot() {
+  /// Was `testHTMLTablesBecomeSpacedTextAndInlineTagsDoNot`, and it asserted the
+  /// defect: cells joined by a SPACE. The boundary is a newline now, including
+  /// the one between a currency symbol and its digits — `MailAmount`'s pattern
+  /// allows whitespace there, so the split amount is still read as one amount
+  /// without the two cells being glued into one clause.
+  func testHTMLTablesBecomeNewlineSeparatedAndInlineTagsDoNot() {
     let cells = MailHTML.plainText(fromHTML: "<table><tr><td>Rs.</td><td>4,500.00</td></tr></table>")
-    XCTAssertTrue(cells.contains("Rs. 4,500.00"), cells)
+    XCTAssertEqual(cells, "Rs.\n4,500.00")
+    XCTAssertEqual(MailAmount.firstAmount(in: cells), 450_000)
 
-    // A <span> wrapping part of an amount must NOT introduce a space.
+    // A <span> wrapping part of an amount must NOT introduce a break of any kind.
     let spanned = MailHTML.plainText(fromHTML: "<table><tr><td>₹<span>4,500</span>.<span>00</span></td></tr></table>")
     XCTAssertTrue(spanned.contains("₹4,500.00"), spanned)
   }
