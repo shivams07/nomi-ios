@@ -84,9 +84,7 @@ public final class SwiftDataBudgetStore: BudgetStore {
   }
 }
 
-/// The real `AccountStore`. Rename and archive only — accounts are created by
-/// the ingest path (a mail or file import binds one), never by the user, so
-/// there is no `create` on the contract and none here.
+/// The real `AccountStore`.
 @MainActor
 public final class SwiftDataAccountStore: AccountStore {
   private let context: ModelContext
@@ -95,6 +93,43 @@ public final class SwiftDataAccountStore: AccountStore {
   public init(context: ModelContext, coordinator: WriteCoordinator) {
     self.context = context
     self.coordinator = coordinator
+  }
+
+  /// The user's own account, created from the Accounts screen.
+  ///
+  /// It ends with `coordinator.didWrite()` and that line is the whole feature.
+  /// `InsightsStore.accountSummaries` is cache-gated
+  /// (`SwiftDataInsightsStore.swift:79`), and the Accounts screen and the
+  /// dashboard both read accounts through it rather than through a `@Query`.
+  /// Save without the invalidation and the row is in the store, correct and
+  /// fetchable, and invisible on every screen until some unrelated write drops
+  /// the cache — which reads as "creating an account does nothing" and then
+  /// as "it worked eventually", the two worst shapes a bug can take.
+  ///
+  /// No category is affected, so the set stays empty: the budget observer has
+  /// nothing to evaluate here, and passing an id would schedule a pass over a
+  /// category this write did not touch.
+  ///
+  /// Nothing is validated. `displayName` non-blank and `lastFour` four-or-empty
+  /// are the contract's stated preconditions and `AccountCreateFormGate` holds
+  /// them; see `AccountStore.create`.
+  @discardableResult
+  public func create(
+    displayName: String,
+    institution: String,
+    lastFour: String,
+    kindRaw: String
+  ) throws -> Account {
+    let account = Account(
+      displayName: displayName,
+      institution: institution,
+      lastFour: lastFour,
+      kindRaw: kindRaw
+    )
+    context.insert(account)
+    try context.save()
+    coordinator.didWrite()
+    return account
   }
 
   public func rename(_ id: UUID, to displayName: String) throws {
