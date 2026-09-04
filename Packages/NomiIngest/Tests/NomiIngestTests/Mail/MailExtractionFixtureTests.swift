@@ -125,6 +125,23 @@ final class MailExtractionFixtureTests: XCTestCase {
     XCTAssertFalse(draft.needsReview)
   }
 
+  /// The epoch is not a date, it is "the Date: header was unreadable". A row
+  /// that reaches the fallback has to say so, or it sorts to the bottom of a
+  /// ledger ordered by date and is never looked at again.
+  ///
+  /// Layer 1 with a resolved binding is the only path that would otherwise
+  /// produce `needsReview == false`, which is why the binding is fixed here.
+  func testAnUnreadableDateHeaderFlagsTheRowEvenWhenTheAccountResolves() throws {
+    let extractor = MailTransactionExtractor(bindings: FixedBinding(UUID()))
+    let message = try MailFixtures.message("hdfc_debit_unreadable_date.eml")
+
+    let draft = try XCTUnwrap(extractor.outcome(for: message).draft)
+
+    XCTAssertEqual(draft.date, Date(timeIntervalSince1970: 0), "no date was readable anywhere")
+    XCTAssertNotNil(draft.accountID)
+    XCTAssertTrue(draft.needsReview, "a 1970 row must be visible, not silently filed")
+  }
+
   // MARK: - R6: the amount split across nested table cells
 
   /// The failure mode a hand-built fixture is most likely to omit, and the one

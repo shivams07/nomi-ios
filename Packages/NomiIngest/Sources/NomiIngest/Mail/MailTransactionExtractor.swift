@@ -111,12 +111,32 @@ public struct MailTransactionExtractor: TransactionExtractor {
   private static let genericFragmentPattern =
     #"(?:account|a/c|card)\s*(?:no\.?)?\s*(?:ending\s*)?[Xx*]*(\d{4})"#
 
+  /// The first clause of the body that resolves to a direction — the span the
+  /// amount rule measures from.
+  ///
+  /// Located clause by clause rather than by matching the verb directly: the
+  /// verb vocabulary lives in `MailDirection` and is private to it, and a second
+  /// copy of that word list here is the copy that goes stale.
+  ///
+  /// nil when the direction came from the SUBJECT and not the body — "Txn alert"
+  /// in the subject, no verb in the body, which real mail does. That case falls
+  /// through to `transactionAmount`'s first-amount fallback.
+  private static func directionVerbClause(in text: String) -> Range<String.Index>? {
+    MailNarration.clauses(in: text).first {
+      MailDirection.direction(in: String(text[$0])) != nil
+    }
+  }
+
   private func heuristicDraft(_ message: MailMessage, text: String) -> TransactionDraft? {
-    // "The largest currency amount, the nearest parseable date, the direction
-    // from the verb" (§1.4). Largest-wins is wrong on a mail that quotes the
-    // running balance — which is why every row from here is flagged.
-    guard let amountMinor = MailAmount.largestAmount(in: text), amountMinor > 0,
-      let direction = MailDirection.direction(in: text + " " + message.subject)
+    // "The amount in the clause the verb is in, the nearest parseable date, the
+    // direction from the verb" (§1.4, amended). Largest-wins used to sit here
+    // and it took the running balance every time a mail quoted one; the rows are
+    // still flagged, but a flagged row carrying a plausible wrong number is worse
+    // than a flagged row carrying the right one.
+    guard let direction = MailDirection.direction(in: text + " " + message.subject),
+      let amountMinor = MailAmount.transactionAmount(
+        in: text, verbRange: Self.directionVerbClause(in: text)),
+      amountMinor > 0
     else { return nil }
 
     let date = MailDate.firstDate(in: text) ?? message.headerDate
@@ -173,7 +193,13 @@ public struct MailTransactionExtractor: TransactionExtractor {
       source: .email,
       externalID: message.externalID,
       capturedAt: now(),
-      needsReview: needsReview
+      // The epoch is not a date, it is `RFC822Message` reporting that it could
+      // not read the `Date:` header. A row dated 1 Jan 1970 that is NOT flagged
+      // sorts to the bottom of the ledger and is never seen again, so the
+      // fallback has to carry a flag out with it. Checked here rather than at
+      // the three call sites because it is a property of the value, not of the
+      // layer that produced it.
+      needsReview: needsReview || date == Date(timeIntervalSince1970: 0)
       // merchantName / upiKindRaw / counterpartyVPA are deliberately NOT set.
       // U4 derives them from descriptionText (§2.4); an ingester that fills them
       // in trips the pipeline's assert.

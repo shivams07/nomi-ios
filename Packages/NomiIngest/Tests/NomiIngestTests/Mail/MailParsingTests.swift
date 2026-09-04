@@ -36,10 +36,39 @@ final class MailParsingTests: XCTestCase {
     XCTAssertEqual(MailAmount.firstAmount(in: "1,234.50 INR debited"), 123_450)
   }
 
-  func testLargestAmountIsLayerTwosRuleAndFirstAmountIsNot() {
+  /// Was `testLargestAmountIsLayerTwosRuleAndFirstAmountIsNot`. Largest-wins is
+  /// gone: on this sentence pair it returned 18,400.00, the balance.
+  func testTheAmountRuleFollowsTheVerbAndNotTheLargestNumber() {
     let text = "Rs 250.00 debited. Available balance Rs 18,400.00."
     XCTAssertEqual(MailAmount.firstAmount(in: text), 25_000)
-    XCTAssertEqual(MailAmount.largestAmount(in: text), 1_840_000)
+    XCTAssertEqual(
+      MailAmount.transactionAmount(in: text, verbRange: text.range(of: "debited")), 25_000)
+  }
+
+  /// The verb rule earning its keep: here the balance comes FIRST, so neither
+  /// largest-wins nor first-wins gets it right and only the clause does.
+  func testTheVerbClauseWinsEvenWhenTheBalanceIsFirstInTheText() {
+    let text = "Available balance Rs 18,400.00. Rs 250.00 debited."
+    XCTAssertEqual(
+      MailAmount.transactionAmount(in: text, verbRange: text.range(of: "debited")), 25_000)
+  }
+
+  /// No verb located in the body — the direction came from the subject. Falls
+  /// back to the first amount, not the largest.
+  func testWithNoVerbRangeTheFallbackIsTheFirstAmountNotTheLargest() {
+    let text = "Rs 250.00. Available balance Rs 18,400.00."
+    XCTAssertEqual(MailAmount.transactionAmount(in: text, verbRange: nil), 25_000)
+  }
+
+  /// `Rs.` is how most Indian alert mail writes the symbol, and its dot is not
+  /// a clause boundary. While it was treated as one, the amount sat in a
+  /// different clause from its own verb and the rule silently fell through to
+  /// the first-amount fallback — which is right often enough to look fine and
+  /// wrong exactly when the balance is quoted first, as here.
+  func testTheAbbreviationDotInRsDoesNotCutTheClause() {
+    let text = "Available Balance Rs.48,900.00\nRs.3,275.50 has been debited at IRCTC"
+    XCTAssertEqual(
+      MailAmount.transactionAmount(in: text, verbRange: text.range(of: "debited")), 327_550)
   }
 
   // MARK: - Block boundaries survive the HTML
@@ -81,13 +110,13 @@ final class MailParsingTests: XCTestCase {
     let parsed = MailDate.parseHeaderDate("Mon, 17 Aug 2026 09:15:00 GMT")
 
     XCTAssertNotNil(parsed, "GMT is RFC 5322 4.3 legal and must parse")
-    XCTAssertEqual(parsed, Date(timeIntervalSince1970: 1_787_303_700))
+    XCTAssertEqual(parsed, Date(timeIntervalSince1970: 1_786_958_100))
   }
 
   func testTheNumericOffsetFormStillParses() {
     XCTAssertEqual(
       MailDate.parseHeaderDate("Mon, 17 Aug 2026 14:45:00 +0530"),
-      Date(timeIntervalSince1970: 1_787_303_700))
+      Date(timeIntervalSince1970: 1_786_958_100))
   }
 
   // MARK: - R6: the split amount
