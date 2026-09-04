@@ -45,6 +45,25 @@ public protocol BudgetStore: AnyObject {
 
 @MainActor
 public protocol AccountStore: AnyObject {
+  /// Creates and persists an `Account`.
+  ///
+  /// Both string constraints are the caller's to hold, not this contract's:
+  /// `displayName` is required and non-blank, and `lastFour` is exactly four
+  /// digits or empty — never partial. The UI gates on both before it gets
+  /// here (`AccountCreateFormGate`), and a store that re-validated would have
+  /// to invent an error case for a state the only caller cannot produce.
+  ///
+  /// `kindRaw` is a `String` because `Account.kindRaw` is one; there is no
+  /// `AccountKind` enum and this is not the unit that introduces it. The fixed
+  /// choices live in `NomiUI`, the way `PaletteSlotOptions` does for categories.
+  @discardableResult
+  func create(
+    displayName: String,
+    institution: String,
+    lastFour: String,
+    kindRaw: String
+  ) throws -> Account
+
   func rename(_ id: UUID, to displayName: String) throws
   func setArchived(_ id: UUID, _ archived: Bool) throws
 }
