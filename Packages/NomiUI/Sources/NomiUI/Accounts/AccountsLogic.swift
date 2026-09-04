@@ -46,3 +46,26 @@ enum AccountSectioning {
     summaries.filter { $0.isArchived }
   }
 }
+
+/// Fixed kind choices for account creation. `Account.kindRaw` is a `String`,
+/// not an enum — introducing `AccountKind` in `NomiCore` would put
+/// `Contracts/Types.swift` in this unit for no gain, so the choices live
+/// here, the way `PaletteSlotOptions` does for categories.
+enum AccountKindOptions {
+  static let all: [String] = ["bank", "card", "wallet"]
+  static let defaultKind = "bank"
+}
+
+/// Gates account creation: `displayName` is required and non-blank, same
+/// rule as `AccountRenameGate`. `lastFour` is exactly four digits or empty
+/// — never partial. That second rule is not cosmetic: `lastFour` is the
+/// `cardFragment` half of the `AccountBinding` key another unit relies on,
+/// so a value like "471" or "•• 4471" would silently break mail
+/// auto-resolution later with no visible symptom.
+enum AccountCreateFormGate {
+  static func isValid(displayName: String, lastFour: String) -> Bool {
+    let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedName.isEmpty else { return false }
+    return lastFour.isEmpty || (lastFour.count == 4 && lastFour.allSatisfy { $0.isASCII && $0.isNumber })
+  }
+}
