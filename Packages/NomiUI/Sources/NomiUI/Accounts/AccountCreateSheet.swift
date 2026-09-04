@@ -38,7 +38,9 @@ struct AccountCreateSheet: View {
         }
         Section("Last four digits") {
           TextField("e.g. 4471", text: $lastFour)
+            #if os(iOS)
             .keyboardType(.numberPad)
+            #endif
         }
         Section("Kind") {
           Picker("Kind", selection: $kindRaw) {
