@@ -47,6 +47,40 @@ final class TrackedBalanceCaptionTests: XCTestCase {
   }
 }
 
+final class AccountCreateFormGateTests: XCTestCase {
+  func testBlankNameIsInvalid() {
+    XCTAssertFalse(AccountCreateFormGate.isValid(displayName: "", lastFour: "4471"))
+  }
+
+  func testWhitespaceOnlyNameIsInvalid() {
+    XCTAssertFalse(AccountCreateFormGate.isValid(displayName: "   ", lastFour: "4471"))
+  }
+
+  func testThreeDigitLastFourIsInvalid() {
+    XCTAssertFalse(AccountCreateFormGate.isValid(displayName: "Checking", lastFour: "471"))
+  }
+
+  func testFiveDigitLastFourIsInvalid() {
+    XCTAssertFalse(AccountCreateFormGate.isValid(displayName: "Checking", lastFour: "44712"))
+  }
+
+  func testMaskedLastFourIsInvalid() {
+    XCTAssertFalse(AccountCreateFormGate.isValid(displayName: "Checking", lastFour: "•• 4471"))
+  }
+
+  func testNonDigitLastFourIsInvalid() {
+    XCTAssertFalse(AccountCreateFormGate.isValid(displayName: "Checking", lastFour: "abcd"))
+  }
+
+  func testEmptyLastFourIsValid() {
+    XCTAssertTrue(AccountCreateFormGate.isValid(displayName: "Checking", lastFour: ""))
+  }
+
+  func testFourDigitLastFourIsValid() {
+    XCTAssertTrue(AccountCreateFormGate.isValid(displayName: "Checking", lastFour: "4471"))
+  }
+}
+
 final class AccountSectioningTests: XCTestCase {
   private func summary(isArchived: Bool) -> AccountSummary {
     AccountSummary(

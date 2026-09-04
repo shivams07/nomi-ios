@@ -14,6 +14,7 @@ public struct AccountsScreen: View {
   @State private var renamingAccount: AccountSummary?
   @State private var archivingAccount: AccountSummary?
   @State private var isArchivedExpanded = false
+  @State private var isCreatingAccount = false
   @State private var refreshToken = 0
 
   public init(accountStore: AccountStore, insightsStore: InsightsStore) {
@@ -33,9 +34,20 @@ public struct AccountsScreen: View {
     List {
       Section {
         if active.isEmpty {
-          Text("No accounts yet")
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.textTertiary)
+          VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+            Text("No accounts yet")
+              .nomiTextStyle(.caption)
+              .foregroundStyle(NomiColor.textTertiary)
+            Text("Create your first account to start tracking balances and assigning transactions.")
+              .nomiTextStyle(.caption)
+              .foregroundStyle(NomiColor.textTertiary)
+            Button {
+              isCreatingAccount = true
+            } label: {
+              Label("New Account", systemImage: "plus")
+                .foregroundStyle(NomiColor.accent)
+            }
+          }
         } else {
           ForEach(active) { account in
             row(for: account, deemphasized: false)
@@ -57,8 +69,22 @@ public struct AccountsScreen: View {
     .scrollContentBackground(.hidden)
     .background(NomiColor.surfaceCanvas)
     .navigationTitle("Accounts")
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        Button {
+          isCreatingAccount = true
+        } label: {
+          Image(systemName: "plus")
+        }
+      }
+    }
     .sheet(item: $renamingAccount) { account in
       AccountRenameSheet(accountStore: accountStore, account: account) {
+        refreshToken += 1
+      }
+    }
+    .sheet(isPresented: $isCreatingAccount) {
+      AccountCreateSheet(accountStore: accountStore) { _ in
         refreshToken += 1
       }
     }
