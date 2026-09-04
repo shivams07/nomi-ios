@@ -1,0 +1,10 @@
+From: Bandhan Bank Alerts <alerts@bandhanbank.in>
+To: <user@example.com>
+Subject: Transaction Alert
+Date: Wed, 02 Sep 2026 14:20:00 +0530
+X-Fixture-Note: Two sibling <td> cells: the transaction in one, the running balance in the next. SwiftSoup's text() joins siblings with a space and no sentence terminator, so the clause around the amount runs straight into 'Available Balance' and largest-wins picks the balance. This is R6's failure shape as it actually appears in Indian alert mail.
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>td{padding:4px}</style></head><body><table width="100%"><tr><td align="center"><p>Dear Customer,</p><table cellpadding="6" cellspacing="0" border="0"><tr><td>Rs.3,275.50 has been debited from your account XX7788 at IRCTC RAIL TICKET on 02-09-2026</td><td>Available Balance Rs.48,900.00</td></tr></table><p></p></td></tr></table></body></html>

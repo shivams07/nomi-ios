@@ -81,13 +81,45 @@ public enum MailDate {
     return nil
   }
 
-  /// RFC 5322 `Date:`. The header carries an explicit offset, so it is already
-  /// an unambiguous instant and needs no zone assumption.
+  /// RFC 5322 §4.3's obsolete zone names, mapped to the offset they mean.
+  ///
+  /// `DateFormatter`'s `Z` accepts a numeric offset and nothing else, so a
+  /// header ending in `GMT` — which §4.3 makes perfectly legal, and which real
+  /// senders still emit — parsed as nil and `RFC822Message` filed the message
+  /// under 1 Jan 1970. That date reaches the ledger.
+  ///
+  /// The military single letters are deliberately absent apart from `Z`. §4.3
+  /// records that they were implemented with the wrong sign in enough software
+  /// that they must be treated as `-0000`, and `-0000` means "offset unknown".
+  /// Guessing an instant from an unknown offset is how a transaction lands on
+  /// the wrong day; a header carrying one still returns nil, still reaches the
+  /// epoch fallback, and is now flagged for review because of it.
+  private static let obsoleteZones: [String: String] = [
+    "UT": "+0000", "GMT": "+0000", "Z": "+0000",
+    "EST": "-0500", "EDT": "-0400",
+    "CST": "-0600", "CDT": "-0500",
+    "MST": "-0700", "MDT": "-0600",
+    "PST": "-0800", "PDT": "-0700",
+  ]
+
+  /// RFC 5322 `Date:`. The header carries an explicit offset — numeric, or one
+  /// of §4.3's names — so it is an unambiguous instant and needs no zone
+  /// assumption.
   public static func parseHeaderDate(_ raw: String) -> Date? {
     var trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     // Some senders append a zone name: "+0530 (IST)".
     if let paren = trimmed.firstIndex(of: "(") {
       trimmed = String(trimmed[..<paren]).trimmingCharacters(in: .whitespaces)
+    }
+    // A trailing zone NAME becomes the numeric offset before the formatter sees
+    // it, rather than adding a `zzz` format: `zzz` parses against the current
+    // locale's zone abbreviations, which is data that varies by platform and
+    // would make this a different function on the CI runner than on a phone.
+    if let lastSpace = trimmed.lastIndex(of: " ") {
+      let zone = String(trimmed[trimmed.index(after: lastSpace)...]).uppercased()
+      if let offset = obsoleteZones[zone] {
+        trimmed = String(trimmed[..<lastSpace]) + " " + offset
+      }
     }
 
     let formats = [

@@ -36,10 +36,87 @@ final class MailParsingTests: XCTestCase {
     XCTAssertEqual(MailAmount.firstAmount(in: "1,234.50 INR debited"), 123_450)
   }
 
-  func testLargestAmountIsLayerTwosRuleAndFirstAmountIsNot() {
+  /// Was `testLargestAmountIsLayerTwosRuleAndFirstAmountIsNot`. Largest-wins is
+  /// gone: on this sentence pair it returned 18,400.00, the balance.
+  func testTheAmountRuleFollowsTheVerbAndNotTheLargestNumber() {
     let text = "Rs 250.00 debited. Available balance Rs 18,400.00."
     XCTAssertEqual(MailAmount.firstAmount(in: text), 25_000)
-    XCTAssertEqual(MailAmount.largestAmount(in: text), 1_840_000)
+    XCTAssertEqual(
+      MailAmount.transactionAmount(in: text, verbRange: text.range(of: "debited")), 25_000)
+  }
+
+  /// The verb rule earning its keep: here the balance comes FIRST, so neither
+  /// largest-wins nor first-wins gets it right and only the clause does.
+  func testTheVerbClauseWinsEvenWhenTheBalanceIsFirstInTheText() {
+    let text = "Available balance Rs 18,400.00. Rs 250.00 debited."
+    XCTAssertEqual(
+      MailAmount.transactionAmount(in: text, verbRange: text.range(of: "debited")), 25_000)
+  }
+
+  /// No verb located in the body — the direction came from the subject. Falls
+  /// back to the first amount, not the largest.
+  func testWithNoVerbRangeTheFallbackIsTheFirstAmountNotTheLargest() {
+    let text = "Rs 250.00. Available balance Rs 18,400.00."
+    XCTAssertEqual(MailAmount.transactionAmount(in: text, verbRange: nil), 25_000)
+  }
+
+  /// `Rs.` is how most Indian alert mail writes the symbol, and its dot is not
+  /// a clause boundary. While it was treated as one, the amount sat in a
+  /// different clause from its own verb and the rule silently fell through to
+  /// the first-amount fallback — which is right often enough to look fine and
+  /// wrong exactly when the balance is quoted first, as here.
+  func testTheAbbreviationDotInRsDoesNotCutTheClause() {
+    let text = "Available Balance Rs.48,900.00\nRs.3,275.50 has been debited at IRCTC"
+    XCTAssertEqual(
+      MailAmount.transactionAmount(in: text, verbRange: text.range(of: "debited")), 327_550)
+  }
+
+  // MARK: - Block boundaries survive the HTML
+
+  /// FAILS today. `text()` puts a single space between two `<td>`s, so nothing
+  /// downstream can tell "end of cell" from "next word". A newline is the
+  /// terminator `clauseAroundFirstAmount` and the amount rule both need.
+  func testPlainTextKeepsABoundaryBetweenAdjacentCells() {
+    let html = "<table><tr><td>Rs.100.00 debited</td><td>Available Balance Rs.900.00</td></tr></table>"
+    let text = MailHTML.plainText(fromHTML: html)
+
+    XCTAssertTrue(text.contains("\n"), "no block boundary survived: " + text)
+    XCTAssertEqual(
+      text.split(separator: "\n").first?.trimmingCharacters(in: .whitespaces),
+      "Rs.100.00 debited")
+  }
+
+  /// The other half: collapsing whitespace must not undo it. Spaces and tabs
+  /// collapse; newlines do not.
+  func testNormalizeWhitespaceCollapsesSpacesButKeepsNewlines() {
+    XCTAssertEqual(MailHTML.normalizeWhitespace("a   \t  b"), "a b")
+    XCTAssertEqual(MailHTML.normalizeWhitespace("a  \n   b"), "a\nb")
+    XCTAssertEqual(MailHTML.normalizeWhitespace("a \n \n\n b"), "a\nb")
+  }
+
+  /// `rejoinSplitDecimals` has to keep working once the cells are separated by
+  /// a newline instead of a space — the split-decimal shape is *why* the cells
+  /// were adjacent in the first place.
+  func testASplitDecimalStillRejoinsAcrossACellBoundary() {
+    XCTAssertEqual(
+      MailHTML.normalizeWhitespace("Rs 4,500\n.00 debited"), "Rs 4,500.00 debited")
+  }
+
+  // MARK: - RFC 5322 4.3: the obsolete zone names
+
+  /// FAILS today. Only numeric offsets parse, so a legal `Date:` header ending
+  /// in `GMT` returns nil and `RFC822Message` files the message under 1970.
+  func testAnObsoleteZoneNameParsesRatherThanFallingBackToTheEpoch() {
+    let parsed = MailDate.parseHeaderDate("Mon, 17 Aug 2026 09:15:00 GMT")
+
+    XCTAssertNotNil(parsed, "GMT is RFC 5322 4.3 legal and must parse")
+    XCTAssertEqual(parsed, Date(timeIntervalSince1970: 1_786_958_100))
+  }
+
+  func testTheNumericOffsetFormStillParses() {
+    XCTAssertEqual(
+      MailDate.parseHeaderDate("Mon, 17 Aug 2026 14:45:00 +0530"),
+      Date(timeIntervalSince1970: 1_786_958_100))
   }
 
   // MARK: - R6: the split amount
@@ -58,11 +135,17 @@ final class MailParsingTests: XCTestCase {
     XCTAssertEqual(MailAmount.allAmounts(in: "Rs 1,200 Rs 3,400"), [120_000, 340_000])
   }
 
-  func testHTMLTablesBecomeSpacedTextAndInlineTagsDoNot() {
+  /// Was `testHTMLTablesBecomeSpacedTextAndInlineTagsDoNot`, and it asserted the
+  /// defect: cells joined by a SPACE. The boundary is a newline now, including
+  /// the one between a currency symbol and its digits — `MailAmount`'s pattern
+  /// allows whitespace there, so the split amount is still read as one amount
+  /// without the two cells being glued into one clause.
+  func testHTMLTablesBecomeNewlineSeparatedAndInlineTagsDoNot() {
     let cells = MailHTML.plainText(fromHTML: "<table><tr><td>Rs.</td><td>4,500.00</td></tr></table>")
-    XCTAssertTrue(cells.contains("Rs. 4,500.00"), cells)
+    XCTAssertEqual(cells, "Rs.\n4,500.00")
+    XCTAssertEqual(MailAmount.firstAmount(in: cells), 450_000)
 
-    // A <span> wrapping part of an amount must NOT introduce a space.
+    // A <span> wrapping part of an amount must NOT introduce a break of any kind.
     let spanned = MailHTML.plainText(fromHTML: "<table><tr><td>₹<span>4,500</span>.<span>00</span></td></tr></table>")
     XCTAssertTrue(spanned.contains("₹4,500.00"), spanned)
   }
