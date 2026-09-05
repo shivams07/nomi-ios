@@ -147,4 +147,119 @@ final class ReconcileTests: XCTestCase {
     let count = await store.rowCount
     XCTAssertEqual(count, 1)
   }
+
+  // MARK: - C1: reconcile never removes a row the user typed
+
+  /// A manual row equivalent to what `SwiftDataTransactionStore.add` writes:
+  /// `source == .manual`, one manual `SourceRef`.
+  private func manualRow(
+    externalID: String,
+    createdAt: String,
+    description: String = "SWIGGY ORDER"
+  ) -> TransactionSnapshot {
+    Fixture.row(
+      from: Fixture.draft(description: description, source: .manual, externalID: externalID),
+      createdAt: createdAt)
+  }
+
+  /// Two rows the user typed twice are not the app's to merge. Collapsing them
+  /// would silently delete one of them; the pair is left for the user to sort
+  /// out. FAILS against `main`, which collapses on `createdAt` alone.
+  func testTwoManualRowsSharingAKeyAreLeftForTheUser() async throws {
+    let first = manualRow(externalID: "m-1", createdAt: "2026-08-20 10:00")
+    let second = manualRow(externalID: "m-2", createdAt: "2026-08-21 11:00")
+    XCTAssertEqual(first.dedupeKey, second.dedupeKey)
+
+    let store = FakePipelineStore(rows: [first, second])
+    let observer = RecordingObserver()
+    let pipeline = await Fixture.pipeline(store: store, observer: observer)
+
+    let result = try await pipeline.reconcile()
+
+    XCTAssertEqual(result.groupsCollapsed, 0)
+    XCTAssertEqual(result.rowsRemoved, 0)
+    let count = await store.rowCount
+    XCTAssertEqual(count, 2, "both rows the user typed are still there")
+    let survivingFirst = await store.row(first.id)
+    let survivingSecond = await store.row(second.id)
+    XCTAssertNotNil(survivingFirst)
+    XCTAssertNotNil(survivingSecond)
+    let applies = await store.applyCount
+    XCTAssertEqual(applies, 0)
+    XCTAssertEqual(observer.callCount, 0)
+  }
+
+  /// The documented purpose of the second write path: the user typed a row the
+  /// mail sync then found. It still collapses to one row, but the survivor is
+  /// the one the user typed - even though it was created later.
+  func testAManualRowOutranksAnEarlierEmailRowInACollapse() async throws {
+    let email = Fixture.row(
+      from: Fixture.draft(description: "SWIGGY ORDER", source: .email, externalID: "uid-1"),
+      createdAt: "2026-08-20 10:00")
+    let manual = manualRow(externalID: "m-1", createdAt: "2026-08-21 11:00")
+    XCTAssertEqual(email.dedupeKey, manual.dedupeKey)
+
+    let store = FakePipelineStore(rows: [email, manual])
+    let pipeline = await Fixture.pipeline(store: store)
+
+    let result = try await pipeline.reconcile()
+
+    XCTAssertEqual(result.groupsCollapsed, 1)
+    XCTAssertEqual(result.rowsRemoved, 1)
+    let count = await store.rowCount
+    XCTAssertEqual(count, 1)
+    let survivor = await store.row(manual.id)
+    let removed = await store.row(email.id)
+    XCTAssertNotNil(survivor, "the manual row survives, not the earlier email one")
+    XCTAssertNil(removed)
+    XCTAssertEqual(survivor?.mergedCount, 2)
+    let refs = survivor?.sourceRefs ?? []
+    XCTAssertEqual(refs.count, 2, "the email contributor is adopted")
+    XCTAssertTrue(refs.contains(where: { $0.source == .manual }))
+    XCTAssertTrue(refs.contains(where: { $0.source == .email }))
+  }
+
+  /// One manual row, several email rows: the manual row is the survivor and
+  /// every email row folds into it.
+  func testOneManualRowSurvivesAgainstSeveralEmailRows() async throws {
+    let manual = manualRow(externalID: "m-1", createdAt: "2026-08-19 09:00")
+    let phone = Fixture.row(
+      from: Fixture.draft(description: "SWIGGY ORDER", source: .email, externalID: "uid-1"),
+      createdAt: "2026-08-20 10:00")
+    let pad = Fixture.row(
+      from: Fixture.draft(description: "SWIGGY ORDER", source: .email, externalID: "uid-2"),
+      createdAt: "2026-08-21 11:00")
+
+    let store = FakePipelineStore(rows: [manual, phone, pad])
+    let pipeline = await Fixture.pipeline(store: store)
+
+    let result = try await pipeline.reconcile()
+
+    XCTAssertEqual(result.groupsCollapsed, 1)
+    XCTAssertEqual(result.rowsRemoved, 2)
+    let survivor = await store.row(manual.id)
+    XCTAssertNotNil(survivor)
+    XCTAssertEqual(survivor?.mergedCount, 3)
+    XCTAssertEqual(survivor?.sourceRefs.count, 3)
+  }
+
+  /// Two manual rows plus an email row: nothing is collapsed at all, including
+  /// the email row. The conservative direction - the app cannot know which
+  /// manual row the email belongs to.
+  func testTwoManualRowsBlockTheWholeGroupIncludingAnEmailRow() async throws {
+    let first = manualRow(externalID: "m-1", createdAt: "2026-08-19 09:00")
+    let second = manualRow(externalID: "m-2", createdAt: "2026-08-20 10:00")
+    let email = Fixture.row(
+      from: Fixture.draft(description: "SWIGGY ORDER", source: .email, externalID: "uid-1"),
+      createdAt: "2026-08-21 11:00")
+
+    let store = FakePipelineStore(rows: [first, second, email])
+    let pipeline = await Fixture.pipeline(store: store)
+
+    let result = try await pipeline.reconcile()
+
+    XCTAssertEqual(result, .empty)
+    let count = await store.rowCount
+    XCTAssertEqual(count, 3)
+  }
 }
