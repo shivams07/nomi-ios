@@ -93,11 +93,16 @@ public final class AppEnvironment: ObservableObject {
     let pipeline = IngestPipeline(store: SwiftDataPipelineStore(modelContainer: container))
     self.pipeline = pipeline
 
+    // C4. The resolver reads the same `AccountBinding` rows
+    // `SwiftDataTransactionStore.setAccount` writes, from its own
+    // `ModelContext` - `MailSyncEngine.classify` is nonisolated and cannot
+    // reach the main context.
     let mail = MailStack(
       fetcher: mailFetcher,
       pipeline: pipeline,
       credentials: credentials,
-      preferences: preferences
+      preferences: preferences,
+      bindings: SwiftDataAccountBindings(container: container)
     )
     self.mail = mail
     self.sync = AppSyncCoordinator(mail: mail, pipeline: pipeline)

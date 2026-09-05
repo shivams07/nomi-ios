@@ -132,7 +132,10 @@ extension TransactionSnapshot {
       needsReview: transaction.needsReview,
       dedupeKey: transaction.dedupeKey,
       createdAt: transaction.createdAt,
-      updatedAt: transaction.updatedAt
+      updatedAt: transaction.updatedAt,
+      senderDomain: transaction.senderDomain,
+      cardFragment: transaction.cardFragment,
+      needsReviewReason: transaction.needsReviewReason
     )
   }
 }
@@ -162,13 +165,18 @@ extension Transaction {
       needsReview: snapshot.needsReview,
       dedupeKey: snapshot.dedupeKey,
       createdAt: snapshot.createdAt,
-      updatedAt: snapshot.updatedAt
+      updatedAt: snapshot.updatedAt,
+      senderDomain: snapshot.senderDomain,
+      cardFragment: snapshot.cardFragment,
+      needsReviewReasonRaw: snapshot.needsReviewReason?.rawValue
     )
   }
 
   /// `id`, `dedupeKey`, `descriptionText`, `normalizedDescription`, `date` and
   /// `createdAt` are written on insert and never rewritten, so they are absent
-  /// here on purpose.
+  /// here on purpose. So are `senderDomain`, `cardFragment` and
+  /// `needsReviewReasonRaw` (C4): they record what the *ingester* saw when the
+  /// row was created, and a later merge does not change that.
   func apply(_ snapshot: TransactionSnapshot) {
     merchantName = snapshot.merchantName
     upiKindRaw = snapshot.upiKindRaw

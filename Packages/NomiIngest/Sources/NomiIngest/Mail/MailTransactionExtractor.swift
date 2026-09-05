@@ -1,6 +1,32 @@
 import Foundation
 import NomiCore
 
+/// The `(senderDomain, cardFragment)` binding key, normalised. **The only
+/// definition of it.**
+///
+/// Two places must agree byte for byte or a binding is written under one key
+/// and looked up under another, and the loop silently never closes: this file
+/// when it stamps `TransactionDraft.cardFragment`, and `SwiftDataAccountBindings`
+/// when it reads the table. Both call this rather than each doing "trailing
+/// four digits" their own way. It lives here because NomiApp can see NomiIngest
+/// and not the reverse.
+///
+/// A pack regex may capture `XX4471`, `4471` or `A/c no. 4471`; the fragment is
+/// the last four digits of whatever came back, or `nil` when there are not
+/// four - which is the ordinary "the mail did not name an account" case, not
+/// an error.
+public enum AccountBindingKey {
+  public static func domain(_ raw: String) -> String {
+    raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+  }
+
+  public static func fragment(_ raw: String) -> String? {
+    let digits = raw.filter(\.isNumber)
+    guard digits.count >= 4 else { return nil }
+    return String(digits.suffix(4))
+  }
+}
+
 /// The MVP's one and only `TransactionExtractor`: the pack-plus-heuristic of
 /// §1.4, with the pre-filter in front of it.
 ///
@@ -85,7 +111,11 @@ public struct MailTransactionExtractor: TransactionExtractor {
       accountID: accountID,
       // §1.2: an unidentified account is flagged, never guessed. A wrong account
       // is silently wrong; an unassigned one is visibly incomplete.
-      needsReview: accountID == nil
+      needsReview: accountID == nil,
+      // Layer 1 read the row correctly; the only thing missing is which account
+      // it belongs to. That is exactly the flag `setAccount` may clear.
+      reason: accountID == nil ? .unidentifiedAccount : nil,
+      cardFragment: fragment
     )
   }
 
@@ -153,7 +183,11 @@ public struct MailTransactionExtractor: TransactionExtractor {
       amountMinor: amountMinor,
       direction: direction,
       accountID: accountID,
-      needsReview: true
+      needsReview: true,
+      // Layer 2 guessed the amount as well as the account, so assigning an
+      // account does not make this row reviewed.
+      reason: .heuristic,
+      cardFragment: fragment
     )
   }
 
@@ -168,7 +202,9 @@ public struct MailTransactionExtractor: TransactionExtractor {
       amountMinor: 0,
       direction: MailDirection.direction(in: text + " " + message.subject) ?? .debit,
       accountID: nil,
-      needsReview: true
+      needsReview: true,
+      reason: .unparseable,
+      cardFragment: ""
     )
   }
 
@@ -181,9 +217,12 @@ public struct MailTransactionExtractor: TransactionExtractor {
     amountMinor: Int,
     direction: Direction,
     accountID: UUID?,
-    needsReview: Bool
+    needsReview: Bool,
+    reason: NeedsReviewReason?,
+    cardFragment: String
   ) -> TransactionDraft {
-    TransactionDraft(
+    let unreadableDate = date == Date(timeIntervalSince1970: 0)
+    return TransactionDraft(
       date: date,
       descriptionText: narration,
       amountMinor: amountMinor,
@@ -199,10 +238,15 @@ public struct MailTransactionExtractor: TransactionExtractor {
       // fallback has to carry a flag out with it. Checked here rather than at
       // the three call sites because it is a property of the value, not of the
       // layer that produced it.
-      needsReview: needsReview || date == Date(timeIntervalSince1970: 0)
+      needsReview: needsReview || unreadableDate,
       // merchantName / upiKindRaw / counterpartyVPA are deliberately NOT set.
       // U4 derives them from descriptionText (§2.4); an ingester that fills them
       // in trips the pipeline's assert.
+      senderDomain: AccountBindingKey.domain(message.senderDomain),
+      cardFragment: AccountBindingKey.fragment(cardFragment),
+      // The epoch overrides whatever the layer thought, including "the account
+      // resolved fine". A 1970 row is the thing worth saying about the row.
+      needsReviewReason: unreadableDate ? .unreadableDate : reason
     )
   }
 }

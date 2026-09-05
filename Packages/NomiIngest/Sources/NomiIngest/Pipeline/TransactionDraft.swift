@@ -48,6 +48,20 @@ public struct TransactionDraft: Sendable, Equatable {
   public var upiKindRaw: String?
   public var counterpartyVPA: String?
 
+  // C4 - insert-time facts about where a mail row came from, stamped by
+  // `MailTransactionExtractor` and carried through untouched. Trailing, with
+  // `nil` defaults, so no existing call site or test changes.
+
+  /// The sending bank's mail domain. `nil` for file and manual drafts.
+  public var senderDomain: String?
+
+  /// Trailing four digits of the account or card the mail named, or `nil`.
+  public var cardFragment: String?
+
+  /// Why the ingester set `needsReview`. `nil` when it did not, and `nil` for
+  /// every non-mail draft.
+  public var needsReviewReason: NeedsReviewReason?
+
   public init(
     date: Date,
     descriptionText: String,
@@ -63,7 +77,10 @@ public struct TransactionDraft: Sendable, Equatable {
     categorySource: CategorySource = .none,
     merchantName: String? = nil,
     upiKindRaw: String? = nil,
-    counterpartyVPA: String? = nil
+    counterpartyVPA: String? = nil,
+    senderDomain: String? = nil,
+    cardFragment: String? = nil,
+    needsReviewReason: NeedsReviewReason? = nil
   ) {
     self.date = date
     self.descriptionText = descriptionText
@@ -80,6 +97,9 @@ public struct TransactionDraft: Sendable, Equatable {
     self.merchantName = merchantName
     self.upiKindRaw = upiKindRaw
     self.counterpartyVPA = counterpartyVPA
+    self.senderDomain = senderDomain
+    self.cardFragment = cardFragment
+    self.needsReviewReason = needsReviewReason
   }
 
   public var sourceRef: SourceRef {

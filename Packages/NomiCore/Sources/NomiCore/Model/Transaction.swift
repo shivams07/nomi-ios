@@ -13,6 +13,28 @@ public enum CategorySource: String, Codable, Sendable {
   case none, rule, manual
 }
 
+/// Why a row was flagged **at insert time**, and only at insert time.
+///
+/// It exists so that clearing the flag can be specific. Assigning an account to
+/// a row flagged because Layer 2 guessed its *amount* must not mark that amount
+/// reviewed; without a reason, "the user assigned an account" and "the row is
+/// fine now" are the same event and the second one is a lie.
+///
+/// `nil` means the flag was set by the pipeline (a near merge, an account
+/// conflict) rather than by the ingester, and nothing here may clear it.
+public enum NeedsReviewReason: String, Codable, Sendable {
+  /// A pack match whose account could not be identified (§1.2).
+  case unidentifiedAccount
+  /// Layer 2 read it - recall with a human gate.
+  case heuristic
+  /// A real candidate nobody could read; `amountMinor` is 0.
+  case unparseable
+  /// The `Date:` header was unreadable and the date is the epoch. Overrides
+  /// the others: a 1970 row sorts to the bottom of the ledger and is never
+  /// seen again, so that is the thing to say about it.
+  case unreadableDate
+}
+
 public struct SourceRef: Codable, Hashable, Sendable {
   public let source: IngestSource
   public let externalID: String
@@ -49,6 +71,21 @@ public final class Transaction {
   public var createdAt: Date = Date()
   public var updatedAt: Date = Date()
 
+  // C4. All three optional with a `nil` default and no schema version bump, so
+  // CloudKit accepts them (R5) and every row already on a device reads `nil`.
+  // None of them reaches `dedupeKey` - `DedupeKeyIndependenceTests` is the
+  // guard on that.
+
+  /// The sending bank's mail domain, lowercased. Mail rows only.
+  public var senderDomain: String?
+
+  /// The trailing four digits of the account or card the mail named. Mail rows
+  /// only. Normalised to exactly four digits, or absent.
+  public var cardFragment: String?
+
+  /// `NeedsReviewReason`, insert-time only. See that type.
+  public var needsReviewReasonRaw: String?
+
   public init(
     id: UUID = UUID(),
     date: Date = Date(),
@@ -70,7 +107,10 @@ public final class Transaction {
     needsReview: Bool = false,
     dedupeKey: String = "",
     createdAt: Date = Date(),
-    updatedAt: Date = Date()
+    updatedAt: Date = Date(),
+    senderDomain: String? = nil,
+    cardFragment: String? = nil,
+    needsReviewReasonRaw: String? = nil
   ) {
     self.id = id
     self.date = date
@@ -93,6 +133,14 @@ public final class Transaction {
     self.dedupeKey = dedupeKey
     self.createdAt = createdAt
     self.updatedAt = updatedAt
+    self.senderDomain = senderDomain
+    self.cardFragment = cardFragment
+    self.needsReviewReasonRaw = needsReviewReasonRaw
+  }
+
+  public var needsReviewReason: NeedsReviewReason? {
+    get { needsReviewReasonRaw.flatMap(NeedsReviewReason.init(rawValue:)) }
+    set { needsReviewReasonRaw = newValue?.rawValue }
   }
 
   public var direction: Direction {

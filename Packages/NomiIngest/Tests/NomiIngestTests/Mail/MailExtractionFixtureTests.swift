@@ -142,6 +142,110 @@ final class MailExtractionFixtureTests: XCTestCase {
     XCTAssertTrue(draft.needsReview, "a 1970 row must be visible, not silently filed")
   }
 
+  // MARK: - C4: the three insert-time fields
+
+  /// Every pack fixture carries where it came from and which account it named,
+  /// and says the account is the reason it is flagged.
+  func testEveryPackFixtureStampsDomainFragmentAndUnidentifiedAccount() throws {
+    let extractor = MailTransactionExtractor()
+
+    for expected in expectations {
+      let message = try MailFixtures.message(expected.file)
+      let draft = try XCTUnwrap(extractor.outcome(for: message).draft, expected.file)
+
+      XCTAssertEqual(draft.senderDomain, message.senderDomain, expected.file)
+      XCTAssertEqual(draft.cardFragment, expected.accountFragmentDigits, expected.file)
+      XCTAssertEqual(draft.cardFragment?.count, 4, expected.file)
+      XCTAssertEqual(
+        draft.needsReviewReason, .unidentifiedAccount,
+        "\(expected.file): the row parsed fine, only the account is missing")
+    }
+  }
+
+  /// The fragment the extractor stamps and the key the resolver looks up are
+  /// the same function, so a binding written from a row can be found again.
+  /// Two definitions of "trailing four digits" is how this loop fails silently.
+  func testTheStampedFragmentIsTheSameKeyTheResolverWouldLookUp() throws {
+    for expected in expectations {
+      let message = try MailFixtures.message(expected.file)
+      let draft = try XCTUnwrap(
+        MailTransactionExtractor().outcome(for: message).draft, expected.file)
+
+      XCTAssertEqual(
+        draft.cardFragment, AccountBindingKey.fragment(expected.accountFragmentDigits),
+        expected.file)
+      XCTAssertEqual(draft.senderDomain, AccountBindingKey.domain(message.senderDomain))
+    }
+  }
+
+  func testAccountBindingKeyTakesTheLastFourDigitsOrNothing() {
+    XCTAssertEqual(AccountBindingKey.fragment("4471"), "4471")
+    XCTAssertEqual(AccountBindingKey.fragment("XX4471"), "4471")
+    XCTAssertEqual(AccountBindingKey.fragment("A/c no. 4471"), "4471")
+    XCTAssertEqual(AccountBindingKey.fragment("**** **** **** 4471"), "4471")
+    XCTAssertNil(AccountBindingKey.fragment(""), "no digits is not a key")
+    XCTAssertNil(AccountBindingKey.fragment("447"), "three digits is not a key")
+    XCTAssertEqual(AccountBindingKey.domain("  Alerts.HDFCBank.NET  "), "alerts.hdfcbank.net")
+  }
+
+  /// Layer 2 guessed the amount as well as the account, so its reason is not
+  /// one `setAccount` may clear.
+  func testLayerTwoFixturesSayHeuristicNotUnidentifiedAccount() throws {
+    let extractor = MailTransactionExtractor()
+
+    for file in ["unknown_bank_layer2.eml", "unknown_bank_running_balance.eml"] {
+      let message = try MailFixtures.message(file)
+      let outcome = extractor.outcome(for: message)
+      XCTAssertEqual(outcome.layer, .heuristic, file)
+      XCTAssertFalse(outcome.wasUnparseableCandidate, file)
+
+      let draft = try XCTUnwrap(outcome.draft, file)
+      XCTAssertEqual(draft.needsReviewReason, .heuristic, file)
+      XCTAssertEqual(draft.senderDomain, message.senderDomain, file)
+    }
+  }
+
+  func testAnUnparseableCandidateSaysSo() throws {
+    let message = try MailFixtures.message("unparseable_candidate.eml")
+    let outcome = MailTransactionExtractor().outcome(for: message)
+
+    XCTAssertTrue(outcome.wasUnparseableCandidate)
+    let draft = try XCTUnwrap(outcome.draft)
+    XCTAssertEqual(draft.amountMinor, 0)
+    XCTAssertEqual(draft.needsReviewReason, .unparseable)
+    XCTAssertNil(draft.cardFragment, "nothing was read, so nothing is claimed")
+  }
+
+  /// The epoch overrides every other reason, including a resolved account -
+  /// otherwise a 1970 row could be un-flagged by assigning an account and
+  /// would then sit at the bottom of the ledger forever.
+  func testAnUnreadableDateOverridesWhateverTheLayerThought() throws {
+    let message = try MailFixtures.message("hdfc_debit_unreadable_date.eml")
+
+    let bound = try XCTUnwrap(
+      MailTransactionExtractor(bindings: FixedBinding(UUID())).outcome(for: message).draft)
+    XCTAssertNotNil(bound.accountID)
+    XCTAssertEqual(bound.needsReviewReason, .unreadableDate)
+
+    let unbound = try XCTUnwrap(MailTransactionExtractor().outcome(for: message).draft)
+    XCTAssertNil(unbound.accountID)
+    XCTAssertEqual(
+      unbound.needsReviewReason, .unreadableDate,
+      "not .unidentifiedAccount - the date is the worse problem")
+  }
+
+  /// A resolved account leaves no reason behind: the row is not flagged, and a
+  /// stale reason on an unflagged row would be a trap for the un-flag rule.
+  func testAResolvedAccountLeavesNoReason() throws {
+    let extractor = MailTransactionExtractor(bindings: FixedBinding(UUID()))
+    let draft = try XCTUnwrap(
+      extractor.outcome(for: try MailFixtures.message("hdfc_debit_netbanking.eml")).draft)
+
+    XCTAssertFalse(draft.needsReview)
+    XCTAssertNil(draft.needsReviewReason)
+    XCTAssertEqual(draft.cardFragment, "4471", "still recorded, so a re-bind can find it")
+  }
+
   // MARK: - R6: the amount split across nested table cells
 
   /// The failure mode a hand-built fixture is most likely to omit, and the one

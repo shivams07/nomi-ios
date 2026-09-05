@@ -122,4 +122,51 @@ final class SwiftDataPipelineStoreTests: XCTestCase {
 
     XCTAssertEqual(matches.map(\.id), [inRange.id])
   }
+
+  // MARK: - C4: the three insert-time fields survive the round trip
+
+  /// A field that is written on insert and dropped on read-back is invisible
+  /// from every test above `PipelineStore`, and `setAccount` would then have
+  /// nothing to learn from. This is the only place that can catch it.
+  func testInsertTimeMailFieldsRoundTripThroughTheStore() async throws {
+    let store = SwiftDataPipelineStore(modelContainer: try Self.makeContainer())
+    var row = Fixture.row(from: Fixture.draft(source: .email))
+    row.senderDomain = "alerts.hdfcbank.net"
+    row.cardFragment = "4471"
+    row.needsReviewReason = .unidentifiedAccount
+    row.needsReview = true
+
+    try await store.apply(CommitPlan(inserts: [row]))
+
+    let readBack = try await store.rulePassCandidates()
+    XCTAssertEqual(readBack.count, 1)
+    XCTAssertEqual(readBack.first?.senderDomain, "alerts.hdfcbank.net")
+    XCTAssertEqual(readBack.first?.cardFragment, "4471")
+    XCTAssertEqual(readBack.first?.needsReviewReason, .unidentifiedAccount)
+  }
+
+  /// `apply(_:)` deliberately does not write them: they record what the
+  /// *ingester* saw, and a later merge does not change that. A merge that
+  /// rewrote `needsReviewReason` would let a near-merge flag be cleared by
+  /// assigning an account.
+  func testAnUpdateDoesNotRewriteTheInsertTimeMailFields() async throws {
+    let store = SwiftDataPipelineStore(modelContainer: try Self.makeContainer())
+    var row = Fixture.row(from: Fixture.draft(source: .email))
+    row.senderDomain = "alerts.hdfcbank.net"
+    row.cardFragment = "4471"
+    row.needsReviewReason = .unidentifiedAccount
+    try await store.apply(CommitPlan(inserts: [row]))
+
+    row.senderDomain = "someone.else.example"
+    row.cardFragment = "9999"
+    row.needsReviewReason = .heuristic
+    row.mergedCount = 2
+    try await store.apply(CommitPlan(updates: [row]))
+
+    let readBack = try await store.rulePassCandidates()
+    XCTAssertEqual(readBack.first?.mergedCount, 2, "the merge itself did land")
+    XCTAssertEqual(readBack.first?.senderDomain, "alerts.hdfcbank.net")
+    XCTAssertEqual(readBack.first?.cardFragment, "4471")
+    XCTAssertEqual(readBack.first?.needsReviewReason, .unidentifiedAccount)
+  }
 }
