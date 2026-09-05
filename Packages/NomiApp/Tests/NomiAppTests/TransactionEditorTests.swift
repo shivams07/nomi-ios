@@ -40,12 +40,13 @@ final class TransactionEditorTests: XCTestCase {
     context.insert(transaction)
     try context.save()
 
+    let id = transaction.id
     let newDate = Date(timeIntervalSince1970: 1_701_000_000)
-    try editor.update(transaction.id, amountMinor: 45_00, date: newDate, descriptionText: "NEW DESCRIPTION")
+    try editor.update(id, amountMinor: 45_00, date: newDate, descriptionText: "NEW DESCRIPTION")
 
     let refetched = try XCTUnwrap(
       context.fetch(
-        FetchDescriptor<Transaction>(predicate: #Predicate<Transaction> { $0.id == transaction.id })
+        FetchDescriptor<Transaction>(predicate: #Predicate<Transaction> { $0.id == id })
       ).first
     )
 
