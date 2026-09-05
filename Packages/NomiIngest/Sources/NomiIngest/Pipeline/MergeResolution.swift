@@ -65,17 +65,39 @@ enum MergeResolution {
     return merged
   }
 
-  /// Collapses a group of rows sharing a `dedupeKey` into the earliest one.
+  /// Collapses a group of rows sharing a `dedupeKey` into one.
   /// Returns the survivor and the ids to delete.
+  ///
+  /// **Reconcile never removes a row the user typed (C1).** Earliest-wins is
+  /// right for rows CloudKit delivered twice; applied to a row the user entered
+  /// by hand it silently deletes their work, and nothing tells them. So:
+  ///
+  ///   - 0 manual rows in the group -> earliest wins, as before.
+  ///   - 1 manual row -> it is the survivor, whatever its `createdAt`. This is
+  ///     the `[manual, email]` fold the second write path exists for; the
+  ///     email row's contributors, category and account still merge in.
+  ///   - 2+ manual rows -> `nil`. The app cannot know which one the user meant
+  ///     to keep, so the whole group is left alone - including any email rows
+  ///     in it, because they cannot be attributed either.
   static func collapsing(
     _ group: [TransactionSnapshot],
     now: Date
   ) -> (survivor: TransactionSnapshot, removed: [UUID])? {
     guard group.count > 1 else { return nil }
 
-    let ordered = group.sorted { lhs, rhs in
+    var ordered = group.sorted { lhs, rhs in
       if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
       return lhs.id.uuidString < rhs.id.uuidString
+    }
+
+    let manualIndices = ordered.indices.filter {
+      ordered[$0].sourceRaw == IngestSource.manual.rawValue
+    }
+    guard manualIndices.count < 2 else { return nil }
+    if let manual = manualIndices.first {
+      // Promote it to the front; the fold below is order-independent apart from
+      // which row it starts on.
+      ordered.insert(ordered.remove(at: manual), at: 0)
     }
 
     var survivor = ordered[0]
