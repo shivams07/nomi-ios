@@ -110,9 +110,16 @@ public final class SwiftDataAccountStore: AccountStore {
   /// nothing to evaluate here, and passing an id would schedule a pass over a
   /// category this write did not touch.
   ///
-  /// Nothing is validated. `displayName` non-blank and `lastFour` four-or-empty
-  /// are the contract's stated preconditions and `AccountCreateFormGate` holds
-  /// them; see `AccountStore.create`.
+  /// **Validated here** (U15). It used to validate nothing and lean on
+  /// `AccountCreateFormGate`, which was one SwiftUI form's `Save` button - fine
+  /// while that was the only caller, and a silent data-integrity hole the
+  /// moment it was not. A malformed `lastFour` in particular has no visible
+  /// symptom: it is the `cardFragment` half of the `AccountBinding` key, so
+  /// the only sign is that mail auto-resolution quietly never matches.
+  ///
+  /// The name is stored trimmed. The gate already trims before deciding, so a
+  /// name that passes the gate and a name this stores were already the same
+  /// string in every case the form produces.
   @discardableResult
   public func create(
     displayName: String,
@@ -120,8 +127,17 @@ public final class SwiftDataAccountStore: AccountStore {
     lastFour: String,
     kindRaw: String
   ) throws -> Account {
+    let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedName.isEmpty else { throw AccountStoreError.blankName }
+    guard lastFour.isEmpty
+      || (lastFour.count == 4 && lastFour.allSatisfy { $0.isASCII && $0.isNumber })
+    else { throw AccountStoreError.malformedLastFour }
+    guard AccountKind(rawValue: kindRaw) != nil else {
+      throw AccountStoreError.unknownKind(kindRaw)
+    }
+
     let account = Account(
-      displayName: displayName,
+      displayName: trimmedName,
       institution: institution,
       lastFour: lastFour,
       kindRaw: kindRaw

@@ -167,6 +167,91 @@ final class AccountStoreTests: XCTestCase {
     XCTAssertEqual(try insights.accountSummaries(includeArchived: false).map(\.id), [created.id])
   }
 
+  // MARK: - U15: the store is the authority, not the form
+
+  /// `create` used to validate nothing at all and lean on the Save button of
+  /// one SwiftUI form. These are the rules moving to where they cannot be
+  /// bypassed.
+  func testAnUnknownKindIsRejected() throws {
+    let (store, context, _) = try makeStore()
+
+    XCTAssertThrowsError(
+      try store.create(
+        displayName: "Crypto thing", institution: "", lastFour: "", kindRaw: "crypto")
+    ) { error in
+      XCTAssertEqual(error as? AccountStoreError, .unknownKind("crypto"))
+    }
+
+    XCTAssertTrue(try context.fetch(FetchDescriptor<Account>()).isEmpty, "nothing persisted")
+  }
+
+  func testABlankNameIsRejected() throws {
+    let (store, _, _) = try makeStore()
+
+    for name in ["", "   ", "\n\t"] {
+      XCTAssertThrowsError(
+        try store.create(displayName: name, institution: "", lastFour: "", kindRaw: "bank")
+      ) { error in
+        XCTAssertEqual(error as? AccountStoreError, .blankName, name.debugDescription)
+      }
+    }
+  }
+
+  /// A partial `lastFour` has no visible symptom: it is the `cardFragment`
+  /// half of the `AccountBinding` key, so the only consequence is that mail
+  /// auto-resolution quietly never matches this account.
+  func testAPartialOrNonNumericLastFourIsRejected() throws {
+    let (store, _, _) = try makeStore()
+
+    for lastFour in ["471", "44711", "44a1", "\u{2022}\u{2022}4471"] {
+      XCTAssertThrowsError(
+        try store.create(
+          displayName: "HDFC", institution: "", lastFour: lastFour, kindRaw: "bank")
+      ) { error in
+        XCTAssertEqual(error as? AccountStoreError, .malformedLastFour, lastFour)
+      }
+    }
+  }
+
+  func testFourDigitsAndEmptyBothSucceedAndEveryKindIsAccepted() throws {
+    let (store, _, _) = try makeStore()
+
+    let withDigits = try store.create(
+      displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank")
+    XCTAssertEqual(withDigits.lastFour, "4471")
+    XCTAssertEqual(withDigits.kind, .bank)
+
+    let withoutDigits = try store.create(
+      displayName: "Travel wallet", institution: "", lastFour: "", kindRaw: "wallet")
+    XCTAssertEqual(withoutDigits.lastFour, "")
+    XCTAssertEqual(withoutDigits.kind, .wallet)
+
+    for kind in AccountKind.allCases {
+      XCTAssertNoThrow(
+        try store.create(
+          displayName: "A \(kind.rawValue)", institution: "", lastFour: "",
+          kindRaw: kind.rawValue))
+    }
+  }
+
+  /// The gate trims before deciding, so a name that passes it and a name this
+  /// stores must be the same string — otherwise " HDFC " is valid input that
+  /// renders with leading whitespace forever.
+  func testTheStoredNameIsTrimmed() throws {
+    let (store, _, _) = try makeStore()
+    let created = try store.create(
+      displayName: "  HDFC 4471  ", institution: "", lastFour: "", kindRaw: "bank")
+    XCTAssertEqual(created.displayName, "HDFC 4471")
+  }
+
+  /// A row that arrived from a future version of the app, or a hand-edited
+  /// one, must render rather than trap.
+  func testAnUnrecognisedStoredKindReadsAsBankRatherThanTrapping() {
+    let account = Account(displayName: "Odd", kindRaw: "crypto")
+    XCTAssertEqual(account.kind, .bank)
+    XCTAssertEqual(account.kindRaw, "crypto", "reading it does not rewrite the stored value")
+  }
+
   // MARK: -
 
   /// A fresh container per test, and one `InsightsCache` shared by the store
