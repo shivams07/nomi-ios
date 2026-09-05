@@ -30,7 +30,7 @@ public actor IngestPipeline {
 
   public init(
     store: any PipelineStore,
-    calendar: Calendar = .current,
+    calendar: Calendar = NomiCalendar.india,
     now: @escaping @Sendable () -> Date = { Date() }
   ) {
     self.store = store

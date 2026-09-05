@@ -38,7 +38,7 @@ public final class SwiftDataTransactionStore: TransactionStore {
   public init(
     context: ModelContext,
     coordinator: WriteCoordinator,
-    calendar: Calendar = .current,
+    calendar: Calendar = NomiCalendar.india,
     now: @escaping () -> Date = { Date() }
   ) {
     self.context = context
