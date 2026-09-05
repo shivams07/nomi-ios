@@ -197,13 +197,15 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
   /// Only these are worth a reconnect. `commandFailed` and `malformedResponse`
   /// would fail identically on a fresh connection, and retrying an
   /// `authenticationFailed` against a provider that counts failed logins is how
-  /// an account gets locked.
+  /// an account gets locked. `invalidCredentials` never reached a socket at
+  /// all, so there is nothing to reconnect to and the second attempt would be
+  /// rejected by the same guard.
   private static func meansTheSocketIsGone(_ error: Error) -> Bool {
     guard let transportError = error as? IMAPTransportError else { return false }
     switch transportError {
     case .notConnected, .connectionClosed, .serverClosedMidCommand:
       return true
-    case .authenticationFailed, .commandFailed, .malformedResponse:
+    case .authenticationFailed, .commandFailed, .malformedResponse, .invalidCredentials:
       return false
     }
   }
