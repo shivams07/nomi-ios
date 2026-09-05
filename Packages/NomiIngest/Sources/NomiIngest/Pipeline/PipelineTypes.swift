@@ -58,6 +58,13 @@ public struct TransactionSnapshot: Sendable, Equatable, Identifiable {
   public var createdAt: Date
   public var updatedAt: Date
 
+  // C4. Insert-time facts, same standing as `dedupeKey`: written by
+  // `creating(from:)` and never by `MergeResolution`. They are on the snapshot
+  // only so the store can round-trip them.
+  public var senderDomain: String?
+  public var cardFragment: String?
+  public var needsReviewReason: NeedsReviewReason?
+
   public init(
     id: UUID = UUID(),
     date: Date,
@@ -79,7 +86,10 @@ public struct TransactionSnapshot: Sendable, Equatable, Identifiable {
     needsReview: Bool = false,
     dedupeKey: String,
     createdAt: Date,
-    updatedAt: Date
+    updatedAt: Date,
+    senderDomain: String? = nil,
+    cardFragment: String? = nil,
+    needsReviewReason: NeedsReviewReason? = nil
   ) {
     self.id = id
     self.date = date
@@ -102,6 +112,9 @@ public struct TransactionSnapshot: Sendable, Equatable, Identifiable {
     self.dedupeKey = dedupeKey
     self.createdAt = createdAt
     self.updatedAt = updatedAt
+    self.senderDomain = senderDomain
+    self.cardFragment = cardFragment
+    self.needsReviewReason = needsReviewReason
   }
 
   public var direction: Direction {
@@ -137,7 +150,10 @@ public struct TransactionSnapshot: Sendable, Equatable, Identifiable {
       needsReview: draft.needsReview,
       dedupeKey: derived.dedupeKey,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      senderDomain: draft.senderDomain,
+      cardFragment: draft.cardFragment,
+      needsReviewReason: draft.needsReviewReason
     )
   }
 

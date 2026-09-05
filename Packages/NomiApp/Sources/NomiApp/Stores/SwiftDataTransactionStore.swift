@@ -121,15 +121,113 @@ public final class SwiftDataTransactionStore: TransactionStore {
     coordinator.didWrite(affectedCategoryIDs: Set([previous, categoryID].compactMap { $0 }))
   }
 
+  /// Assigns the account, and - for a mail row that knows where it came from -
+  /// learns from it (C4).
+  ///
+  /// Same signature it has always had. What changed is the effects: the user
+  /// telling the app "this HDFC alert ending 4471 is my HDFC account" is the
+  /// only moment the app can learn that, and before this it was thrown away
+  /// after one row.
+  ///
+  /// Three things happen, in order:
+  ///
+  /// 1. **Learn.** Upsert `(senderDomain, cardFragment) -> accountID`, so the
+  ///    next ingest resolves it at insert time with no prompt.
+  /// 2. **Apply to siblings.** Every other email row with the same key and no
+  ///    account gets it too. Assigning one of forty identical-looking alerts
+  ///    and being asked forty times is the thing this exists to stop.
+  /// 3. **Un-flag, narrowly.** Only rows whose flag *was* the missing account.
+  ///
+  /// `setAccount(_, to: nil)` un-assigns the one row and learns nothing.
+  /// Bindings are never deleted here: the user is correcting a row, not
+  /// necessarily retracting what they taught.
+  ///
+  /// The user's choice is trusted even when `Account.lastFour` disagrees with
+  /// `cardFragment` - they can see both and the app cannot.
   public func setAccount(_ id: UUID, to accountID: UUID?) throws {
     guard let row = try row(id: id) else { return }
+    let timestamp = now()
     row.accountID = accountID
-    row.updatedAt = now()
+    row.updatedAt = timestamp
+
+    var touched: [Transaction] = [row]
+
+    if let accountID,
+      row.source == .email,
+      let domain = row.senderDomain,
+      let fragment = row.cardFragment
+    {
+      try learnBinding(domain: domain, fragment: fragment, accountID: accountID)
+
+      for sibling in try unassignedSiblings(domain: domain, fragment: fragment, excluding: id) {
+        sibling.accountID = accountID
+        sibling.updatedAt = timestamp
+        touched.append(sibling)
+      }
+    }
+
+    // `mergedCount == 1` is the proxy for "no pipeline flag has been added
+    // since insert". Every pipeline-side flag - a near merge, an account
+    // conflict - arrives with a second `SourceRef`, and `merging()` bumps
+    // `mergedCount` for every new ref. A row that has been merged may carry a
+    // reason that is no longer the whole story, so this leaves it alone.
+    for transaction in touched
+    where transaction.needsReviewReason == .unidentifiedAccount
+      && transaction.mergedCount == 1
+      && transaction.accountID != nil
+    {
+      transaction.needsReview = false
+    }
+
     try context.save()
     // No category moved, so the observer gets an empty set rather than a wrong
     // one — `IngestPipeline.ruleDeleted` makes the same call for the same
     // reason.
     coordinator.didWrite()
+  }
+
+  /// Upsert. Every duplicate for the key is updated rather than just the first,
+  /// so two devices that each wrote a binding converge on the user's latest
+  /// answer instead of one of them keeping a stale one (R5: no unique
+  /// constraints under CloudKit).
+  private func learnBinding(domain: String, fragment: String, accountID: UUID) throws {
+    let existing = try context.fetch(
+      FetchDescriptor<AccountBinding>(
+        predicate: #Predicate<AccountBinding> {
+          $0.senderDomain == domain && $0.cardFragment == fragment
+        }
+      ))
+
+    guard !existing.isEmpty else {
+      context.insert(
+        AccountBinding(senderDomain: domain, cardFragment: fragment, accountID: accountID))
+      return
+    }
+    for binding in existing { binding.accountID = accountID }
+  }
+
+  /// Email rows sharing the key that nobody has assigned an account to.
+  /// Deliberately not rows that already have one: a row the user assigned
+  /// elsewhere is not this call's to overwrite.
+  private func unassignedSiblings(
+    domain: String, fragment: String, excluding id: UUID
+  ) throws -> [Transaction] {
+    let email = IngestSource.email.rawValue
+    // Bound as optionals deliberately: `Transaction.senderDomain` and
+    // `cardFragment` are `String?`, and `#Predicate` will not promote a
+    // non-optional operand for you the way ordinary Swift does.
+    let domain: String? = domain
+    let fragment: String? = fragment
+    return try context.fetch(
+      FetchDescriptor<Transaction>(
+        predicate: #Predicate<Transaction> {
+          $0.id != id
+            && $0.accountID == nil
+            && $0.sourceRaw == email
+            && $0.senderDomain == domain
+            && $0.cardFragment == fragment
+        }
+      ))
   }
 
   public func delete(_ id: UUID) throws {

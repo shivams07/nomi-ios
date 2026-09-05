@@ -87,6 +87,24 @@ final class DedupeKeyIndependenceTests: XCTestCase {
       DraftDerivation.derive(fromMail, calendar: Fixture.calendar).dedupeKey)
   }
 
+  /// C4's three new draft fields must not reach the key either. Same
+  /// version-drift failure as the UPI fields: the extractor learns to read a
+  /// fragment it used to miss, and every new row gets a different key from its
+  /// historical twin.
+  func testTheThreeInsertTimeMailFieldsDoNotReachTheKey() {
+    let plain = Fixture.draft(description: upiNarration, source: .email)
+    var stamped = plain
+    stamped.senderDomain = "alerts.hdfcbank.net"
+    stamped.cardFragment = "4471"
+    stamped.needsReviewReason = .unidentifiedAccount
+
+    let a = DraftDerivation.derive(plain, calendar: Fixture.calendar)
+    let b = DraftDerivation.derive(stamped, calendar: Fixture.calendar)
+
+    XCTAssertNotEqual(plain, stamped, "the drafts really do differ")
+    XCTAssertEqual(a.dedupeKey, b.dedupeKey)
+  }
+
   func testAnIngesterThatPreFillsADerivedFieldIsReportedAsAViolation() {
     // `DraftDerivation.derive` traps on this in a debug build, which is the
     // point — but a trap cannot be asserted on, so the rule is tested here.

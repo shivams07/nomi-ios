@@ -34,15 +34,22 @@ public actor MailStack {
 
   private let persisting: CursorPersistingMailConnectionService
 
+  /// `bindings` is what closes C4's loop on the ingest side: the extractor asks
+  /// it for an account at insert time, so a message arriving after the user has
+  /// taught the app one lands already assigned and unflagged. It defaults to
+  /// `NoAccountBindings` - the pre-C4 behaviour - so a test that does not care
+  /// need not supply one.
   public init(
     fetcher: any MailFetching,
     pipeline: any DraftIngesting,
     credentials: any MailCredentialStoring,
-    preferences: any KeyValueStoring
+    preferences: any KeyValueStoring,
+    bindings: any AccountBindingResolving = NoAccountBindings()
   ) {
     let engine = MailSyncEngine(
       fetcher: fetcher,
       pipeline: pipeline,
+      extractor: MailTransactionExtractor(bindings: bindings),
       cursor: Self.loadCursor(from: preferences)
     )
 
