@@ -39,3 +39,17 @@ public enum TransactionDetailLogic {
     return reasons
   }
 }
+
+/// M6: the detail screen's "UPI" section prose. Full words, unlike
+/// `TransactionRow.upiKindCapsuleText`'s row-width "P2P"/"Merchant" capsule —
+/// the two are different presentations of the same raw value, not one
+/// reusing the other.
+public enum UPIDisplay {
+  public static func kindLabel(_ kindRaw: String) -> String? {
+    switch kindRaw {
+    case "p2p": return "Person"
+    case "p2m": return "Merchant"
+    default: return nil
+    }
+  }
+}

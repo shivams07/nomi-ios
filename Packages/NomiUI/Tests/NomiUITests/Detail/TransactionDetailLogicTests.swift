@@ -66,4 +66,18 @@ final class TransactionDetailLogicTests: XCTestCase {
       TransactionDetailLogic.flagReasons(accountID: nil, needsReview: true, mergedCount: 3),
       ["No account assigned", "Needs review", "Merged from 3 sources"])
   }
+
+  // MARK: - M6: UPIDisplay
+
+  func testKindLabelForP2PIsPerson() {
+    XCTAssertEqual(UPIDisplay.kindLabel("p2p"), "Person")
+  }
+
+  func testKindLabelForP2MIsMerchant() {
+    XCTAssertEqual(UPIDisplay.kindLabel("p2m"), "Merchant")
+  }
+
+  func testKindLabelForAnUnknownRawValueIsNil() {
+    XCTAssertNil(UPIDisplay.kindLabel("unknown"))
+  }
 }
