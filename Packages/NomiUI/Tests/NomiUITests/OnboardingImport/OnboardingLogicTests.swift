@@ -34,6 +34,28 @@ final class OnboardingLogicTests: XCTestCase {
     XCTAssertTrue(ConnectFormGate.isValid(provider: .generic, address: "a@b.com", host: "mail.example.com", password: "secret"))
   }
 
+  /// B6: a pasted Google app password routinely carries a trailing newline
+  /// no typed field would.
+  func testNormalizedTrimsWhitespaceAndNewlines() {
+    XCTAssertEqual(ConnectFormGate.normalized(" abcd efgh \n"), "abcd efgh")
+  }
+
+  func testConnectFormRejectsAnEmbeddedNewlineInThePassword() {
+    XCTAssertFalse(ConnectFormGate.isValid(provider: .gmail, address: "a@b.com", host: "", password: "ab\ncd"))
+  }
+
+  func testConnectFormRejectsAnEmbeddedNewlineInTheAddress() {
+    XCTAssertFalse(ConnectFormGate.isValid(provider: .gmail, address: "ab\ncd", host: "", password: "secret"))
+  }
+
+  func testConnectFormIsFalseForAWhitespaceOnlyPassword() {
+    XCTAssertFalse(ConnectFormGate.isValid(provider: .gmail, address: "a@b.com", host: "", password: "   "))
+  }
+
+  func testConnectFormAcceptsATrailingNewlineOnceTrimmed() {
+    XCTAssertTrue(ConnectFormGate.isValid(provider: .gmail, address: "a@b.com", host: "", password: "secret\n"))
+  }
+
   func testMailErrorMessagesAreNamedNotGeneric() {
     XCTAssertTrue(MailErrorMessage.text(for: .authenticationFailed).lowercased().contains("password"))
     XCTAssertTrue(MailErrorMessage.text(for: .connectionFailed).lowercased().contains("connection") || MailErrorMessage.text(for: .connectionFailed).lowercased().contains("reach"))

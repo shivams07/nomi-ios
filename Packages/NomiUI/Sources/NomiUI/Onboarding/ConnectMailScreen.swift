@@ -17,6 +17,7 @@ public struct ConnectMailScreen: View {
   @State private var password = ""
   @State private var isConnecting = false
   @State private var didAttemptOnce = false
+  @State private var errorMessage: String?
 
   public init(mailConnectionService: MailConnectionService, onBackfillStart: (() -> Void)? = nil) {
     self.mailConnectionService = mailConnectionService
@@ -49,6 +50,13 @@ public struct ConnectMailScreen: View {
         }
       }
     }
+    .alert(
+      "Something went wrong",
+      isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }),
+      presenting: errorMessage,
+      actions: { _ in Button("OK", role: .cancel) {} },
+      message: { message in Text(message) }
+    )
   }
 
   private var formView: some View {
@@ -122,12 +130,8 @@ public struct ConnectMailScreen: View {
         }
       }
       Section {
-        Button("Sync now") {
-          Task { try? await mailConnectionService.syncNow() }
-        }
-        Button("Disconnect", role: .destructive) {
-          Task { try? await mailConnectionService.disconnect() }
-        }
+        Button("Sync now") { syncNow() }
+        Button("Disconnect", role: .destructive) { disconnect() }
       }
       Section {
         // §1.1, restated here for the already-connected state: disconnecting
@@ -143,11 +147,41 @@ public struct ConnectMailScreen: View {
   private func connect() {
     didAttemptOnce = true
     isConnecting = true
-    let resolvedHost = provider.fixedHost ?? host
-    let credentials = IMAPCredentials(host: resolvedHost, port: provider.port, address: address, password: password)
+    // Trimmed values only — a pasted app password or address carrying a
+    // stray newline must never reach `IMAPCredentials`. `try?` here is
+    // deliberate, not an oversight: a failed connect already renders through
+    // `connectionState`'s `.failed` case above, so a second, separate alert
+    // would just repeat the same message.
+    let resolvedHost = provider.fixedHost ?? ConnectFormGate.normalized(host)
+    let credentials = IMAPCredentials(
+      host: resolvedHost,
+      port: provider.port,
+      address: ConnectFormGate.normalized(address),
+      password: ConnectFormGate.normalized(password)
+    )
     Task {
       defer { isConnecting = false }
       try? await mailConnectionService.connect(credentials)
+    }
+  }
+
+  private func syncNow() {
+    Task {
+      do {
+        try await mailConnectionService.syncNow()
+      } catch {
+        errorMessage = "Couldn't sync right now. Try again in a moment."
+      }
+    }
+  }
+
+  private func disconnect() {
+    Task {
+      do {
+        try await mailConnectionService.disconnect()
+      } catch {
+        errorMessage = "Couldn't disconnect right now. Try again in a moment."
+      }
     }
   }
 }
@@ -176,6 +210,23 @@ public struct ConnectMailScreen: View {
 #Preview("Connect mail — connecting, dark") {
   NavigationStack {
     ConnectMailScreen(mailConnectionService: ConnectingFakeMailConnectionService())
+  }
+  .preferredColorScheme(.dark)
+}
+
+/// `errorMessage` is private `@State`, not exposed via `init` — there is no
+/// existing precedent in this codebase for seeding another view's
+/// presented-alert state from a preview, same reasoning as `LedgerScreen`'s
+/// delete-error preview. `.constant(true)` overlays the exact alert
+/// `syncNow`/`disconnect` present, atop the real connected-state screen.
+#Preview("Connect mail — sync error alert, dark") {
+  NavigationStack {
+    ConnectMailScreen(mailConnectionService: ConnectedFakeMailConnectionService())
+  }
+  .alert("Something went wrong", isPresented: .constant(true)) {
+    Button("OK", role: .cancel) {}
+  } message: {
+    Text("Couldn't sync right now. Try again in a moment.")
   }
   .preferredColorScheme(.dark)
 }
