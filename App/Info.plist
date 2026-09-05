@@ -21,6 +21,12 @@
   <key>CFBundleVersion</key>
   <string>1</string>
 
+  <!-- System TLS only (URLSession / NIOSSL). No proprietary or non-exempt
+       cryptography, so the export-compliance question is answered at build
+       time rather than per upload. -->
+  <key>ITSAppUsesNonExemptEncryption</key>
+  <false/>
+
   <key>UIUserInterfaceStyle</key>
   <string>Dark</string>
 
