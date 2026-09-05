@@ -334,6 +334,12 @@ public actor NWIMAPFetcher: MailFetching {
     await acquire()
     defer { release() }
 
+    // Before the socket, not merely before LOGIN. A credential that cannot be
+    // encoded is not going to become valid by connecting first, and failing
+    // here means no byte is sent and no connection is opened - which is what
+    // makes "nothing was smuggled onto the wire" checkable rather than argued.
+    try Self.rejectUnsendable(credentials)
+
     reader.reset()
     isConnected = false
     selectedMailbox = nil
@@ -360,6 +366,23 @@ public actor NWIMAPFetcher: MailFetching {
     }
 
     isConnected = true
+  }
+
+  /// CR and LF are IMAP's command terminator, so neither can appear inside a
+  /// LOGIN argument - `IMAPCommand.quoted` escapes `\` and `"` and has no
+  /// escape for them, and RFC 3501's quoted-string grammar has none either.
+  ///
+  /// Rejected rather than stripped: silently editing someone's password
+  /// produces an authentication failure they cannot explain, and silently
+  /// editing an address sends mail credentials to an account they did not
+  /// name. The trimming of a *pasted* value belongs in the form, not here.
+  static func rejectUnsendable(_ credentials: IMAPCredentials) throws {
+    guard !credentials.address.contains(where: \.isNewline) else {
+      throw IMAPTransportError.invalidCredentials("The address contains a line break.")
+    }
+    guard !credentials.password.contains(where: \.isNewline) else {
+      throw IMAPTransportError.invalidCredentials("The password contains a line break.")
+    }
   }
 
   /// `LOGOUT`, then close. The LOGOUT is best-effort: if the server has already

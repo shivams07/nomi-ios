@@ -245,6 +245,10 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
         return .authenticationFailed
       case .notConnected, .connectionClosed, .serverClosedMidCommand:
         return .connectionFailed
+      case .invalidCredentials(let reason):
+        // Surfaced as copy the user can act on, not a `describing:` dump - this
+        // is the one transport error that is always the user's own input.
+        return .unknown(reason)
       case .commandFailed, .malformedResponse:
         return .unknown(String(describing: transportError))
       }
