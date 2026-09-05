@@ -169,8 +169,7 @@ final class FileImportServiceImplTests: XCTestCase {
     }
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("nomi-import-\(UUID().uuidString).csv")
-    try lines.joined(separator: "
-").write(to: url, atomically: true, encoding: .utf8)
+    try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
     return url
   }
 
