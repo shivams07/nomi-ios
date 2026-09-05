@@ -34,6 +34,29 @@ public protocol InsightsStore: AnyObject {
   func accountSummaries(includeArchived: Bool) throws -> [AccountSummary]
   func budgetProgress(year: Int, month: Int) throws -> [BudgetProgress]
   func transactions(in period: InsightPeriod) throws -> [Transaction]
+
+  /// Newest first, at most `limit`. The dashboard's "recent" card (F2).
+  ///
+  /// It replaces `transactions(in: .allTime)` there, which materialised the
+  /// whole ledger on every write to render five rows. A store backed by a
+  /// database answers this with a `fetchLimit`; the default below is for
+  /// stubs only.
+  func recentTransactions(limit: Int) throws -> [Transaction]
+}
+
+extension InsightsStore {
+  /// Default for preview and test stubs that hold a handful of rows, so
+  /// adding this requirement did not have to reach into files outside the
+  /// unit that added it. **Every store that talks to a database overrides
+  /// it** - inheriting this one would reintroduce exactly the all-time fetch
+  /// F2 removes.
+  public func recentTransactions(limit: Int) throws -> [Transaction] {
+    Array(
+      try transactions(in: .allTime)
+        .sorted { $0.date > $1.date }
+        .prefix(max(0, limit))
+    )
+  }
 }
 
 @MainActor

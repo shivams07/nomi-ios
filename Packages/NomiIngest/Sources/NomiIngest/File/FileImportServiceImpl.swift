@@ -101,8 +101,23 @@ public final class FileImportServiceImpl: FileImportService, @unchecked Sendable
       )
     }
 
-    let result = try await pipeline.ingest(drafts)
-    return ImportSummary(created: result.created, merged: result.merged, skipped: skipped)
+    // B2. One `ingest` call per 50 drafts, not one per file. The pipeline
+    // serialises every call behind a single actor and holds that lock for the
+    // whole batch, so a 5,000-row statement used to block a mail sync for the
+    // length of 5,000 merge-candidate queries. Chunking releases the lock
+    // between batches; the total work is unchanged.
+    //
+    // The batch size is `MailSyncEngine.fetchBatchSize` rather than a second
+    // constant, because the two write paths queue against each other and a
+    // different bound on each side would only be confusing.
+    var created = 0
+    var merged = 0
+    for batch in drafts.slices(of: MailSyncEngine.fetchBatchSize) {
+      let result = try await pipeline.ingest(batch)
+      created += result.created
+      merged += result.merged
+    }
+    return ImportSummary(created: created, merged: merged, skipped: skipped)
   }
 
   public func saveMapping(_ mapping: ColumnMapping, signature: String, bankLabel: String) throws {
