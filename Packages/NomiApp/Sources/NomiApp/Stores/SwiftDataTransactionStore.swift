@@ -80,7 +80,13 @@ public final class SwiftDataTransactionStore: TransactionStore {
     // A category the user picked is `.manual` and `RuleEngine.apply` leaves it
     // alone; one they left blank is `.none` and a rule may claim it. Same
     // precedence the pipeline gives an imported row.
-    if let ruled = RuleEngine.apply(try ruleSnapshots(), to: snapshot) {
+    // `precedenceOrdered` here because `RuleEngine.apply` no longer sorts for
+    // its caller (U10). Not a stylistic wrap: without it a manual entry would
+    // be categorised by whichever rule the fetch happened to return first,
+    // which is wrong precedence with nothing to indicate it.
+    if let ruled = RuleEngine.apply(
+      RuleEngine.precedenceOrdered(try ruleSnapshots()), to: snapshot)
+    {
       snapshot = ruled
     }
 

@@ -61,7 +61,10 @@ public actor IngestPipeline {
   }
 
   private func performIngest(_ drafts: [TransactionDraft]) async throws -> IngestBatchResult {
-    let rules = try await store.rules()
+    // Ordered once per pass, not once per row. `RuleEngine.firstMatch` used to
+    // sort internally, so a batch of 50 drafts sorted the rule set 100 times
+    // to answer the same question 100 times.
+    let rules = RuleEngine.precedenceOrdered(try await store.rules())
     let timestamp = now()
 
     var working: [UUID: TransactionSnapshot] = [:]
@@ -154,7 +157,7 @@ public actor IngestPipeline {
   }
 
   private func performReapplyRules() async throws -> RuleApplyResult {
-    let rules = try await store.rules()
+    let rules = RuleEngine.precedenceOrdered(try await store.rules())
     let rows = try await store.rulePassCandidates()
     let timestamp = now()
 

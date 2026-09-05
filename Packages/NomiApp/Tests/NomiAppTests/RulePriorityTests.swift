@@ -162,6 +162,76 @@ final class RulePriorityTests: XCTestCase {
 
   /// A fresh container per test.
   ///
+  // MARK: - B5: the narrowed fetch answers what the full scan answered
+
+  /// `preview` now filters the fetch on the pattern's literal prefix instead of
+  /// materialising every row. The only thing that matters is that it returns
+  /// the same number — a narrowing that loses a match is a preview that lies
+  /// about what a rule will do.
+  ///
+  /// Both paths are covered: `UPI/PM*` has a literal prefix and takes the
+  /// narrowed fetch, `*SWIGGY*` has none and falls back to the full scan.
+  func testPreviewMatchesAFullScanOnBothThePrefixedAndUnprefixedPaths() throws {
+    let (store, context) = try makeStore()
+    try seedTransactions(in: context)
+
+    for pattern in ["UPI/PM*", "*SWIGGY*", "UPI/PM*SWIGGY*", "*", "NOTHINGLIKETHIS*"] {
+      let all = try context.fetch(FetchDescriptor<Transaction>())
+      let expected = all.filter {
+        globMatches(pattern: pattern.uppercased(), value: $0.normalizedDescription)
+      }.count
+
+      XCTAssertEqual(try store.preview(pattern: pattern), expected, pattern)
+    }
+  }
+
+  /// A lowercase pattern previewed as zero, which reads as "this pattern is
+  /// wrong" rather than "this app ignores lowercase". FAILS on `main`.
+  func testPreviewCountsALowercasePatternTheSameAsItsUppercaseForm() throws {
+    let (store, context) = try makeStore()
+    try seedTransactions(in: context)
+
+    let upper = try store.preview(pattern: "*SWIGGY*")
+    XCTAssertGreaterThan(upper, 0, "the fixture must actually contain a match")
+    XCTAssertEqual(try store.preview(pattern: "*swiggy*"), upper)
+    XCTAssertEqual(try store.preview(pattern: "*Swiggy*"), upper)
+  }
+
+  /// `preview` counts manually-categorised rows too — the user is asking what
+  /// a pattern hits, and silently excluding their own rows would read as the
+  /// pattern being wrong. The narrowed fetch must not quietly change that.
+  func testPreviewStillCountsManuallyCategorisedRows() throws {
+    let (store, context) = try makeStore()
+    context.insert(
+      Transaction(
+        descriptionText: "UPI/PM/SWIGGY", normalizedDescription: "UPI/PM/SWIGGY",
+        categorySourceRaw: CategorySource.manual.rawValue, dedupeKey: "m1"))
+    try context.save()
+
+    XCTAssertEqual(try store.preview(pattern: "*SWIGGY*"), 1)
+    XCTAssertEqual(try store.preview(pattern: "UPI/PM*"), 1)
+  }
+
+  private func seedTransactions(in context: ModelContext) throws {
+    let narrations = [
+      "UPI/PM/SWIGGY/HDFC",
+      "UPI/PM/ZOMATO/HDFC",
+      "UPI/PP/SWIGGY/ICICI",
+      "NEFT SALARY",
+      "POS SWIGGY INSTAMART",
+    ]
+    for (index, narration) in narrations.enumerated() {
+      context.insert(
+        Transaction(
+          descriptionText: narration,
+          normalizedDescription: narration,
+          dedupeKey: "k\(index)"))
+    }
+    try context.save()
+  }
+
+  // MARK: -
+
   /// Deliberately not `InMemoryModelContainer.shared`: these tests are about
   /// what `create` does given a particular set of existing priorities, so one
   /// test's rules leaking into the next would make the assertions meaningless.
