@@ -22,9 +22,15 @@ public struct BudgetsScreen: View {
     self.insightsStore = insightsStore
   }
 
-  private var progress: [BudgetProgress] {
+  /// `nil` means the fetch threw — distinct from a legitimate zero-budgets
+  /// month, which is `[]` and renders `emptyStateSection`.
+  private var progress: [BudgetProgress]? {
     let (year, month) = BudgetPeriod.current(from: now)
-    return (try? insightsStore.budgetProgress(year: year, month: month)) ?? []
+    do {
+      return try insightsStore.budgetProgress(year: year, month: month)
+    } catch {
+      return nil
+    }
   }
 
   private var budgetedCategoryIDs: Set<UUID> {
@@ -41,20 +47,24 @@ public struct BudgetsScreen: View {
 
   public var body: some View {
     List {
-      if progress.isEmpty {
-        emptyStateSection
-      } else {
-        Section("Budgets") {
-          ForEach(progress) { item in
-            row(for: item)
-              .contentShape(Rectangle())
-              .onTapGesture {
-                if let category = categories.first(where: { $0.id == item.id }) {
-                  editingCategory = category
+      if let progress {
+        if progress.isEmpty {
+          emptyStateSection
+        } else {
+          Section("Budgets") {
+            ForEach(progress) { item in
+              row(for: item)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                  if let category = categories.first(where: { $0.id == item.id }) {
+                    editingCategory = category
+                  }
                 }
-              }
+            }
           }
         }
+      } else {
+        loadFailedSection
       }
       Section {
         Button("Add Budget") { isAddingBudget = true }
@@ -79,6 +89,14 @@ public struct BudgetsScreen: View {
         availableCategories: unbudgetedCategories,
         currentAmountMinor: 0
       )
+    }
+  }
+
+  private var loadFailedSection: some View {
+    Section {
+      Text("Couldn't load budgets")
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.textTertiary)
     }
   }
 
@@ -150,5 +168,26 @@ enum BudgetRowSummary {
     )
   }
   .modelContainer(BudgetsPreviewSupport.makeContainer(budgets: BudgetsPreviewSupport.sampleBudgets))
+  .preferredColorScheme(.dark)
+}
+
+private struct BudgetsScreenLoadFailure: Error {}
+
+/// Only `budgetProgress` throws — this screen never calls the other
+/// `InsightsStore` methods, so they can return empty rather than also throw.
+@MainActor
+private final class FailingBudgetProgressInsightsStore: InsightsStore {
+  func insights(for period: InsightPeriod) throws -> PeriodInsights { throw BudgetsScreenLoadFailure() }
+  func trend(months: Int) throws -> [MonthBucket] { [] }
+  func accountSummaries(includeArchived: Bool) throws -> [AccountSummary] { [] }
+  func budgetProgress(year: Int, month: Int) throws -> [BudgetProgress] { throw BudgetsScreenLoadFailure() }
+  func transactions(in period: InsightPeriod) throws -> [NomiCore.Transaction] { [] }
+}
+
+#Preview("Budgets — failed to load, dark") {
+  NavigationStack {
+    BudgetsScreen(budgetStore: FakeBudgetStore(budgets: []), insightsStore: FailingBudgetProgressInsightsStore())
+  }
+  .modelContainer(BudgetsPreviewSupport.makeContainer(budgets: []))
   .preferredColorScheme(.dark)
 }

@@ -15,6 +15,7 @@ struct RuleEditorSheet: View {
   @State private var pattern: String
   @State private var categoryID: UUID?
   @State private var matchCount = 0
+  @State private var matchCountLoadFailed = false
   @State private var errorMessage: String?
 
   init(ruleStore: RuleStore, categories: [NomiCore.Category], rule: NomiCore.Rule?) {
@@ -37,6 +38,9 @@ struct RuleEditorSheet: View {
             #if os(iOS)
             .textInputAutocapitalization(.characters)
             #endif
+          Text("Digits never match — they are stripped before rules run.")
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.textTertiary)
         }
         Section("Category") {
           Picker("Category", selection: $categoryID) {
@@ -46,9 +50,15 @@ struct RuleEditorSheet: View {
           }
         }
         Section {
-          Text(RuleMatchSummary.text(for: matchCount))
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.textTertiary)
+          if matchCountLoadFailed {
+            Text("Couldn't load match count")
+              .nomiTextStyle(.caption)
+              .foregroundStyle(NomiColor.textTertiary)
+          } else {
+            Text(RuleMatchSummary.text(for: matchCount))
+              .nomiTextStyle(.caption)
+              .foregroundStyle(NomiColor.textTertiary)
+          }
         }
         if let errorMessage {
           Section {
@@ -76,7 +86,12 @@ struct RuleEditorSheet: View {
   }
 
   private func updateMatchCount(_ pattern: String) {
-    matchCount = (try? ruleStore.preview(pattern: pattern)) ?? 0
+    do {
+      matchCount = try ruleStore.preview(pattern: pattern)
+      matchCountLoadFailed = false
+    } catch {
+      matchCountLoadFailed = true
+    }
   }
 
   private func save() {
@@ -96,5 +111,32 @@ struct RuleEditorSheet: View {
 
 #Preview("Rule editor — create, dark") {
   RuleEditorSheet(ruleStore: FakeRuleStore(), categories: EntryRulesPreviewSupport.makeCategories(), rule: nil)
+    .preferredColorScheme(.dark)
+}
+
+private struct RuleEditorMatchCountFailure: Error {}
+
+/// `preview(pattern:)` always throws, so `.onAppear`'s initial
+/// `updateMatchCount` call surfaces the "Couldn't load match count" state
+/// this unit added as soon as the canvas renders.
+@MainActor
+private final class AlwaysFailingPreviewRuleStore: RuleStore {
+  @discardableResult
+  func create(pattern: String, categoryID: UUID) throws -> RuleApplyResult {
+    RuleApplyResult(matched: 0, recategorized: 0)
+  }
+
+  @discardableResult
+  func update(_ id: UUID, pattern: String, categoryID: UUID) throws -> RuleApplyResult {
+    RuleApplyResult(matched: 0, recategorized: 0)
+  }
+
+  func delete(_ id: UUID) throws {}
+  func reorder(_ orderedIDs: [UUID]) throws {}
+  func preview(pattern: String) throws -> Int { throw RuleEditorMatchCountFailure() }
+}
+
+#Preview("Rule editor — match count fails to load, dark") {
+  RuleEditorSheet(ruleStore: AlwaysFailingPreviewRuleStore(), categories: EntryRulesPreviewSupport.makeCategories(), rule: nil)
     .preferredColorScheme(.dark)
 }
