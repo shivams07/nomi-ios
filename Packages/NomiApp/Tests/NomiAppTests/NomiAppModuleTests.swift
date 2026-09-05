@@ -11,22 +11,26 @@ final class NomiAppModuleTests: XCTestCase {
 
   // MARK: - B11: the fallback reports the mode it actually used
 
-  /// Whichever branch it takes, the two halves of the answer have to agree:
-  /// `.cloudKit` carries no reason, `.localOnly` carries a non-empty one, and
-  /// the container that comes back works either way. A fallback that returned
-  /// `.cloudKit` would put "iCloud sync: On" in front of a user whose data is
-  /// going nowhere, which is worse than the silence this replaces.
-  func testTheReportedModeAgreesWithItselfAndTheContainerWorks() throws {
-    let storage = NomiModelContainer.makeWithLocalFallback()
+  /// **Nothing here constructs a real CloudKit container**, and that is not
+  /// squeamishness: the first version of these tests called
+  /// `makeWithLocalFallback()` with its default maker, and the CloudKit
+  /// mirroring delegate trapped the whole test process on the runner (signal
+  /// 5, CI run 33994342474) after container construction had already returned
+  /// successfully. The maker is injected instead, so both branches are
+  /// reachable without CloudKit being involved at all.
+  private struct NoCloudKit: Error {}
 
-    switch storage.mode {
-    case .cloudKit:
-      XCTAssertNil(storage.mode.reason)
-      XCTAssertTrue(storage.mode.isSyncing)
-    case .localOnly(let reason):
-      XCTAssertFalse(reason.isEmpty, "a fallback that cannot say why is not much better than a print")
-      XCTAssertFalse(storage.mode.isSyncing)
+  /// The failure branch, end to end: a maker that throws must produce
+  /// `.localOnly`, must carry a reason a user could read out, and must still
+  /// hand back a container that works — falling back loses sync, not data.
+  func testAFailingCloudKitMakerFallsBackToAWorkingLocalStoreAndSaysWhy() throws {
+    let storage = NomiModelContainer.makeWithLocalFallback(cloudKit: { throw NoCloudKit() })
+
+    guard case .localOnly(let reason) = storage.mode else {
+      return XCTFail("expected the local fallback when the maker throws, got \(storage.mode)")
     }
+    XCTAssertFalse(reason.isEmpty, "a fallback that cannot say why is not much better than a print")
+    XCTAssertFalse(storage.mode.isSyncing)
 
     let context = ModelContext(storage.container)
     let id = UUID()
@@ -37,19 +41,23 @@ final class NomiAppModuleTests: XCTestCase {
       "falling back loses sync, not data")
   }
 
-  /// `swift test` has no iCloud entitlement, so the CloudKit container cannot
-  /// construct here and this is the fallback path end to end — the one
-  /// environment in this project where B11's branch is actually reachable.
-  ///
-  /// If this ever goes red it is worth reading rather than deleting: it would
-  /// mean the runner gained an entitlement, or that `makeCloudKit()` stopped
-  /// failing where we assumed it does.
-  func testTheTestRunnerHasNoEntitlementSoItFallsBackAndSaysWhy() {
-    let storage = NomiModelContainer.makeWithLocalFallback()
+  /// The success branch. The container handed back is a local one — this test
+  /// is about the *reporting*, not about reaching iCloud — but the point holds
+  /// either way: a maker that returns without throwing must be reported as
+  /// `.cloudKit` and must carry no reason, or Settings would show a failure
+  /// caption to a user who has none.
+  func testAMakerThatSucceedsIsReportedAsCloudKitWithNoReason() throws {
+    let storage = NomiModelContainer.makeWithLocalFallback(cloudKit: NomiModelContainer.makeLocal)
 
-    guard case .localOnly(let reason) = storage.mode else {
-      return XCTFail("expected the local fallback under swift test, got \(storage.mode)")
-    }
-    XCTAssertFalse(reason.isEmpty)
+    XCTAssertEqual(storage.mode, .cloudKit)
+    XCTAssertNil(storage.mode.reason)
+    XCTAssertTrue(storage.mode.isSyncing)
+  }
+
+  /// The local store is what the fallback lands on, so it has to be able to
+  /// open the whole schema on its own. If this goes red the fallback is not a
+  /// fallback.
+  func testTheLocalContainerOpensTheWholeSchema() throws {
+    XCTAssertNoThrow(try NomiModelContainer.makeLocal())
   }
 }

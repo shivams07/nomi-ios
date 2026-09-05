@@ -2,11 +2,15 @@ import Foundation
 
 /// Which store the app is actually running on.
 ///
-/// The CloudKit container fails to construct when the process has no iCloud
-/// entitlement — an unsigned simulator build, a development build on a machine
-/// without the provisioning profile, a device signed out of iCloud. The app
-/// falls back to a local-only store and keeps running, which is right: losing
-/// sync is not a reason to refuse to launch.
+/// The CloudKit container can fail to construct — a corrupt store, a schema
+/// CloudKit rejects. The app falls back to a local-only store and keeps
+/// running, which is right: losing sync is not a reason to refuse to launch.
+///
+/// Note what this does **not** cover. A missing iCloud entitlement does not
+/// make the container throw; it constructs, and mirroring fails afterwards
+/// (see `NomiModelContainer.makeWithLocalFallback`). Such a build reports
+/// `.cloudKit` here and shows "On" while nothing syncs. Closing that gap needs
+/// an account check, not a `catch`.
 ///
 /// **What was wrong is that it said so only to the Xcode console.** A user in
 /// that state sees an app that works perfectly and simply never appears on

@@ -55,12 +55,10 @@ public enum NomiModelContainer {
   /// What the app actually calls.
   ///
   /// **The fallback is the point.** Constructing a CloudKit-backed container
-  /// fails outright when the process has no iCloud entitlement — an
-  /// unsigned simulator build, a development build on a machine without the
-  /// provisioning profile, a device signed out of iCloud in some
-  /// configurations. Letting that `try` propagate turns "sync is unavailable"
-  /// into "the app does not launch", and launching is the acceptance criterion
-  /// this unit is measured on.
+  /// can fail outright — a corrupt store, a schema CloudKit rejects. Letting
+  /// that `try` propagate turns "sync is unavailable" into "the app does not
+  /// launch", and launching is the acceptance criterion this unit is measured
+  /// on.
   ///
   /// Falling back loses sync, not data: the schema is identical, so a later
   /// launch that does reach CloudKit reads the same local store and begins
@@ -72,9 +70,28 @@ public enum NomiModelContainer {
   /// and return only the container, so the one person who could see that the
   /// app had silently stopped syncing was whoever had Xcode attached. The
   /// caller now carries the answer as far as Settings.
-  public static func makeWithLocalFallback() -> (container: ModelContainer, mode: StorageMode) {
+  ///
+  /// ⚠️ **A missing iCloud entitlement is not one of the failures this
+  /// catches, and B11 originally assumed it was.** CI proved otherwise: on a
+  /// runner with no entitlement `makeCloudKit()` returns normally, and the
+  /// mirroring delegate then fails asynchronously (it got as far as
+  /// "Successfully enqueued setup request" before trapping the process). So
+  /// this returns `.cloudKit` and Settings says "On" while nothing syncs —
+  /// the exact false reassurance B11 exists to remove, just moved one step
+  /// later. Detecting that state needs an account/entitlement check
+  /// (`CKContainer.accountStatus`) rather than a `catch`, which is outside
+  /// this unit's file list. Escalated, not silently fixed.
+  ///
+  /// - Parameter cloudKit: the CloudKit container maker. Injectable **only**
+  ///   so the fallback branch is reachable in a test — constructing a real
+  ///   CloudKit container under `swift test` traps the process, so a test that
+  ///   called the default would take the whole suite down with it. Production
+  ///   passes nothing and gets `makeCloudKit`.
+  public static func makeWithLocalFallback(
+    cloudKit: () throws -> ModelContainer = makeCloudKit
+  ) -> (container: ModelContainer, mode: StorageMode) {
     do {
-      return (try makeCloudKit(), .cloudKit)
+      return (try cloudKit(), .cloudKit)
     } catch {
       // `Logger`, not `print`: a `print` is invisible in a release build and in
       // any sysdiagnose the user could send. This line is the first thing to
