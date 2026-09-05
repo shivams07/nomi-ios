@@ -216,6 +216,9 @@ private struct LedgerTransactionList: View {
 
   @Query private var transactions: [NomiCore.Transaction]
 
+  @State private var pendingDeleteID: UUID?
+  @State private var errorMessage: String?
+
   init(
     since: Date,
     selection: LedgerChipSelection,
@@ -252,19 +255,41 @@ private struct LedgerTransactionList: View {
   }
 
   var body: some View {
-    if groups.isEmpty {
-      emptyState
-    } else {
-      ForEach(groups) { group in
-        Section {
-          ForEach(group.rows) { transaction in
-            row(for: transaction)
+    Group {
+      if groups.isEmpty {
+        emptyState
+      } else {
+        ForEach(groups) { group in
+          Section {
+            ForEach(group.rows) { transaction in
+              row(for: transaction)
+            }
+          } header: {
+            dayHeader(group)
           }
-        } header: {
-          dayHeader(group)
         }
       }
     }
+    // F9: delete used to be immediate, permanent and unconfirmed, with no
+    // undo. This is the same `.confirmationDialog` `TransactionDetailScreen`
+    // uses. There is still no undo here — `delete` is a hard delete and
+    // CloudKit has already propagated it by the time this dialog could ever
+    // reappear; undo needs a soft-delete schema column, a separate ask.
+    .confirmationDialog(
+      "Delete this transaction?",
+      isPresented: Binding(get: { pendingDeleteID != nil }, set: { if !$0 { pendingDeleteID = nil } }),
+      titleVisibility: .visible
+    ) {
+      Button("Delete", role: .destructive) { performDelete() }
+      Button("Cancel", role: .cancel) {}
+    }
+    .alert(
+      "Something went wrong",
+      isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }),
+      presenting: errorMessage,
+      actions: { _ in Button("OK", role: .cancel) {} },
+      message: { message in Text(message) }
+    )
   }
 
   // MARK: - Day header
@@ -322,9 +347,9 @@ private struct LedgerTransactionList: View {
     .padding(.bottom, NomiSpacing.xs)
     .contextMenu {
       if transaction.needsReview {
-        Button("Mark reviewed") { try? transactionStore.dismissReview(transaction.id) }
+        Button("Mark reviewed") { markReviewed(transaction.id) }
       }
-      Button("Delete", role: .destructive) { try? transactionStore.delete(transaction.id) }
+      Button("Delete", role: .destructive) { pendingDeleteID = transaction.id }
     }
   }
 
@@ -334,6 +359,26 @@ private struct LedgerTransactionList: View {
       .foregroundStyle(NomiColor.textTertiary)
       .padding(.horizontal, NomiSpacing.screenGutter)
       .padding(.top, NomiSpacing.lg)
+  }
+
+  // MARK: - Actions
+
+  private func markReviewed(_ id: UUID) {
+    do {
+      try transactionStore.dismissReview(id)
+    } catch {
+      errorMessage = "Could not mark this reviewed."
+    }
+  }
+
+  private func performDelete() {
+    guard let id = pendingDeleteID else { return }
+    pendingDeleteID = nil
+    do {
+      try transactionStore.delete(id)
+    } catch {
+      errorMessage = "Could not delete this transaction."
+    }
   }
 }
 
@@ -391,6 +436,38 @@ private struct LedgerTransactionList: View {
   }
   .modelContainer(LedgerPreviewSupport.makeContainer(transactions: transactions))
   .preferredColorScheme(.dark)
+}
+
+/// `.constant(true)` rather than exercising the real row's `@State` — that
+/// state is private to `LedgerTransactionList` and there is no existing
+/// precedent in this codebase for seeding another view's presented-sheet
+/// state from a preview. This shows the exact title/actions the real dialog
+/// presents, standalone.
+#Preview("Ledger — delete confirmation, dark") {
+  Text("SWIGGY/PAYMENT/REF1")
+    .nomiTextStyle(.body)
+    .foregroundStyle(NomiColor.textPrimary)
+    .padding()
+    .background(NomiColor.surfaceRow)
+    .confirmationDialog("Delete this transaction?", isPresented: .constant(true), titleVisibility: .visible) {
+      Button("Delete", role: .destructive) {}
+      Button("Cancel", role: .cancel) {}
+    }
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Ledger — delete error alert, dark") {
+  Text("SWIGGY/PAYMENT/REF1")
+    .nomiTextStyle(.body)
+    .foregroundStyle(NomiColor.textPrimary)
+    .padding()
+    .background(NomiColor.surfaceRow)
+    .alert("Something went wrong", isPresented: .constant(true)) {
+      Button("OK", role: .cancel) {}
+    } message: {
+      Text("Could not delete this transaction.")
+    }
+    .preferredColorScheme(.dark)
 }
 
 #Preview("Ledger — accessibility 3, dark") {
