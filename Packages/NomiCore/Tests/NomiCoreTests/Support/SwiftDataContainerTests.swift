@@ -107,4 +107,65 @@ final class SwiftDataContainerTests: XCTestCase {
     let found = try context.fetch(FetchDescriptor<Rule>(predicate: #Predicate { $0.id == id }))
     XCTAssertEqual(found.map(\.pattern), ["SHARED*"])
   }
+
+  // MARK: - U0: the schema additions three later units build on
+
+  /// The additive-and-optional claim, checked rather than asserted in a comment.
+  /// A default that is anything but `nil` - or a field CloudKit rejects - would
+  /// break every row already on a device, and the failure would arrive as a
+  /// migration error on a user launch rather than here.
+  func testTheNewOptionalFieldsDefaultToNilAndRoundTrip() throws {
+    let container = try Self.makeContainer()
+    let context = ModelContext(container)
+    let id = UUID()
+
+    let fresh = Transaction()
+    XCTAssertNil(fresh.note, "note is additive; existing rows must read nil")
+    XCTAssertNil(fresh.needsReviewReasonRaw)
+    XCTAssertNil(fresh.needsReviewReason)
+
+    context.insert(
+      Transaction(
+        id: id,
+        amountMinor: 45_900,
+        dedupeKey: "u0",
+        needsReviewReasonRaw: NeedsReviewReason.foreignCurrency.rawValue,
+        note: "reimbursed by work"))
+    try context.save()
+
+    let found = try context.fetch(
+      FetchDescriptor<Transaction>(predicate: #Predicate { $0.id == id }))
+    XCTAssertEqual(found.first?.note, "reimbursed by work")
+    XCTAssertEqual(found.first?.needsReviewReason, .foreignCurrency)
+  }
+
+  /// The two new reasons are persisted as raw strings, so a typo in a raw value
+  /// is a row that silently reads back as "no reason" - which the un-flag rule
+  /// in `setAccount` would then treat as a pipeline flag it must not clear.
+  func testBothNewReasonsRoundTripThroughTheirRawValues() throws {
+    for reason in [NeedsReviewReason.unauthenticatedSender, .foreignCurrency] {
+      XCTAssertEqual(NeedsReviewReason(rawValue: reason.rawValue), reason)
+
+      let encoded = try JSONEncoder().encode(reason)
+      XCTAssertEqual(try JSONDecoder().decode(NeedsReviewReason.self, from: encoded), reason)
+
+      let row = Transaction()
+      row.needsReviewReason = reason
+      XCTAssertEqual(row.needsReviewReasonRaw, reason.rawValue)
+      XCTAssertEqual(row.needsReviewReason, reason)
+    }
+
+    XCTAssertEqual(NeedsReviewReason.unauthenticatedSender.rawValue, "unauthenticatedSender")
+    XCTAssertEqual(NeedsReviewReason.foreignCurrency.rawValue, "foreignCurrency")
+  }
+
+  /// The four reasons that already exist are unchanged. Adding a case to a
+  /// `String`-raw enum cannot move the others, but this is the file that would
+  /// notice if someone reordered them into an `Int` raw value one day.
+  func testTheExistingReasonRawValuesAreUnchanged() {
+    XCTAssertEqual(NeedsReviewReason.unidentifiedAccount.rawValue, "unidentifiedAccount")
+    XCTAssertEqual(NeedsReviewReason.heuristic.rawValue, "heuristic")
+    XCTAssertEqual(NeedsReviewReason.unparseable.rawValue, "unparseable")
+    XCTAssertEqual(NeedsReviewReason.unreadableDate.rawValue, "unreadableDate")
+  }
 }

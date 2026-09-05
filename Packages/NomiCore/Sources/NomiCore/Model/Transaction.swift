@@ -33,6 +33,22 @@ public enum NeedsReviewReason: String, Codable, Sendable {
   /// the others: a 1970 row sorts to the bottom of the ledger and is never
   /// seen again, so that is the thing to say about it.
   case unreadableDate
+
+  /// `Authentication-Results` says the sender failed DKIM/SPF/DMARC (B9).
+  ///
+  /// **Flagged, never dropped.** A bank whose DKIM is broken - or a message
+  /// that arrived through a forwarder - must not vanish from the ledger
+  /// entirely; a visible row the user can question beats a transaction that
+  /// silently never existed. Written by the extractor in U1b.
+  case unauthenticatedSender
+
+  /// The only amount the mail carried was not INR (M9).
+  ///
+  /// `currencyCode` carries the code and `amountMinor` is in *that* currency's
+  /// minor unit, so aggregation must exclude the row rather than add it to a
+  /// rupee total. There is no rate source in this app and none is guessed.
+  /// Written by the extractor in U18.
+  case foreignCurrency
 }
 
 public struct SourceRef: Codable, Hashable, Sendable {
@@ -86,6 +102,15 @@ public final class Transaction {
   /// `NeedsReviewReason`, insert-time only. See that type.
   public var needsReviewReasonRaw: String?
 
+  /// Whatever the user wrote about this row, on any source (M11).
+  ///
+  /// Deliberately separate from `descriptionText`, which is the source's
+  /// narration and is never rewritten. It feeds neither
+  /// `normalizedDescription` nor `dedupeKey`: a note typed after a row was
+  /// keyed must not re-key it, and two devices' notes must not split one
+  /// transaction into two.
+  public var note: String?
+
   public init(
     id: UUID = UUID(),
     date: Date = Date(),
@@ -110,7 +135,8 @@ public final class Transaction {
     updatedAt: Date = Date(),
     senderDomain: String? = nil,
     cardFragment: String? = nil,
-    needsReviewReasonRaw: String? = nil
+    needsReviewReasonRaw: String? = nil,
+    note: String? = nil
   ) {
     self.id = id
     self.date = date
@@ -136,6 +162,7 @@ public final class Transaction {
     self.senderDomain = senderDomain
     self.cardFragment = cardFragment
     self.needsReviewReasonRaw = needsReviewReasonRaw
+    self.note = note
   }
 
   public var needsReviewReason: NeedsReviewReason? {
