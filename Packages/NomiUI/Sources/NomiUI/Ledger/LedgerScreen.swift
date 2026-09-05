@@ -34,6 +34,8 @@ enum LedgerDayHeaderText {
 public struct LedgerScreen: View {
   public let transactionStore: TransactionStore
   public let categoryStore: CategoryStore
+  public let accountStore: AccountStore
+  public let editor: TransactionEditing
 
   @Query(sort: \NomiCore.Transaction.date, order: .reverse) private var transactions: [NomiCore.Transaction]
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
@@ -41,9 +43,16 @@ public struct LedgerScreen: View {
 
   @State private var selection: LedgerChipSelection = .all
 
-  public init(transactionStore: TransactionStore, categoryStore: CategoryStore) {
+  public init(
+    transactionStore: TransactionStore,
+    categoryStore: CategoryStore,
+    accountStore: AccountStore,
+    editor: TransactionEditing
+  ) {
     self.transactionStore = transactionStore
     self.categoryStore = categoryStore
+    self.accountStore = accountStore
+    self.editor = editor
   }
 
   // `id` carries no unique constraint anywhere in NomiCore (R5 — CloudKit
@@ -104,6 +113,15 @@ public struct LedgerScreen: View {
       }
     }
     .background(NomiColor.surfaceCanvas)
+    .navigationDestination(for: UUID.self) { transactionID in
+      TransactionDetailScreen(
+        transactionID: transactionID,
+        transactionStore: transactionStore,
+        editor: editor,
+        categoryStore: categoryStore,
+        accountStore: accountStore
+      )
+    }
   }
 
   // MARK: - Filter chips
@@ -184,26 +202,29 @@ public struct LedgerScreen: View {
     let barColor = slot.map(paletteSlot) ?? CategoryPalette.other
     let fraction = LedgerMagnitude.fraction(amountMinor: transaction.amountMinor, maxAmountMinor: maxAmountMinor)
 
-    return VStack(alignment: .leading, spacing: 0) {
-      TransactionRow(
-        transaction: transaction,
-        categoryName: transaction.categoryID.flatMap { categoryNamesByID[$0] },
-        accountName: transaction.accountID.flatMap { accountNamesByID[$0] },
-        categorySymbolName: symbolName,
-        categoryPaletteSlot: slot
-      )
+    return NavigationLink(value: transaction.id) {
+      VStack(alignment: .leading, spacing: 0) {
+        TransactionRow(
+          transaction: transaction,
+          categoryName: transaction.categoryID.flatMap { categoryNamesByID[$0] },
+          accountName: transaction.accountID.flatMap { accountNamesByID[$0] },
+          categorySymbolName: symbolName,
+          categoryPaletteSlot: slot
+        )
 
-      GeometryReader { proxy in
-        Rectangle()
-          .fill(barColor.opacity(0.35))
-          .frame(width: proxy.size.width * max(fraction, 0.02))
+        GeometryReader { proxy in
+          Rectangle()
+            .fill(barColor.opacity(0.35))
+            .frame(width: proxy.size.width * max(fraction, 0.02))
+        }
+        .frame(height: 2)
+        .padding(.bottom, NomiSpacing.xxs)
       }
-      .frame(height: 2)
-      .padding(.bottom, NomiSpacing.xxs)
+      .padding(.horizontal, NomiSpacing.sm)
+      .background(NomiColor.surfaceRow)
+      .nomiCornerRadius(NomiRadius.tile)
     }
-    .padding(.horizontal, NomiSpacing.sm)
-    .background(NomiColor.surfaceRow)
-    .nomiCornerRadius(NomiRadius.tile)
+    .buttonStyle(.plain)
     .padding(.horizontal, NomiSpacing.screenGutter)
     .padding(.bottom, NomiSpacing.xs)
     .contextMenu {
@@ -227,7 +248,12 @@ public struct LedgerScreen: View {
 
 #Preview("Ledger — populated, dark") {
   NomiTabShell {
-    LedgerScreen(transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore())
+    NavigationStack {
+      LedgerScreen(
+        transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore(),
+        accountStore: FakeAccountStore(), editor: FakeTransactionEditor()
+      )
+    }
   }
   .modelContainer(LedgerPreviewSupport.makeContainer())
   .preferredColorScheme(.dark)
@@ -235,7 +261,12 @@ public struct LedgerScreen: View {
 
 #Preview("Ledger — empty, dark") {
   NomiTabShell {
-    LedgerScreen(transactionStore: FakeTransactionStore(transactions: []), categoryStore: FakeCategoryStore())
+    NavigationStack {
+      LedgerScreen(
+        transactionStore: FakeTransactionStore(transactions: []), categoryStore: FakeCategoryStore(),
+        accountStore: FakeAccountStore(), editor: FakeTransactionEditor(transactions: [])
+      )
+    }
   }
   .modelContainer(LedgerPreviewSupport.makeContainer(transactions: []))
   .preferredColorScheme(.dark)
@@ -244,7 +275,12 @@ public struct LedgerScreen: View {
 #Preview("Ledger — single day, dark") {
   let transactions = LedgerPreviewSupport.singleDayTransactions()
   NomiTabShell {
-    LedgerScreen(transactionStore: FakeTransactionStore(transactions: transactions), categoryStore: FakeCategoryStore())
+    NavigationStack {
+      LedgerScreen(
+        transactionStore: FakeTransactionStore(transactions: transactions), categoryStore: FakeCategoryStore(),
+        accountStore: FakeAccountStore(), editor: FakeTransactionEditor(transactions: transactions)
+      )
+    }
   }
   .modelContainer(LedgerPreviewSupport.makeContainer(transactions: transactions))
   .preferredColorScheme(.dark)
@@ -253,7 +289,12 @@ public struct LedgerScreen: View {
 #Preview("Ledger — month spanning a year boundary, dark") {
   let transactions = LedgerPreviewSupport.yearBoundaryTransactions()
   NomiTabShell {
-    LedgerScreen(transactionStore: FakeTransactionStore(transactions: transactions), categoryStore: FakeCategoryStore())
+    NavigationStack {
+      LedgerScreen(
+        transactionStore: FakeTransactionStore(transactions: transactions), categoryStore: FakeCategoryStore(),
+        accountStore: FakeAccountStore(), editor: FakeTransactionEditor(transactions: transactions)
+      )
+    }
   }
   .modelContainer(LedgerPreviewSupport.makeContainer(transactions: transactions))
   .preferredColorScheme(.dark)
@@ -261,7 +302,12 @@ public struct LedgerScreen: View {
 
 #Preview("Ledger — accessibility 3, dark") {
   NomiTabShell {
-    LedgerScreen(transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore())
+    NavigationStack {
+      LedgerScreen(
+        transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore(),
+        accountStore: FakeAccountStore(), editor: FakeTransactionEditor()
+      )
+    }
   }
   .modelContainer(LedgerPreviewSupport.makeContainer())
   .environment(\.dynamicTypeSize, .accessibility3)

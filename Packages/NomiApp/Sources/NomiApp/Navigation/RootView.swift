@@ -86,7 +86,19 @@ struct RootView: View {
       NavigationStack {
         LedgerScreen(
           transactionStore: environment.transactionStore,
-          categoryStore: environment.categoryStore
+          categoryStore: environment.categoryStore,
+          accountStore: environment.accountStore,
+          // Built here rather than held on `AppEnvironment` — that file
+          // belongs to `park/account-binding-loop`. A second construction
+          // outside the composition root is debt, named as such in
+          // `SwiftDataTransactionEditor`'s own note; fold it in once units 1,
+          // 3 and 5a have all merged. Cheap to rebuild on every `destination`
+          // evaluation: it is a stateless wrapper over the same context and
+          // coordinator every other store already shares.
+          editor: SwiftDataTransactionEditor(
+            context: environment.container.mainContext,
+            coordinator: environment.coordinator
+          )
         )
         // `LedgerScreen` is a tab-root screen and sets no title of its own —
         // same as `DashboardView`, and the same reason Dashboard and Reports
