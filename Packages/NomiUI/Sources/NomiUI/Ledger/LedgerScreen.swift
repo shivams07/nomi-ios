@@ -22,26 +22,33 @@ enum LedgerDayHeaderText {
 /// `DashboardView`, not a pushed one: no `NavigationStack`/`.navigationTitle`
 /// of its own, `NomiTabShell` supplies the chrome.
 ///
-/// Reads transactions/categories/accounts via `@Query` directly against the
-/// `@Model` types (design's read/write asymmetry — see `CategoriesScreen`)
-/// and takes `transactionStore`/`categoryStore` by init like every other
-/// screen, for the one write action this screen offers: dismissing a
-/// needs-review row or deleting a mis-imported one, both via `contextMenu`
-/// (`.swipeActions` is iOS-only and this package's `swift test` also builds
-/// for plain macOS — see `AccountsScreen`). `categoryStore` has no create/
-/// rename/delete affordance here — that stays `CategoriesScreen`'s job —
-/// but is accepted for the same construction contract as every other screen.
+/// Reads categories/accounts via `@Query` directly against the `@Model` types
+/// (design's read/write asymmetry — see `CategoriesScreen`) and takes
+/// `transactionStore`/`categoryStore` by init like every other screen, for the
+/// one write action this screen offers: dismissing a needs-review row or
+/// deleting a mis-imported one, both via `contextMenu` (`.swipeActions` is
+/// iOS-only and this package's `swift test` also builds for plain macOS — see
+/// `AccountsScreen`). `categoryStore` has no create/rename/delete affordance
+/// here — that stays `CategoriesScreen`'s job — but is accepted for the same
+/// construction contract as every other screen.
+///
+/// **F1 (fix plan unit 5b):** the transaction table itself is never read
+/// whole. `LedgerTransactionList` below owns the `@Query` over
+/// `NomiCore.Transaction` and builds its filter from `since`, a rolling
+/// 90-day-per-step boundary (`LedgerWindow.since`) — see that type for why it
+/// has to be a separate view.
 public struct LedgerScreen: View {
   public let transactionStore: TransactionStore
   public let categoryStore: CategoryStore
   public let accountStore: AccountStore
   public let editor: TransactionEditing
 
-  @Query(sort: \NomiCore.Transaction.date, order: .reverse) private var transactions: [NomiCore.Transaction]
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
   @Query private var accounts: [NomiCore.Account]
 
   @State private var selection: LedgerChipSelection = .all
+  @State private var stepsBack = 0
+  @State private var now = Date()
 
   public init(
     transactionStore: TransactionStore,
@@ -53,6 +60,10 @@ public struct LedgerScreen: View {
     self.categoryStore = categoryStore
     self.accountStore = accountStore
     self.editor = editor
+  }
+
+  private var since: Date {
+    LedgerWindow.since(for: stepsBack, now: now)
   }
 
   // `id` carries no unique constraint anywhere in NomiCore (R5 — CloudKit
@@ -78,18 +89,6 @@ public struct LedgerScreen: View {
     Dictionary(accounts.map { ($0.id, $0.displayName) }, uniquingKeysWith: { first, _ in first })
   }
 
-  private var filtered: [NomiCore.Transaction] {
-    LedgerFiltering.apply(transactions, selection: selection)
-  }
-
-  private var maxAmountMinor: Int {
-    filtered.map { abs($0.amountMinor) }.max() ?? 0
-  }
-
-  private var groups: [LedgerDayGroup<NomiCore.Transaction>] {
-    LedgerGrouping.byDay(filtered)
-  }
-
   public var body: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
@@ -97,22 +96,30 @@ public struct LedgerScreen: View {
           .padding(.horizontal, NomiSpacing.screenGutter)
           .padding(.vertical, NomiSpacing.sm)
 
-        if groups.isEmpty {
-          emptyState
-        } else {
-          ForEach(groups) { group in
-            Section {
-              ForEach(group.rows) { transaction in
-                row(for: transaction)
-              }
-            } header: {
-              dayHeader(group)
-            }
-          }
-        }
+        // `.id(since)` is load-bearing: SwiftData's `@Query` fixes its filter
+        // at the view instance's construction and never re-evaluates it
+        // in place. Widening the window has to build a new instance — and a
+        // new `@Query` — rather than mutate one already committed to the old
+        // bound, which is exactly what a changed `.id` forces.
+        LedgerTransactionList(
+          since: since,
+          selection: selection,
+          now: now,
+          transactionStore: transactionStore,
+          categoryNamesByID: categoryNamesByID,
+          categoryPaletteSlotByID: categoryPaletteSlotByID,
+          categorySymbolNameByID: categorySymbolNameByID,
+          accountNamesByID: accountNamesByID
+        )
+        .id(since)
+
+        showOlderButton
       }
     }
     .background(NomiColor.surfaceCanvas)
+    // Sets `now` once per appearance rather than every `dayHeader` call —
+    // day headers read it from here, not from a fresh `Date()` in `body`.
+    .onAppear { now = Date() }
     .navigationDestination(for: UUID.self) { transactionID in
       TransactionDetailScreen(
         transactionID: transactionID,
@@ -174,11 +181,97 @@ public struct LedgerScreen: View {
     .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
   }
 
+  // MARK: - Paging
+
+  /// Unconditional, at the foot of the list — this screen never queries
+  /// beyond `since` to find out whether there's anything older to show, since
+  /// doing so would be exactly the whole-table read F1 exists to remove.
+  private var showOlderButton: some View {
+    Button {
+      stepsBack += 1
+    } label: {
+      Text("Show older")
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.accent)
+        .frame(maxWidth: .infinity)
+    }
+    .padding(.horizontal, NomiSpacing.screenGutter)
+    .padding(.vertical, NomiSpacing.sm)
+  }
+}
+
+/// The windowed transaction list. Its own view, not a computed property on
+/// `LedgerScreen`, because a `@Query`'s filter is fixed when the view
+/// instance is built and SwiftData does not let it be re-pointed afterwards —
+/// so a widening window has to construct a new instance of *something*, and
+/// `LedgerScreen` gives it a new one via `.id(since)`.
+private struct LedgerTransactionList: View {
+  let selection: LedgerChipSelection
+  let now: Date
+  let transactionStore: TransactionStore
+  let categoryNamesByID: [UUID: String]
+  let categoryPaletteSlotByID: [UUID: Int]
+  let categorySymbolNameByID: [UUID: String]
+  let accountNamesByID: [UUID: String]
+
+  @Query private var transactions: [NomiCore.Transaction]
+
+  init(
+    since: Date,
+    selection: LedgerChipSelection,
+    now: Date,
+    transactionStore: TransactionStore,
+    categoryNamesByID: [UUID: String],
+    categoryPaletteSlotByID: [UUID: Int],
+    categorySymbolNameByID: [UUID: String],
+    accountNamesByID: [UUID: String]
+  ) {
+    self.selection = selection
+    self.now = now
+    self.transactionStore = transactionStore
+    self.categoryNamesByID = categoryNamesByID
+    self.categoryPaletteSlotByID = categoryPaletteSlotByID
+    self.categorySymbolNameByID = categorySymbolNameByID
+    self.accountNamesByID = accountNamesByID
+    _transactions = Query(
+      filter: #Predicate<NomiCore.Transaction> { $0.date >= since },
+      sort: [SortDescriptor(\NomiCore.Transaction.date, order: .reverse)]
+    )
+  }
+
+  private var filtered: [NomiCore.Transaction] {
+    LedgerFiltering.apply(transactions, selection: selection)
+  }
+
+  private var maxAmountMinor: Int {
+    filtered.map { abs($0.amountMinor) }.max() ?? 0
+  }
+
+  private var groups: [LedgerDayGroup<NomiCore.Transaction>] {
+    LedgerGrouping.byDay(filtered)
+  }
+
+  var body: some View {
+    if groups.isEmpty {
+      emptyState
+    } else {
+      ForEach(groups) { group in
+        Section {
+          ForEach(group.rows) { transaction in
+            row(for: transaction)
+          }
+        } header: {
+          dayHeader(group)
+        }
+      }
+    }
+  }
+
   // MARK: - Day header
 
   private func dayHeader(_ group: LedgerDayGroup<NomiCore.Transaction>) -> some View {
     HStack {
-      Text(LedgerDayHeaderText.string(for: group.day, relativeTo: Date()))
+      Text(LedgerDayHeaderText.string(for: group.day, relativeTo: now))
         .nomiTextStyle(.caption)
         .foregroundStyle(NomiColor.textSecondary)
       Spacer()

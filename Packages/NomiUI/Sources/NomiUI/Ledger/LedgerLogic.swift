@@ -100,3 +100,15 @@ enum LedgerMagnitude {
     return min(max(ratio, 0), 1)
   }
 }
+
+/// The 90-day paging window (F1) — the ledger used to load the entire
+/// transaction table on every render; `LedgerScreen` builds its `@Query`
+/// predicate from `since` instead. `stepsBack` 0 is the screen's first
+/// render; each "Show older" tap increments it by one, widening the visible
+/// history by another 90 days rather than replacing what's already shown.
+enum LedgerWindow {
+  static func since(for stepsBack: Int, now: Date, calendar: Calendar = .current) -> Date {
+    let days = (stepsBack + 1) * 90
+    return calendar.date(byAdding: .day, value: -days, to: now) ?? now
+  }
+}
