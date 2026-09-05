@@ -41,7 +41,7 @@ public enum DraftDerivation {
     return found
   }
 
-  public static func derive(_ draft: TransactionDraft, calendar: Calendar = .current) -> DerivedDraft {
+  public static func derive(_ draft: TransactionDraft, calendar: Calendar = NomiCalendar.india) -> DerivedDraft {
     assert(
       violations(in: draft).isEmpty,
       "Ingester pre-filled a pipeline-derived field: \(violations(in: draft)). See design §2.4."

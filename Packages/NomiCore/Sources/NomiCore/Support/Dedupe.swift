@@ -15,13 +15,16 @@ public func normalizeDescription(_ raw: String) -> String {
   return collapsed.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
-/// `sha256("\(startOfDay(date, .current))|\(amountMinor)|\(directionRaw)|\(normalizedDescription)")`
+/// `sha256("\(startOfDay(date, NomiCalendar.india))|\(amountMinor)|\(directionRaw)|\(normalizedDescription)")`
+///
+/// The calendar defaults to `NomiCalendar.india` and callers should leave it
+/// there: the key must not depend on where the device is. See `NomiCalendar`.
 public func makeDedupeKey(
   date: Date,
   amountMinor: Int,
   directionRaw: String,
   normalizedDescription: String,
-  calendar: Calendar = .current
+  calendar: Calendar = NomiCalendar.india
 ) -> String {
   let startOfDay = calendar.startOfDay(for: date)
   let iso = ISO8601DateFormatter()
