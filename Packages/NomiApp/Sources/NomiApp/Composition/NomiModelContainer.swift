@@ -1,5 +1,6 @@
 import Foundation
 import NomiCore
+import OSLog
 import SwiftData
 
 /// The real store: SwiftData over the **CloudKit private database**.
@@ -66,15 +67,24 @@ public enum NomiModelContainer {
   /// syncing it.
   ///
   /// Only the second failure is fatal, and by then there is nothing to run on.
-  public static func makeWithLocalFallback() -> ModelContainer {
+  ///
+  /// **Returns the mode as well as the container (B11).** It used to `print`
+  /// and return only the container, so the one person who could see that the
+  /// app had silently stopped syncing was whoever had Xcode attached. The
+  /// caller now carries the answer as far as Settings.
+  public static func makeWithLocalFallback() -> (container: ModelContainer, mode: StorageMode) {
     do {
-      return try makeCloudKit()
+      return (try makeCloudKit(), .cloudKit)
     } catch {
-      // Deliberately not silent. This is the difference between "my other
-      // device does not see my transactions" and "something is wrong", and it
-      // is the first thing to look for when the former gets reported.
-      print("[Nomi] CloudKit container unavailable, falling back to local storage: \(error)")
-      return try! makeLocal()
+      // `Logger`, not `print`: a `print` is invisible in a release build and in
+      // any sysdiagnose the user could send. This line is the first thing to
+      // look for when "my other device does not see my transactions" is
+      // reported, so it has to survive leaving the debugger.
+      logger.error(
+        "CloudKit container unavailable, falling back to local storage: \(error, privacy: .public)")
+      return (try! makeLocal(), .localOnly(reason: String(describing: error)))
     }
   }
+
+  private static let logger = Logger(subsystem: "com.shivams07.nomi", category: "storage")
 }

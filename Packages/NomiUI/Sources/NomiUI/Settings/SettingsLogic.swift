@@ -15,6 +15,31 @@ enum NotificationToggleDisplay {
   }
 }
 
+/// The "iCloud sync" row (B11).
+///
+/// The app falls back to a local-only store when the CloudKit container will
+/// not construct, which is correct — but until now it announced that with a
+/// `print`, so the only person who could tell was one with Xcode attached. A
+/// user in that state has an app that works and simply never appears on their
+/// second device.
+enum StorageModeDisplay {
+  static func text(for mode: StorageMode) -> String {
+    mode.isSyncing ? "On" : "Off — this device only"
+  }
+
+  /// The caption under the row. `nil` when syncing, so the row renders as one
+  /// line and nothing is said where there is nothing to say.
+  ///
+  /// The reason is the underlying error's description: developer-shaped text,
+  /// deliberately. A user who can read it out loud gives a usable report, and
+  /// a hand-written friendly string would have to guess at causes this code
+  /// does not know.
+  static func caption(for mode: StorageMode) -> String? {
+    guard let reason = mode.reason else { return nil }
+    return "Your data is safe on this device, but it is not syncing to iCloud. \(reason)"
+  }
+}
+
 /// The re-scan action, pulled out so it is spy-testable: it must call
 /// `syncNow()` and nothing else — specifically never `disconnect()` followed
 /// by `connect()`, which the U7 notes call out explicitly as the wrong shape.

@@ -18,7 +18,10 @@ import SwiftUI
 /// (§2.18).
 @MainActor
 enum AppServices {
-  static let shared = AppEnvironment(container: NomiModelContainer.makeWithLocalFallback())
+  static let shared: AppEnvironment = {
+    let storage = NomiModelContainer.makeWithLocalFallback()
+    return AppEnvironment(container: storage.container, storageMode: storage.mode)
+  }()
 
   /// Touched from `NomiAppScene.init`. The `Void`-typed `static let` is the
   /// idiom for "run this once, on first access, thread-safely" — a `Bool` flag

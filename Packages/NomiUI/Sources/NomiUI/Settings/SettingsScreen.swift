@@ -17,25 +17,31 @@ public struct SettingsScreen: View {
   public let categoryStore: CategoryStore
   public let ruleStore: RuleStore
   @Binding public var notificationSettings: NotificationSettings
+  public let storageMode: StorageMode
 
   @State private var connectionState: MailConnectionState = .disconnected
   @State private var permissionDenied = false
   @State private var isRescanning = false
   @State private var lastSyncSummary: SyncSummary?
+  @State private var rescanError: String?
   private let forcedPermissionDenied: Bool?
 
+  /// `storageMode` defaults to `.cloudKit` so every existing call site and
+  /// preview compiles unchanged; `RootView` passes the real value.
   public init(
     mailConnectionService: MailConnectionService,
     fileImportService: FileImportService,
     categoryStore: CategoryStore,
     ruleStore: RuleStore,
-    notificationSettings: Binding<NotificationSettings>
+    notificationSettings: Binding<NotificationSettings>,
+    storageMode: StorageMode = .cloudKit
   ) {
     self.mailConnectionService = mailConnectionService
     self.fileImportService = fileImportService
     self.categoryStore = categoryStore
     self.ruleStore = ruleStore
     _notificationSettings = notificationSettings
+    self.storageMode = storageMode
     forcedPermissionDenied = nil
   }
 
@@ -48,13 +54,15 @@ public struct SettingsScreen: View {
     categoryStore: CategoryStore,
     ruleStore: RuleStore,
     notificationSettings: Binding<NotificationSettings>,
-    forcedPermissionDenied: Bool
+    forcedPermissionDenied: Bool,
+    storageMode: StorageMode = .cloudKit
   ) {
     self.mailConnectionService = mailConnectionService
     self.fileImportService = fileImportService
     self.categoryStore = categoryStore
     self.ruleStore = ruleStore
     _notificationSettings = notificationSettings
+    self.storageMode = storageMode
     self.forcedPermissionDenied = forcedPermissionDenied
   }
 
@@ -84,11 +92,20 @@ public struct SettingsScreen: View {
         }
       }
       notificationsSection
+      storageSection
       Section {
         NavigationLink("About") {
           AboutScreen()
         }
       }
+    }
+    .alert(
+      "Couldn't re-scan",
+      isPresented: Binding(get: { rescanError != nil }, set: { if !$0 { rescanError = nil } })
+    ) {
+      Button("OK", role: .cancel) { rescanError = nil }
+    } message: {
+      Text(rescanError ?? "")
     }
     .scrollContentBackground(.hidden)
     .background(NomiColor.surfaceCanvas)
@@ -171,11 +188,45 @@ public struct SettingsScreen: View {
     return UnmatchedSenderDisplay.rows(for: lastSyncSummary.unmatchedSenders)
   }
 
+  /// B11. One row, always shown - "On" is worth saying too, because the whole
+  /// problem was that the app never mentioned iCloud at all and the user had
+  /// no way to tell which state they were in.
+  private var storageSection: some View {
+    Section("Storage") {
+      VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+        HStack {
+          Text("iCloud sync")
+            .nomiTextStyle(.body)
+            .foregroundStyle(NomiColor.textPrimary)
+          Spacer()
+          Text(StorageModeDisplay.text(for: storageMode))
+            .nomiTextStyle(.body)
+            .foregroundStyle(
+              storageMode.isSyncing ? NomiColor.textSecondary : NomiColor.textPrimary)
+        }
+        if let caption = StorageModeDisplay.caption(for: storageMode) {
+          Text(caption)
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.textTertiary)
+        }
+      }
+    }
+  }
+
+  /// The `try?` here swallowed every re-scan failure - a wrong password, a
+  /// dropped socket, a server that said no - and left the button springing
+  /// back with nothing shown. F3's pattern, the one `TransactionDetailScreen`
+  /// already uses: `do/catch` into an `.alert`.
   private func rescan() {
     isRescanning = true
+    rescanError = nil
     Task {
       defer { isRescanning = false }
-      lastSyncSummary = try? await SettingsActions.rescan(using: mailConnectionService)
+      do {
+        lastSyncSummary = try await SettingsActions.rescan(using: mailConnectionService)
+      } catch {
+        rescanError = error.localizedDescription
+      }
     }
   }
 }
@@ -188,6 +239,21 @@ public struct SettingsScreen: View {
       categoryStore: FakeCategoryStore(),
       ruleStore: FakeRuleStore(),
       notificationSettings: .constant(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9))
+    )
+  }
+  .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
+  .preferredColorScheme(.dark)
+}
+
+#Preview("Settings — iCloud sync off, dark") {
+  NavigationStack {
+    SettingsScreen(
+      mailConnectionService: FakeMailConnectionService(),
+      fileImportService: FakeFileImportService(),
+      categoryStore: FakeCategoryStore(),
+      ruleStore: FakeRuleStore(),
+      notificationSettings: .constant(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9)),
+      storageMode: .localOnly(reason: "CKError 9: Not entitled to use CloudKit")
     )
   }
   .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())

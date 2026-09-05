@@ -15,6 +15,11 @@ import SwiftData
 @MainActor
 public final class AppEnvironment: ObservableObject {
   public let container: ModelContainer
+
+  /// Whether that container is the CloudKit one or the local fallback (B11).
+  /// Read by `RootView` and rendered in Settings; defaulted so the only
+  /// construction that has to care is `AppServices.shared`.
+  public let storageMode: StorageMode
   public let cache: InsightsCache
   public let coordinator: WriteCoordinator
 
@@ -60,12 +65,14 @@ public final class AppEnvironment: ObservableObject {
   /// it takes all four defaults.
   public init(
     container: ModelContainer,
+    storageMode: StorageMode = .cloudKit,
     preferences: any KeyValueStoring = UserDefaultsKeyValueStore(),
     credentials: any MailCredentialStoring = KeychainCredentialStore(),
     mailFetcher: any MailFetching = NWIMAPFetcher(),
     scheduler: any BudgetNotificationScheduling = BudgetNotificationScheduler()
   ) {
     self.container = container
+    self.storageMode = storageMode
     self.credentials = credentials
 
     let cache = InsightsCache()

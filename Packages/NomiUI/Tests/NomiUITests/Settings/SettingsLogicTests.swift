@@ -90,4 +90,37 @@ final class SettingsLogicTests: XCTestCase {
     ])
     XCTAssertFalse(rows.contains { $0.contains("@") })
   }
+
+  // MARK: - B11: the storage mode is visible to the user, not just to Xcode
+
+  func testSyncingReadsAsOnWithNoCaption() {
+    XCTAssertEqual(StorageModeDisplay.text(for: .cloudKit), "On")
+    XCTAssertNil(
+      StorageModeDisplay.caption(for: .cloudKit),
+      "one line when there is nothing to explain")
+  }
+
+  /// The row a user in the fallback state sees. Before this they saw nothing
+  /// at all: the app worked and simply never appeared on their other device.
+  func testTheLocalFallbackSaysSoAndSaysWhy() {
+    let mode = StorageMode.localOnly(reason: "CKError: Not entitled")
+
+    XCTAssertEqual(StorageModeDisplay.text(for: mode), "Off — this device only")
+
+    let caption = StorageModeDisplay.caption(for: mode)
+    XCTAssertNotNil(caption)
+    XCTAssertTrue(
+      caption?.contains("CKError: Not entitled") == true,
+      "the underlying reason is carried through so a report is actionable")
+    XCTAssertTrue(
+      caption?.contains("safe on this device") == true,
+      "the first thing to say is that nothing was lost")
+  }
+
+  func testTheModeAccessorsAgreeWithWhatIsDisplayed() {
+    XCTAssertTrue(StorageMode.cloudKit.isSyncing)
+    XCTAssertNil(StorageMode.cloudKit.reason)
+    XCTAssertFalse(StorageMode.localOnly(reason: "x").isSyncing)
+    XCTAssertEqual(StorageMode.localOnly(reason: "x").reason, "x")
+  }
 }
