@@ -173,3 +173,25 @@ final class LedgerDayTotalTextTests: XCTestCase {
     XCTAssertEqual(LedgerDayTotalText.string(minor: 0), NomiFormatters.amountString(minor: 0))
   }
 }
+
+/// F1: the ledger no longer loads the whole transaction table. Fixed `now`
+/// and an explicit IST `calendar` throughout — same reasoning as every other
+/// date-bearing test in this file: CI runs UTC and Shivam does not.
+final class LedgerWindowTests: XCTestCase {
+  private let now = date("2026-09-05")
+
+  func testStepZeroIsNinetyDaysBack() {
+    let expected = calendar.date(byAdding: .day, value: -90, to: now)!
+    XCTAssertEqual(LedgerWindow.since(for: 0, now: now, calendar: calendar), expected)
+  }
+
+  func testStepOneWidensToOneHundredEightyDaysBack() {
+    let expected = calendar.date(byAdding: .day, value: -180, to: now)!
+    XCTAssertEqual(LedgerWindow.since(for: 1, now: now, calendar: calendar), expected)
+  }
+
+  func testStepThreeWidensToThreeHundredSixtyDaysBack() {
+    let expected = calendar.date(byAdding: .day, value: -360, to: now)!
+    XCTAssertEqual(LedgerWindow.since(for: 3, now: now, calendar: calendar), expected)
+  }
+}
