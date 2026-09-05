@@ -4,21 +4,34 @@ import Foundation
 /// grouping separator — a CSV is opened in a spreadsheet, not displayed in the
 /// app. Dates export as ISO-8601. Header row always present, even for zero rows.
 public enum TransactionCSVExporter {
-  static let header = "date,description,merchant,amount,direction,category_id,account_id"
+  static let header = "date,description,merchant,amount,currency,direction,category,account,source,needs_review,merged_count,upi_kind,counterparty_vpa"
 
-  public static func export(_ transactions: [Transaction]) -> String {
-    let rows = transactions.map {
+  public static func export(_ rows: [Transaction], names: CSVNameMaps) -> String {
+    let csvRows = rows.map {
       row(
         date: $0.date,
         descriptionText: $0.descriptionText,
         merchantName: $0.merchantName,
         amountMinor: $0.amountMinor,
+        currencyCode: $0.currencyCode,
         directionRaw: $0.directionRaw,
-        categoryID: $0.categoryID,
-        accountID: $0.accountID
+        categoryName: resolvedName(for: $0.categoryID, in: names.categories),
+        accountName: resolvedName(for: $0.accountID, in: names.accounts),
+        sourceRaw: $0.sourceRaw,
+        needsReview: $0.needsReview,
+        mergedCount: $0.mergedCount,
+        upiKindRaw: $0.upiKindRaw,
+        counterpartyVPA: $0.counterpartyVPA
       )
     }
-    return ([header] + rows).joined(separator: "\n")
+    return ([header] + csvRows).joined(separator: "\n")
+  }
+
+  /// Split out of `export` so the "unknown id -> empty string" rule is
+  /// testable on its own, without constructing a `Transaction` (`@Model`
+  /// instances crash `swift test` outside a `#Preview` body).
+  static func resolvedName(for id: UUID?, in names: [UUID: String]) -> String {
+    id.flatMap { names[$0] } ?? ""
   }
 
   /// The per-row formatter, decoupled from `Transaction` (a SwiftData `@Model`)
@@ -28,9 +41,15 @@ public enum TransactionCSVExporter {
     descriptionText: String,
     merchantName: String?,
     amountMinor: Int,
+    currencyCode: String,
     directionRaw: String,
-    categoryID: UUID?,
-    accountID: UUID?
+    categoryName: String,
+    accountName: String,
+    sourceRaw: String,
+    needsReview: Bool,
+    mergedCount: Int,
+    upiKindRaw: String?,
+    counterpartyVPA: String?
   ) -> String {
     let iso = ISO8601DateFormatter()
     iso.formatOptions = [.withInternetDateTime]
@@ -38,10 +57,19 @@ public enum TransactionCSVExporter {
     let isoDate = iso.string(from: date)
     let description = csvField(descriptionText)
     let merchant = csvField(merchantName ?? "")
+    // Amount never passes through `csvField` — a negative amount's leading
+    // `-` would otherwise trip the OWASP-injection prefix meant for text.
     let amount = plainDecimal(amountMinor)
-    let categoryIDField = categoryID?.uuidString ?? ""
-    let accountIDField = accountID?.uuidString ?? ""
-    return "\(isoDate),\(description),\(merchant),\(amount),\(directionRaw),\(categoryIDField),\(accountIDField)"
+    let currency = csvField(currencyCode)
+    let direction = csvField(directionRaw)
+    let category = csvField(categoryName)
+    let account = csvField(accountName)
+    let source = csvField(sourceRaw)
+    let needsReviewField = csvField(needsReview ? "true" : "false")
+    let mergedCountField = csvField(String(mergedCount))
+    let upiKind = csvField(upiKindRaw ?? "")
+    let vpa = csvField(counterpartyVPA ?? "")
+    return "\(isoDate),\(description),\(merchant),\(amount),\(currency),\(direction),\(category),\(account),\(source),\(needsReviewField),\(mergedCountField),\(upiKind),\(vpa)"
   }
 
   private static func plainDecimal(_ amountMinor: Int) -> String {
@@ -52,11 +80,32 @@ public enum TransactionCSVExporter {
     return "\(sign)\(whole).\(String(format: "%02d", fraction))"
   }
 
+  /// Standard CSV quoting plus the OWASP formula-injection mitigation: a
+  /// field beginning with `=`, `+`, `-`, `@`, tab or CR is prefixed with a
+  /// leading `'` before the usual comma/quote/newline quoting is applied, so
+  /// a spreadsheet never interprets an exported cell as a formula.
   private static func csvField(_ value: String) -> String {
-    guard value.contains(",") || value.contains("\"") || value.contains("\n") else {
+    var value = value
+    if let first = value.first, "=+-@\t\r".contains(first) {
+      value = "'\(value)"
+    }
+    guard value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r") else {
       return value
     }
     let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
     return "\"\(escaped)\""
+  }
+}
+
+/// Category/account display names keyed by id, so the exporter never needs
+/// to know how those stores are fetched — `ReportsScreen` builds this from
+/// its own `@Query` results.
+public struct CSVNameMaps: Sendable {
+  public let categories: [UUID: String]
+  public let accounts: [UUID: String]
+
+  public init(categories: [UUID: String], accounts: [UUID: String]) {
+    self.categories = categories
+    self.accounts = accounts
   }
 }

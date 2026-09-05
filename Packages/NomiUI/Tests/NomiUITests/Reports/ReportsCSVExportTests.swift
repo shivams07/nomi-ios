@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import NomiCore
 @testable import NomiUI
 
 /// `TransactionCSVExporter` itself (plain decimal amounts, no ₹, no grouping
@@ -11,25 +12,30 @@ import XCTest
 /// `TransactionCSVExporterTests.exportHeaderAlwaysPresentEvenForZeroRows`
 /// already uses) without needing an `@Model` instance under `swift test`.
 final class ReportsCSVExportTests: XCTestCase {
+  private let names = CSVNameMaps(categories: [:], accounts: [:])
+
   func testWriteProducesAFileContainingTheHeaderRow() throws {
-    let url = try ReportsCSVExport.write([], filename: "reports-export-test.csv")
+    let url = try ReportsCSVExport.write([], names: names, periodLabel: "header-test")
     defer { try? FileManager.default.removeItem(at: url) }
 
     let contents = try String(contentsOf: url, encoding: .utf8)
-    XCTAssertTrue(contents.hasPrefix("date,description,merchant,amount,direction,category_id,account_id"))
-  }
-
-  func testWriteUsesTheRequestedFilename() throws {
-    let url = try ReportsCSVExport.write([], filename: "custom-name.csv")
-    defer { try? FileManager.default.removeItem(at: url) }
-
-    XCTAssertEqual(url.lastPathComponent, "custom-name.csv")
+    XCTAssertTrue(contents.hasPrefix("date,description,merchant,amount,currency,direction,category,account,source,needs_review,merged_count,upi_kind,counterparty_vpa"))
   }
 
   func testWriteLocatesTheFileInTheTemporaryDirectory() throws {
-    let url = try ReportsCSVExport.write([], filename: "reports-export-location-test.csv")
+    let url = try ReportsCSVExport.write([], names: names, periodLabel: "location-test")
     defer { try? FileManager.default.removeItem(at: url) }
 
     XCTAssertTrue(url.path.hasPrefix(FileManager.default.temporaryDirectory.path))
+  }
+
+  func testConsecutiveWritesProduceDifferentURLsAndRemoveThePreviousFile() throws {
+    let first = try ReportsCSVExport.write([], names: names, periodLabel: "consecutive-test")
+    let second = try ReportsCSVExport.write([], names: names, periodLabel: "consecutive-test")
+    defer { try? FileManager.default.removeItem(at: second) }
+
+    XCTAssertNotEqual(first, second)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: first.path))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
   }
 }
