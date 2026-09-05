@@ -15,16 +15,15 @@ import SwiftData
 ///    `InsightsCache` holds them; `WriteCoordinator` clears it. A dashboard
 ///    re-renders many times per period selection and must not re-query for each.
 ///
-/// The arithmetic itself is in `InsightsAggregator`, over value types, because
-/// nothing that touches a `@Model` can be executed by a test on this project.
-/// This file is the fetch and the mapping, and is compile-verified only.
+/// The arithmetic itself is in `InsightsAggregator`, over value types. This
+/// file is the fetch and the mapping. Its older comment said a `@Model` could
+/// not be reached by a test here at all; that was measured wrong (PR #27) —
+/// XCTest builds a container fine, and `RecentTransactionsTests` does.
 ///
-/// **One known residual, stated rather than hidden:** `DashboardView` (U9,
-/// merged) calls `transactions(in: .allTime)` to render five recent rows, so
-/// the first call after each write materialises the whole ledger. The cache
-/// makes it once per write rather than once per render, which is the most this
-/// side of the seam can do — narrowing the call itself is a change to
-/// `NomiUI/Dashboard/**`, which is not this unit's to make.
+/// The residual this comment used to record — `DashboardView` rendering five
+/// recent rows off `transactions(in: .allTime)`, so the first call after each
+/// write materialised the whole ledger — is fixed: it calls
+/// `recentTransactions(limit:)`, which is a `fetchLimit`.
 @MainActor
 public final class SwiftDataInsightsStore: InsightsStore {
   private let context: ModelContext
@@ -122,6 +121,22 @@ public final class SwiftDataInsightsStore: InsightsStore {
         // — the ledger, and `RecentRows.mostRecent` — and SQLite has the index.
         sortBy: [SortDescriptor(\Transaction.date, order: .reverse)]
       )
+      descriptor.includePendingChanges = true
+      return try context.fetch(descriptor)
+    }
+  }
+
+  /// F2. `fetchLimit` in the store, not `prefix` in Swift - the point is that
+  /// SQLite stops after `limit` rows rather than handing the whole ledger
+  /// across for the caller to throw away. No date predicate: the sort is on
+  /// `date` descending and the limit does the bounding.
+  public func recentTransactions(limit: Int) throws -> [Transaction] {
+    try cache.value(for: .recent(limit: limit)) {
+      guard limit > 0 else { return [] }
+      var descriptor = FetchDescriptor<Transaction>(
+        sortBy: [SortDescriptor(\Transaction.date, order: .reverse)]
+      )
+      descriptor.fetchLimit = limit
       descriptor.includePendingChanges = true
       return try context.fetch(descriptor)
     }

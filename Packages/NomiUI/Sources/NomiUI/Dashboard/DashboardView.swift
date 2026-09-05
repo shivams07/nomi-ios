@@ -19,6 +19,18 @@ enum DashboardWiring {
   static func shouldShowBudgetModule(_ items: [BudgetProgress]) -> Bool {
     !items.isEmpty
   }
+
+  /// `RecentTransactionsCard` shows five rows and trims to five itself; the
+  /// dashboard used to hand it `transactions(in: .allTime)`, so every write
+  /// materialised the whole ledger to render those five (F2). This is here
+  /// rather than inline in `body` so a test can hold it to that - `body`
+  /// itself is not reachable from `swift test`.
+  static let recentTransactionLimit = 5
+
+  @MainActor
+  static func recentTransactions(from store: InsightsStore) -> [NomiCore.Transaction] {
+    (try? store.recentTransactions(limit: recentTransactionLimit)) ?? []
+  }
 }
 
 /// The home screen (U9). Composes the period selector and every dashboard
@@ -66,7 +78,7 @@ public struct DashboardView: View {
   }
 
   private var recentTransactions: [NomiCore.Transaction] {
-    (try? insightsStore.transactions(in: .allTime)) ?? []
+    DashboardWiring.recentTransactions(from: insightsStore)
   }
 
   public var body: some View {

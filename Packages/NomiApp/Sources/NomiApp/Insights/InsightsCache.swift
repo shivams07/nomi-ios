@@ -14,6 +14,7 @@ public enum InsightsCacheKey: Hashable, Sendable {
   case accountSummaries(includeArchived: Bool)
   case budgetProgress(year: Int, month: Int)
   case transactions(InsightPeriod)
+  case recent(limit: Int)
 }
 
 /// R14's "cached per period and invalidated on write", as a thing by itself.

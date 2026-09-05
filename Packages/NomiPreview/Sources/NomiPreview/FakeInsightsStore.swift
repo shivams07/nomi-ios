@@ -142,4 +142,8 @@ public final class FakeInsightsStore: InsightsStore {
     let range = dateRange(for: period, calendar: calendar)
     return transactions.filter { range.contains($0.date) }
   }
+
+  public func recentTransactions(limit: Int) throws -> [Transaction] {
+    Array(transactions.sorted { $0.date > $1.date }.prefix(max(0, limit)))
+  }
 }
