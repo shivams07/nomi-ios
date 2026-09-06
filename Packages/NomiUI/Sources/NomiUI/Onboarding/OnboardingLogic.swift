@@ -42,12 +42,35 @@ public enum MailProvider: String, CaseIterable, Identifiable, Sendable, Hashable
 
 /// The connect form's Save gate: an address is always required; a host is
 /// only required when the provider does not fix one.
+///
+/// B6 (form half — U1a-park hardens the IMAP transport itself): a pasted
+/// Google app password or a copy-pasted address routinely carries a
+/// trailing newline no typed field ever would, and IMAP's quoted-string
+/// wire format (RFC 3501) cannot carry a line break inside a command at
+/// all. This gate trims one and rejects the other, so a malformed value
+/// never reaches `IMAPCredentials`.
 enum ConnectFormGate {
+  /// Whitespace *and* newlines trimmed from both ends — plain `.whitespaces`
+  /// would leave a trailing `\n` from a pasted app password in place.
+  static func normalized(_ text: String) -> String {
+    text.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
   static func isValid(provider: MailProvider, address: String, host: String, password: String) -> Bool {
-    let hasAddress = !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    let hasPassword = !password.isEmpty
-    let hasHost = provider.fixedHost != nil || !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let trimmedAddress = normalized(address)
+    let trimmedPassword = normalized(password)
+    guard !hasEmbeddedNewline(trimmedAddress), !hasEmbeddedNewline(trimmedPassword) else { return false }
+
+    let hasAddress = !trimmedAddress.isEmpty
+    let hasPassword = !trimmedPassword.isEmpty
+    let hasHost = provider.fixedHost != nil || !normalized(host).isEmpty
     return hasAddress && hasPassword && hasHost
+  }
+
+  /// A newline surviving `normalized` is embedded, not leading/trailing —
+  /// more than one line inside the field itself.
+  private static func hasEmbeddedNewline(_ text: String) -> Bool {
+    text.contains { $0.isNewline }
   }
 }
 
