@@ -66,7 +66,7 @@ final class InsightsAggregatorTests: XCTestCase {
     ]
 
     let insights = InsightsAggregator.insights(
-      period: .month(date(2026, 9, 1)), rows: rows, categories: [:], priorRows: nil)
+      period: .month(year: 2026, month: 9), rows: rows, categories: [:], priorRows: nil)
 
     XCTAssertEqual(insights.debitMinor, 50000, "the dollar row is not 1299 paise")
     XCTAssertEqual(insights.transactionCount, 1)
@@ -81,7 +81,7 @@ final class InsightsAggregatorTests: XCTestCase {
     let rows = [row(1299, .debit, on: day, needsReview: true, currency: "USD")]
 
     let insights = InsightsAggregator.insights(
-      period: .month(date(2026, 9, 1)), rows: rows, categories: [:], priorRows: nil)
+      period: .month(year: 2026, month: 9), rows: rows, categories: [:], priorRows: nil)
 
     XCTAssertEqual(insights.debitMinor, 0)
     XCTAssertEqual(insights.creditMinor, 0)
@@ -96,7 +96,7 @@ final class InsightsAggregatorTests: XCTestCase {
     let rows = [row(1299, .debit, on: day, needsReview: true, currency: "USD")]
 
     let insights = InsightsAggregator.insights(
-      period: .month(date(2026, 9, 1)), rows: rows, categories: [:], priorRows: nil)
+      period: .month(year: 2026, month: 9), rows: rows, categories: [:], priorRows: nil)
 
     XCTAssertTrue(insights.byDay.isEmpty)
     XCTAssertTrue(insights.byCategory.isEmpty)
@@ -113,7 +113,7 @@ final class InsightsAggregatorTests: XCTestCase {
     ]
 
     let insights = InsightsAggregator.insights(
-      period: .month(date(2026, 9, 1)), rows: rows, categories: [:], priorRows: prior)
+      period: .month(year: 2026, month: 9), rows: rows, categories: [:], priorRows: prior)
 
     XCTAssertEqual(insights.priorDebitMinor, 50000)
   }
