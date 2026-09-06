@@ -75,12 +75,16 @@ public enum NomiModelContainer {
   /// catches, and B11 originally assumed it was.** CI proved otherwise: on a
   /// runner with no entitlement `makeCloudKit()` returns normally, and the
   /// mirroring delegate then fails asynchronously (it got as far as
-  /// "Successfully enqueued setup request" before trapping the process). So
-  /// this returns `.cloudKit` and Settings says "On" while nothing syncs —
-  /// the exact false reassurance B11 exists to remove, just moved one step
-  /// later. Detecting that state needs an account/entitlement check
-  /// (`CKContainer.accountStatus`) rather than a `catch`, which is outside
-  /// this unit's file list. Escalated, not silently fixed.
+  /// "Successfully enqueued setup request" before trapping the process).
+  ///
+  /// U9b resolved this, and split it in two along the way. A missing
+  /// entitlement is a build error, not a runtime state, and is not detectable
+  /// at runtime at all — so it is guarded at CI time by
+  /// `EntitlementsParityTests`. An *entitled* build with no usable iCloud
+  /// account is the state users actually reach, and `StorageModeMonitor`
+  /// reports it as `.cloudKitPaused` without touching the store. So what this
+  /// function returns is still only the *construction* answer; it is no longer
+  /// the whole answer, and it is no longer what Settings renders on its own.
   ///
   /// - Parameter cloudKit: the CloudKit container maker. Injectable **only**
   ///   so the fallback branch is reachable in a test — constructing a real

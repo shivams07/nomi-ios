@@ -253,7 +253,29 @@ public struct SettingsScreen: View {
       categoryStore: FakeCategoryStore(),
       ruleStore: FakeRuleStore(),
       notificationSettings: .constant(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9)),
-      storageMode: .localOnly(reason: "CKError 9: Not entitled to use CloudKit")
+      // Not "Not entitled to use CloudKit", which is what this said before:
+      // U9b established that a missing entitlement never surfaces as a
+      // construction error, so that fixture modelled a state that cannot
+      // happen. `.localOnly` is reached by a store that will not open.
+      storageMode: .localOnly(reason: "SwiftDataError: could not open the persistent store")
+    )
+  }
+  .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
+  .preferredColorScheme(.dark)
+}
+
+#Preview("Settings — iCloud signed out, dark") {
+  // U9b's state, and the one a user is most likely to be in: the container
+  // constructed fine, so B11's preview above cannot show it. Sync is paused,
+  // not failed, and the caption says where to go rather than what broke.
+  NavigationStack {
+    SettingsScreen(
+      mailConnectionService: FakeMailConnectionService(),
+      fileImportService: FakeFileImportService(),
+      categoryStore: FakeCategoryStore(),
+      ruleStore: FakeRuleStore(),
+      notificationSettings: .constant(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9)),
+      storageMode: .cloudKitPaused(.noAccount)
     )
   }
   .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())

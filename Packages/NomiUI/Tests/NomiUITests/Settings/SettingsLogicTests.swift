@@ -123,4 +123,87 @@ final class SettingsLogicTests: XCTestCase {
     XCTAssertFalse(StorageMode.localOnly(reason: "x").isSyncing)
     XCTAssertEqual(StorageMode.localOnly(reason: "x").reason, "x")
   }
+
+  // MARK: - U9b: paused is its own state, and reads differently from failed
+
+  /// Each paused reason gets its own words. Collapsing them into one "Off"
+  /// would be the same failure B11 fixed, one level down: the user is told
+  /// sync is off and still has no idea what to do about it.
+  func testEachPausedReasonHasItsOwnText() {
+    let texts = [
+      StorageModeDisplay.text(for: .cloudKitPaused(.noAccount)),
+      StorageModeDisplay.text(for: .cloudKitPaused(.restricted)),
+      StorageModeDisplay.text(for: .cloudKitPaused(.temporarilyUnavailable)),
+      StorageModeDisplay.text(for: .cloudKitPaused(.couldNotDetermine("x"))),
+      StorageModeDisplay.text(for: .localOnly(reason: "x")),
+      StorageModeDisplay.text(for: .cloudKit),
+    ]
+
+    XCTAssertEqual(Set(texts).count, texts.count, "no two states may read the same")
+    XCTAssertEqual(
+      StorageModeDisplay.text(for: .cloudKitPaused(.noAccount)), "Off — not signed in to iCloud")
+    XCTAssertEqual(
+      StorageModeDisplay.text(for: .cloudKitPaused(.restricted)), "Off — iCloud restricted")
+  }
+
+  /// The one paused state that must not say "Off": it resolves on its own, and
+  /// telling the user sync is off invites them to fix something that is not
+  /// broken.
+  func testTemporarilyUnavailableDoesNotClaimSyncIsOff() {
+    let text = StorageModeDisplay.text(for: .cloudKitPaused(.temporarilyUnavailable))
+
+    XCTAssertEqual(text, "Waiting for iCloud")
+    XCTAssertFalse(text.contains("Off"))
+  }
+
+  /// The actionable one. A user signed out of iCloud can fix this in a minute
+  /// if they are told where to go, and never if they are not.
+  func testTheSignedOutCaptionNamesTheSettingsApp() {
+    let caption = StorageModeDisplay.caption(for: .cloudKitPaused(.noAccount))
+
+    XCTAssertNotNil(caption)
+    XCTAssertTrue(caption?.contains("Settings app") == true)
+    XCTAssertTrue(caption?.contains("Sign in to iCloud") == true)
+  }
+
+  func testAnUndeterminedStatusCarriesItsDetailThrough() {
+    let caption = StorageModeDisplay.caption(for: .cloudKitPaused(.couldNotDetermine("CKError 4")))
+
+    XCTAssertTrue(
+      caption?.contains("CKError 4") == true,
+      "developer-shaped text, deliberately: a user who can read it out gives a usable report")
+  }
+
+  /// The invariant across every non-syncing state, checked in one place so a
+  /// later case cannot quietly skip it. The report this row exists to prevent
+  /// is "the app lost my data" — reassurance comes before explanation.
+  func testEveryNonSyncingCaptionOpensBySayingTheDataIsSafe() {
+    let modes: [StorageMode] = [
+      .localOnly(reason: "boom"),
+      .cloudKitPaused(.noAccount),
+      .cloudKitPaused(.restricted),
+      .cloudKitPaused(.temporarilyUnavailable),
+      .cloudKitPaused(.couldNotDetermine("boom")),
+    ]
+
+    for mode in modes {
+      let caption = StorageModeDisplay.caption(for: mode)
+      XCTAssertTrue(
+        caption?.hasPrefix("Your data is safe on this device") == true,
+        "\(mode) opens with: \(caption ?? "nil")")
+    }
+  }
+
+  /// `isSyncing` is what the row's styling keys off, so a paused state
+  /// reporting `true` would render as "On" no matter what the text says.
+  /// `reason` stays construction-only — the paused states explain themselves
+  /// through `SyncPauseReason`, not through an error string.
+  func testAPausedModeIsNotSyncingAndCarriesNoConstructionReason() {
+    for reason: SyncPauseReason in [
+      .noAccount, .restricted, .temporarilyUnavailable, .couldNotDetermine("x"),
+    ] {
+      XCTAssertFalse(StorageMode.cloudKitPaused(reason).isSyncing)
+      XCTAssertNil(StorageMode.cloudKitPaused(reason).reason)
+    }
+  }
 }

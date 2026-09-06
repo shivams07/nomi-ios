@@ -16,10 +16,20 @@ import SwiftData
 public final class AppEnvironment: ObservableObject {
   public let container: ModelContainer
 
-  /// Whether that container is the CloudKit one or the local fallback (B11).
-  /// Read by `RootView` and rendered in Settings; defaulted so the only
-  /// construction that has to care is `AppServices.shared`.
-  public let storageMode: StorageMode
+  /// Whether that container is the CloudKit one or the local fallback, and
+  /// whether it is actually syncing (B11, then U9b).
+  ///
+  /// **Observed, not a constant.** It began as a `let` set from the container
+  /// construction, which cannot see the state users actually hit: signing out
+  /// of iCloud stops sync on a process that has already reported "On". The
+  /// monitor republishes into this, and `RootView` reads it in `body`, so the
+  /// Settings row follows the account without any screen changing.
+  @Published public private(set) var storageMode: StorageMode
+
+  /// Owns the account probing behind `storageMode`. Exposed because
+  /// `NomiAppScene` has to drive it — once from a `.task`, and again on every
+  /// foreground.
+  public let storageMonitor: StorageModeMonitor
   public let cache: InsightsCache
   public let coordinator: WriteCoordinator
 
@@ -69,10 +79,12 @@ public final class AppEnvironment: ObservableObject {
     preferences: any KeyValueStoring = UserDefaultsKeyValueStore(),
     credentials: any MailCredentialStoring = KeychainCredentialStore(),
     mailFetcher: any MailFetching = NWIMAPFetcher(),
-    scheduler: any BudgetNotificationScheduling = BudgetNotificationScheduler()
+    scheduler: any BudgetNotificationScheduling = BudgetNotificationScheduler(),
+    accountProbe: any CloudKitAccountProbing = CKAccountProbe()
   ) {
     self.container = container
     self.storageMode = storageMode
+    self.storageMonitor = StorageModeMonitor(constructed: storageMode, probe: accountProbe)
     self.credentials = credentials
 
     let cache = InsightsCache()
@@ -188,6 +200,14 @@ public final class AppEnvironment: ObservableObject {
     // so no `receive(on:)` is needed or wanted — hopping would put the redraw a
     // runloop turn behind the write.
     cache.$generation.assign(to: &$insightsGeneration)
+
+    // Same shape, same reason (U9b). The monitor owns the answer; this is the
+    // republish that lets a NomiUI screen see it, since `RootView` is handed
+    // `environment.storageMode` and not the monitor.
+    //
+    // It publishes the constructed value immediately on subscribe, so
+    // `storageMode` is never briefly wrong between here and the first probe.
+    storageMonitor.$mode.assign(to: &$storageMode)
   }
 
   /// Runs once per launch, before the first frame the user acts on.
