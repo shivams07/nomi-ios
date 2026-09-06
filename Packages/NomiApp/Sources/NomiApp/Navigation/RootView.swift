@@ -122,7 +122,8 @@ struct RootView: View {
           fileImportService: environment.fileImportService,
           categoryStore: environment.categoryStore,
           ruleStore: environment.ruleStore,
-          notificationSettings: environment.notificationSettings.binding
+          notificationSettings: environment.notificationSettings.binding,
+          storageMode: environment.storageMode
         )
         .toolbar {
           ToolbarItem(placement: .primaryAction) {
