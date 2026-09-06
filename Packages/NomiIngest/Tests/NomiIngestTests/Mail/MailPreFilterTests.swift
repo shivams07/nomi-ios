@@ -239,10 +239,13 @@ final class MailPreFilterTests: XCTestCase {
   /// The domains this unit adds to `senders.json`'s `candidateDomains`.
   ///
   /// Every one of them is TOKENLESS, and that is the entire selection rule.
-  /// Ring 3 of `isCandidateDomain` is `domain.contains(token)` over the eight
-  /// `candidateDomainTokens`, so any domain carrying `bank`, `card`, `upi`,
-  /// `netbanking`, `alerts`, `paytm`, `phonepe` or `npci` was already admitted
-  /// before anyone typed it. Measured at `92d90c5`: 17 of the 22 entries then on
+  /// Ring 3 of `isCandidateDomain` was `domain.contains(token)` over eight
+  /// `candidateDomainTokens` when this list was written, so any domain carrying
+  /// `bank`, `card`, `upi`, `netbanking`, `alerts`, `paytm`, `phonepe` or `npci`
+  /// was already admitted before anyone typed it. U1b narrowed ring 3 to label
+  /// matching and dropped two of the tokens, which can only make this list MORE
+  /// load-bearing, never less - the assertions below are unchanged and still
+  /// hold. Measured at `92d90c5`: 17 of the 22 entries then on
   /// the list are dead weight for exactly that reason, and only five -
   /// `sbi.co.in`, `kotak.com`, `americanexpress.com`, `pnb.co.in`,
   /// `indusind.com` - carry any admission at all. This list is the same shape as
@@ -288,7 +291,12 @@ final class MailPreFilterTests: XCTestCase {
   /// at all, and a diff that reads like widening while doing nothing.
   func testEveryDomainAddedByThisUnitIsTokenless() {
     let tokens = SenderPack.bundled.candidateDomainTokens
-    XCTAssertEqual(tokens.count, 8, "the token ring changed - re-measure the list")
+    // Six since U1b: `alerts` and `card` are gone. The count is pinned rather
+    // than ignored because a token silently reappearing would widen admission
+    // for every domain in the pack at once.
+    XCTAssertEqual(tokens.count, 6, "the token ring changed - re-measure the list")
+    XCTAssertFalse(tokens.contains("alerts"), "B7 removed this one")
+    XCTAssertFalse(tokens.contains("card"), "B7 removed this one")
 
     for domain in Self.domainsAddedByThisUnit {
       for token in tokens {
@@ -326,4 +334,57 @@ final class MailPreFilterTests: XCTestCase {
     }
     XCTAssertEqual(Set(domains).count, domains.count, "duplicate in candidateDomains")
   }
+  // MARK: - B7: tokens match domain labels, not substrings
+
+  /// **Fails before this unit.** Ring 3 is `domain.contains(token)`, so `alerts`
+  /// admitted every mailing list that sends from an `alerts.` host and `card`
+  /// admitted every gift-card and loyalty promotion. Neither is a bank, and both
+  /// then had to be argued back out at the verb and promotional gates.
+  func testATokenInsideALabelDoesNotAdmitANonBankDomain() {
+    let filter = MailPreFilter()
+
+    XCTAssertFalse(filter.isCandidateDomain("alerts.linkedin.com"))
+    XCTAssertFalse(filter.isCandidateDomain("mailer.giftcard-deals.com"))
+  }
+
+  /// The same two through the whole gate rather than the domain ring alone: both
+  /// bodies carry an amount and a transaction verb, so the domain is the only
+  /// thing that can reject them - and the REASON has to say so, because
+  /// `unmatchedSenders` counts near-misses off it.
+  func testThoseDomainsAreRejectedAsUnknownDomainAndNotOnTheVerb() {
+    let filter = MailPreFilter()
+
+    for domain in ["alerts.linkedin.com", "mailer.giftcard-deals.com"] {
+      let message = MailMessage(
+        uid: 1, uidValidity: 900_100,
+        fromRaw: "Notifications <news@" + domain + ">",
+        subject: "Your weekly update",
+        headerDate: Date(timeIntervalSince1970: 1_777_000_000),
+        htmlBody: nil,
+        textBody: "Rs. 500.00 has been credited to your rewards balance.")
+
+      XCTAssertEqual(filter.verdict(for: message), .rejected(.unknownDomain), domain)
+    }
+  }
+
+  /// The other half, and the one that makes the change safe: every domain the
+  /// token ring exists for is still admitted, by a label that ENDS with a token
+  /// or by an outer ring.
+  func testTheDomainsTheTokenRingIsForAreStillAdmitted() {
+    let filter = MailPreFilter()
+
+    XCTAssertTrue(filter.isCandidateDomain("alerts.hdfcbank.net"))      // label "hdfcbank"
+    XCTAssertTrue(filter.isCandidateDomain("hdfcbank.net"))             // pack entry
+    XCTAssertTrue(filter.isCandidateDomain("netbanking.sbi.co.in"))     // label "netbanking"
+    XCTAssertTrue(filter.isCandidateDomain("bandhanbank.in"))           // label "bandhanbank"
+    XCTAssertTrue(filter.isCandidateDomain("alerts.sbi.co.in"))         // candidateDomains
+    XCTAssertTrue(filter.isCandidateDomain("sbicard.com"))              // candidateDomains
+    XCTAssertTrue(filter.isCandidateDomain("onecard.in"))               // candidateDomains
+    // `jupiter.money` was admitted only because "jupiter" CONTAINS "upi", which
+    // is exactly the accident this unit removes - the label ends in "iter". It
+    // is a real neobank sending real receipts, so it moves onto
+    // `candidateDomains` rather than dropping out of the gate unnoticed.
+    XCTAssertTrue(filter.isCandidateDomain("jupiter.money"))
+  }
+
 }

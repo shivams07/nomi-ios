@@ -310,6 +310,41 @@ final class MailExtractionFixtureTests: XCTestCase {
     let message = try MailFixtures.message("axis_debit_atm.eml", uid: 4242)
     XCTAssertEqual(message.externalID, "INBOX/900100/4242")
   }
+  // MARK: - B9: a sender that fails authentication is flagged, not dropped
+
+  /// R6 applied to spoofing: a bank whose DKIM is broken, or a message that came
+  /// through a forwarder, must not vanish. The row is written and carries the
+  /// reason.
+  ///
+  /// The fixture has NO `dmarc=` result - it is `dkim=fail` plus `spf=softfail`,
+  /// which is the shape a forged sender actually arrives in.
+  func testASpoofedSenderIsFlaggedRatherThanDropped() throws {
+    let message = try MailFixtures.message("spoofed_hdfc_dkim_fail.eml")
+
+    let draft = try XCTUnwrap(
+      MailTransactionExtractor().outcome(for: message).draft, "flagged, never dropped")
+
+    XCTAssertEqual(draft.amountMinor, 875_000)
+    XCTAssertTrue(draft.needsReview)
+    XCTAssertEqual(draft.needsReviewReason, .unauthenticatedSender)
+  }
+
+  /// Failing authentication says something about the sender, not about which
+  /// account the money left. A resolved binding survives the flag - otherwise a
+  /// spoofed row would land unassigned as well, and the user would have two
+  /// things to untangle instead of one.
+  func testAnUnauthenticatedSenderKeepsTheAccountItResolved() throws {
+    let accountID = UUID()
+    let extractor = MailTransactionExtractor(bindings: FixedBinding(accountID))
+    let message = try MailFixtures.message("spoofed_hdfc_dkim_fail.eml")
+
+    let draft = try XCTUnwrap(extractor.outcome(for: message).draft)
+
+    XCTAssertEqual(draft.accountID, accountID)
+    XCTAssertTrue(draft.needsReview, "the account resolving does not clear this one")
+    XCTAssertEqual(draft.needsReviewReason, .unauthenticatedSender)
+  }
+
 }
 
 // MARK: - Test doubles

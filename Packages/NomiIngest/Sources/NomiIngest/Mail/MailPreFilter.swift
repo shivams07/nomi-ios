@@ -121,6 +121,27 @@ public struct MailPreFilter: Sendable {
     if pack.candidateDomains.contains(where: { domain == $0 || domain.hasSuffix("." + $0) }) {
       return true
     }
-    return pack.candidateDomainTokens.contains { domain.contains($0) }
+    // B7. Ring 3 matches LABELS, not the domain string.
+    //
+    // `domain.contains(token)` admitted anything with a bank-ish word buried
+    // anywhere in it: `alerts` took every mailing list on an `alerts.` host,
+    // `card` took every gift-card promotion, and `upi` sat inside `jupiter`.
+    // Those messages then had to be argued back out at the verb and promotional
+    // gates, which is the wrong place - a non-bank should never have been a
+    // candidate at all, and every one that got through inflated
+    // `unmatchedSenders` with mail no bank ever sent.
+    //
+    // A token admits when it IS a label or is the TRAILING part of one, because
+    // that is how these names are built: `hdfcbank`, `bandhanbank`,
+    // `netbanking`. Leading is not enough - `bankbazaar` is a comparison site,
+    // not a bank - so a genuine bank whose name only STARTS with a token needs
+    // an explicit `candidateDomains` entry, and `bankofbaroda.in` has one.
+    //
+    // `-` splits as well as `.`: `giftcard-deals.com` is two labels, and the
+    // hyphen is how marketing domains are assembled.
+    let labels = domain.split(whereSeparator: { $0 == "." || $0 == "-" })
+    return pack.candidateDomainTokens.contains { token in
+      labels.contains { $0.hasSuffix(token) }
+    }
   }
 }
