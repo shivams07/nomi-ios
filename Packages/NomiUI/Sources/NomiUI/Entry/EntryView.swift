@@ -15,6 +15,7 @@ public struct EntryView: View {
   public let onSaved: (() -> Void)?
 
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
+  @Query(sort: \NomiCore.Account.displayName) private var accounts: [NomiCore.Account]
 
   @Environment(\.dismiss) private var dismiss
   @FocusState private var isAmountFocused: Bool
@@ -23,10 +24,13 @@ public struct EntryView: View {
   @State private var direction: Direction = EntryDefaults.direction
   @State private var date = Date()
   @State private var categoryID: UUID?
+  @State private var accountID: UUID?
   @State private var note = ""
   @State private var isCategoryPickerPresented = false
   @State private var isDatePickerPresented = false
+  @State private var isAccountPickerPresented = false
   @State private var didPrefillCategory = false
+  @State private var errorMessage: String?
 
   public init(transactionStore: TransactionStore, categoryStore: CategoryStore, onSaved: (() -> Void)? = nil) {
     self.transactionStore = transactionStore
@@ -39,6 +43,10 @@ public struct EntryView: View {
 
   private var selectedCategory: NomiCore.Category? {
     categories.first { $0.id == categoryID }
+  }
+
+  private var selectedAccount: NomiCore.Account? {
+    accounts.first { $0.id == accountID }
   }
 
   public var body: some View {
@@ -71,6 +79,7 @@ public struct EntryView: View {
       guard !didPrefillCategory else { return }
       didPrefillCategory = true
       categoryID = transactionStore.lastUsedCategoryID()
+      accountID = EntryAccountDefault.preselection(from: accounts)
     }
     .sheet(isPresented: $isCategoryPickerPresented) {
       CategoryPickerSheet(categoryStore: categoryStore, selection: $categoryID)
@@ -78,6 +87,19 @@ public struct EntryView: View {
     .sheet(isPresented: $isDatePickerPresented) {
       DatePickerSheet(date: $date)
     }
+    .sheet(isPresented: $isAccountPickerPresented) {
+      // `accountStore: nil` — the entry sheet offers no inline account
+      // creation; the picker's empty state points at the Accounts screen
+      // instead (v2 amendment). Keeps `EntryView.init` unchanged.
+      AccountPickerSheet(accountStore: nil, selection: accountID, onSelect: { accountID = $0 })
+    }
+    .alert(
+      "Something went wrong",
+      isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }),
+      presenting: errorMessage,
+      actions: { _ in Button("OK", role: .cancel) {} },
+      message: { message in Text(message) }
+    )
   }
 
   private var amountField: some View {
@@ -116,6 +138,12 @@ public struct EntryView: View {
         leadingSymbol: selectedCategory?.symbolName ?? "questionmark.circle",
         action: { isCategoryPickerPresented = true }
       )
+      EntryChip(
+        label: selectedAccount?.displayName ?? "Unassigned",
+        leadingColor: nil,
+        leadingSymbol: "creditcard",
+        action: { isAccountPickerPresented = true }
+      )
       Spacer(minLength: 0)
     }
   }
@@ -149,29 +177,57 @@ public struct EntryView: View {
       amountMinor: amountMinor,
       descriptionText: note,
       direction: direction,
-      categoryID: categoryID
+      categoryID: categoryID,
+      accountID: accountID
     )
-    guard (try? transactionStore.add(draft)) != nil else { return }
-    onSaved?()
-    dismiss()
+    do {
+      _ = try transactionStore.add(draft)
+      onSaved?()
+      dismiss()
+    } catch {
+      // F8 (v3 amendment): a failed save used to be silently swallowed by
+      // `try?`. Dismissing the alert is the only thing this does — neither
+      // `onSaved?()` nor `dismiss()` ran, so the sheet stays open with every
+      // typed field, including the draft, exactly as the user left it.
+      errorMessage = "Could not save the transaction."
+    }
   }
 }
 
+// M3: every preview's container now needs `NomiCore.Account` in its schema
+// too, since `EntryView` `@Query`s it — `makeCategoryContainer(accounts:)`,
+// not the original `makeCategoryContainer(seed:)`, which stays as it was
+// for `CategoryEditorSheet`/`RulesScreen`.
+
 #Preview("Entry — default, dark") {
   EntryView(transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore())
-    .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer())
+    .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer(accounts: []))
     .preferredColorScheme(.dark)
 }
 
 #Preview("Entry — accessibility 3, dark") {
   EntryView(transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore())
-    .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer())
+    .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer(accounts: []))
     .environment(\.dynamicTypeSize, .accessibility3)
     .preferredColorScheme(.dark)
 }
 
 #Preview("Entry — no categories yet, dark") {
   EntryView(transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore(categories: []))
-    .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer(seed: []))
+    .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer(seed: [], accounts: []))
+    .preferredColorScheme(.dark)
+}
+
+/// M3 done-when: "the chip 'Unassigned' with no accounts" is the three
+/// previews above (none seed an account). This one is the counterpart: one
+/// active account, so `EntryAccountDefault.preselection` picks it and the
+/// chip shows it before Save, with no tap needed.
+#Preview("Entry — account prefilled, dark") {
+  EntryView(transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore())
+    .modelContainer(
+      EntryRulesPreviewSupport.makeCategoryContainer(
+        accounts: [NomiCore.Account(displayName: "HDFC Savings", institution: "HDFC Bank", lastFour: "4821")]
+      )
+    )
     .preferredColorScheme(.dark)
 }

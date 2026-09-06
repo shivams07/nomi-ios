@@ -53,9 +53,36 @@ enum EntryAmount {
 }
 
 /// Save is enabled the instant the typed amount is positive — no other field
-/// on the entry sheet gates it, per the done-when.
+/// on the entry sheet gates it, per the done-when. M3 (v3 amendment): the
+/// account chip is prefilled and optional, so this signature must never grow
+/// an `accountID` parameter — `EntryAccountTests` pins that down directly.
 enum EntrySaveGate {
   static func isEnabled(amountMinor: Int) -> Bool {
     amountMinor > 0
+  }
+}
+
+/// M3. Kept separate from `NomiCore.Account` so `preselection` is testable
+/// without constructing an `@Model` instance — this package's `swift test`
+/// runner cannot do that headlessly (see `InMemoryModelContainer`'s note in
+/// NomiCore), same reason `LedgerRow`/`DatedRow` exist elsewhere in this
+/// module. `Account` costs nothing extra to conform.
+protocol AccountArchivable {
+  var id: UUID { get }
+  var isArchived: Bool { get }
+}
+
+extension NomiCore.Account: AccountArchivable {}
+
+/// Prefills the entry sheet's account chip — but only when there is exactly
+/// one sensible answer. With one active account, "which account" has one
+/// value and showing it before Save is a convenience, not a guess. With zero
+/// or two-or-more it must NOT guess (§1.2), and the chip stays "Unassigned",
+/// one tap from the picker either way.
+enum EntryAccountDefault {
+  static func preselection<Row: AccountArchivable>(from accounts: [Row]) -> UUID? {
+    let active = accounts.filter { !$0.isArchived }
+    guard active.count == 1 else { return nil }
+    return active[0].id
   }
 }

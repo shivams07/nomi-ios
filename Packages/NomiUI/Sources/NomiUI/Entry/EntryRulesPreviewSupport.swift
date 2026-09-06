@@ -37,6 +37,27 @@ enum EntryRulesPreviewSupport {
     return container
   }
 
+  /// M3. A genuine overload, not a change to `makeCategoryContainer(seed:)`
+  /// above — `accounts` has no default, so a call site that only names
+  /// `seed:` (`CategoryEditorSheet`, `RulesScreen`) keeps resolving to the
+  /// original and stays untouched. Only `EntryView`'s own previews, which
+  /// now `@Query` `NomiCore.Account` too, need a container whose schema
+  /// actually includes it.
+  @MainActor
+  static func makeCategoryContainer(seed: [NomiCore.Category]? = nil, accounts: [NomiCore.Account]) -> ModelContainer {
+    let container = try! ModelContainer(
+      for: Schema([NomiCore.Category.self, NomiCore.Account.self]),
+      configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+    )
+    for category in seed ?? makeCategories() {
+      container.mainContext.insert(category)
+    }
+    for account in accounts {
+      container.mainContext.insert(account)
+    }
+    return container
+  }
+
   @MainActor
   static func makeRulesContainer() -> ModelContainer {
     let container = try! ModelContainer(
