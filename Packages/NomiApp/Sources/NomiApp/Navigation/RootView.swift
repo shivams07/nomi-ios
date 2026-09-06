@@ -59,6 +59,16 @@ struct RootView: View {
         DashboardView(
           insightsStore: environment.insightsStore,
           mailConnectionService: environment.mailConnectionService,
+          // Built here rather than held on `AppEnvironment`, per U17b's own
+          // spec — unlike `LedgerScreen`'s `editor` below, this is not
+          // debt to fold in later, it's the design: `SwiftDataInsightsStore`
+          // and `SwiftDataRecurringStore` already share `environment.cache`,
+          // so constructing this here costs nothing beyond the call and
+          // shares that cache like every other store does.
+          recurringStore: SwiftDataRecurringStore(
+            context: environment.container.mainContext,
+            cache: environment.cache
+          ),
           // Stored and never read by the screen — see `DashboardView`'s note.
           // It is what makes SwiftUI re-invoke `body` after a write, and it is
           // only doing that job because it *changes*: passing a literal here
