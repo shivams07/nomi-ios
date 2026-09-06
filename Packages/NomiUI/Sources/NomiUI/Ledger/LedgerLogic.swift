@@ -1,5 +1,6 @@
 import Foundation
 import NomiCore
+import SwiftData
 
 /// Anything with the fields a ledger day-group needs to sum and sort — kept
 /// separate from `Transaction` so grouping/total math is testable without
@@ -110,5 +111,39 @@ enum LedgerWindow {
   static func since(for stepsBack: Int, now: Date, calendar: Calendar = .current) -> Date {
     let days = (stepsBack + 1) * 90
     return calendar.date(byAdding: .day, value: -days, to: now) ?? now
+  }
+}
+
+/// U16: the ledger's `@Query` filter, plus the chip/search matching applied
+/// to whatever it fetches.
+///
+/// Two straight CI failures ruled out folding category and search into the
+/// `#Predicate` itself: build 34008249071 hit "the compiler is unable to
+/// type-check this expression in reasonable time" on the combined date +
+/// category + search boolean tree in one expression; splitting that into
+/// named `let` sub-expressions (looked like the compiler's own suggested
+/// fix) then failed build 34009202915 with "Predicate body may only contain
+/// one expression" — a `#Predicate` closure is exactly one expression,
+/// always, no multi-statement rewrite is legal syntax for it. Rather than
+/// guess a third shape blind (no Swift toolchain on this machine to check
+/// before pushing), `make` now only pushes the proven-safe `since` bound
+/// into the `@Query`; `matches` is a plain Swift function — no expression-
+/// count ceiling — that `LedgerTransactionList` applies to the fetched rows,
+/// same shape as the `LedgerFiltering.apply` pass this replaced.
+enum LedgerFilterPredicate {
+  static func make(since: Date) -> Predicate<NomiCore.Transaction> {
+    #Predicate<NomiCore.Transaction> { $0.date >= since }
+  }
+
+  static func matches(_ transaction: NomiCore.Transaction, filter: TransactionFilter) -> Bool {
+    if filter.uncategorizedOnly {
+      guard transaction.categoryID == nil else { return false }
+    } else if !filter.categoryIDs.isEmpty {
+      guard let categoryID = transaction.categoryID, filter.categoryIDs.contains(categoryID) else { return false }
+    }
+    guard !filter.searchText.isEmpty else { return true }
+    return transaction.descriptionText.localizedStandardContains(filter.searchText)
+      || (transaction.merchantName ?? "").localizedStandardContains(filter.searchText)
+      || (transaction.counterpartyVPA ?? "").localizedStandardContains(filter.searchText)
   }
 }

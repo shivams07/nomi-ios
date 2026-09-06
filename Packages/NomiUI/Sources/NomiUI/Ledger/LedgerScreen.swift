@@ -49,6 +49,7 @@ public struct LedgerScreen: View {
   @State private var selection: LedgerChipSelection = .all
   @State private var stepsBack = 0
   @State private var now = Date()
+  @State private var searchText = ""
 
   public init(
     transactionStore: TransactionStore,
@@ -64,6 +65,37 @@ public struct LedgerScreen: View {
 
   private var since: Date {
     LedgerWindow.since(for: stepsBack, now: now)
+  }
+
+  /// U16: the chip's single-select state and the search box, folded into
+  /// the one value `LedgerFilterPredicate.matches` reads. `TransactionFilter`
+  /// carries a `Set` of category ids for a caller that might multi-select;
+  /// this screen's chip never produces more than one.
+  private var filter: TransactionFilter {
+    switch selection {
+    case .all:
+      return TransactionFilter(searchText: searchText)
+    case .category(let id):
+      return TransactionFilter(categoryIDs: [id], searchText: searchText)
+    case .uncategorized:
+      return TransactionFilter(uncategorizedOnly: true, searchText: searchText)
+    }
+  }
+
+  /// SwiftData fixes a `@Query`'s predicate at the view instance's
+  /// construction (see `.id(queryKey)`'s note, below). Only `since` is baked
+  /// into that predicate now — the chip and search box are read back out of
+  /// plain `filter` state in `LedgerTransactionList.filtered` — so widening
+  /// the window is the only thing that still needs a new instance; typing a
+  /// search character or switching a chip must not rebuild the list, or it
+  /// re-runs the `@Query` fetch and drops `pendingDeleteID`/`errorMessage`
+  /// on every keystroke.
+  private struct QueryKey: Hashable {
+    let since: Date
+  }
+
+  private var queryKey: QueryKey {
+    QueryKey(since: since)
   }
 
   // `id` carries no unique constraint anywhere in NomiCore (R5 — CloudKit
@@ -96,14 +128,15 @@ public struct LedgerScreen: View {
           .padding(.horizontal, NomiSpacing.screenGutter)
           .padding(.vertical, NomiSpacing.sm)
 
-        // `.id(since)` is load-bearing: SwiftData's `@Query` fixes its filter
-        // at the view instance's construction and never re-evaluates it
-        // in place. Widening the window has to build a new instance — and a
-        // new `@Query` — rather than mutate one already committed to the old
-        // bound, which is exactly what a changed `.id` forces.
+        // `.id(queryKey)` is load-bearing: SwiftData's `@Query` fixes its
+        // filter at the view instance's construction and never re-evaluates
+        // it in place. Only widening the window changes that predicate, so
+        // only `since` is in `queryKey` — a chip switch or a search edit
+        // updates `filter` in place instead, which `filtered` already
+        // re-reads without forcing a new instance.
         LedgerTransactionList(
+          filter: filter,
           since: since,
-          selection: selection,
           now: now,
           transactionStore: transactionStore,
           categoryNamesByID: categoryNamesByID,
@@ -111,12 +144,13 @@ public struct LedgerScreen: View {
           categorySymbolNameByID: categorySymbolNameByID,
           accountNamesByID: accountNamesByID
         )
-        .id(since)
+        .id(queryKey)
 
         showOlderButton
       }
     }
     .background(NomiColor.surfaceCanvas)
+    .searchable(text: $searchText, prompt: "Search transactions")
     // Sets `now` once per appearance rather than every `dayHeader` call —
     // day headers read it from here, not from a fresh `Date()` in `body`.
     .onAppear { now = Date() }
@@ -204,9 +238,11 @@ public struct LedgerScreen: View {
 /// `LedgerScreen`, because a `@Query`'s filter is fixed when the view
 /// instance is built and SwiftData does not let it be re-pointed afterwards —
 /// so a widening window has to construct a new instance of *something*, and
-/// `LedgerScreen` gives it a new one via `.id(since)`.
+/// `LedgerScreen` gives it a new one via `.id(queryKey)`. A chip switch or a
+/// search edit changes `filter` instead, which `filtered` reads on every
+/// body re-evaluation of the *same* instance — no new `@Query` needed.
 private struct LedgerTransactionList: View {
-  let selection: LedgerChipSelection
+  let filter: TransactionFilter
   let now: Date
   let transactionStore: TransactionStore
   let categoryNamesByID: [UUID: String]
@@ -220,8 +256,8 @@ private struct LedgerTransactionList: View {
   @State private var errorMessage: String?
 
   init(
+    filter: TransactionFilter,
     since: Date,
-    selection: LedgerChipSelection,
     now: Date,
     transactionStore: TransactionStore,
     categoryNamesByID: [UUID: String],
@@ -229,21 +265,24 @@ private struct LedgerTransactionList: View {
     categorySymbolNameByID: [UUID: String],
     accountNamesByID: [UUID: String]
   ) {
-    self.selection = selection
+    self.filter = filter
     self.now = now
     self.transactionStore = transactionStore
     self.categoryNamesByID = categoryNamesByID
     self.categoryPaletteSlotByID = categoryPaletteSlotByID
     self.categorySymbolNameByID = categorySymbolNameByID
     self.accountNamesByID = accountNamesByID
+    // Only `since` is pushed into the `@Query` itself — see
+    // `LedgerFilterPredicate`'s note on why the chip/search criteria are
+    // applied below instead, in `filtered`.
     _transactions = Query(
-      filter: #Predicate<NomiCore.Transaction> { $0.date >= since },
+      filter: LedgerFilterPredicate.make(since: since),
       sort: [SortDescriptor(\NomiCore.Transaction.date, order: .reverse)]
     )
   }
 
   private var filtered: [NomiCore.Transaction] {
-    LedgerFiltering.apply(transactions, selection: selection)
+    transactions.filter { LedgerFilterPredicate.matches($0, filter: filter) }
   }
 
   private var maxAmountMinor: Int {
