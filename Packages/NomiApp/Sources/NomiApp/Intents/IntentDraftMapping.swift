@@ -16,6 +16,37 @@ public enum IntentDraftMapping {
     /// Zero, negative, or larger than the app can represent.
     case outOfRange
     case blankDescription
+    /// The amount field did not contain a number at all.
+    case notANumber
+  }
+
+  /// Parses what Shortcuts collected into an exact `Decimal`.
+  ///
+  /// The amount parameter is a `String` because `AppIntents` will not accept a
+  /// `Decimal` - `@Parameter` requires `_IntentValue`, which `Decimal` does not
+  /// conform to. `Double` is the obvious alternative and is not usable here:
+  /// the whole point of this file is that 12.99 has no exact `Double`, so
+  /// taking one would either lose a paisa or force a rounding step that
+  /// `tooPrecise` exists to refuse.
+  ///
+  /// Group separators are stripped before parsing. `Decimal(string:)` stops at
+  /// the first comma, so "1,234.50" would otherwise parse as 1 - a silent
+  /// hundred-fold error on an amount the user typed correctly. A leading
+  /// currency symbol is stripped for the same reason.
+  public static func decimal(from text: String) -> Result<Decimal, Failure> {
+    var cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    for prefix in ["₹", "INR", "Rs.", "Rs"] where cleaned.hasPrefix(prefix) {
+      cleaned = String(cleaned.dropFirst(prefix.count))
+      break
+    }
+    cleaned = cleaned
+      .replacingOccurrences(of: ",", with: "")
+      .trimmingCharacters(in: .whitespaces)
+
+    guard !cleaned.isEmpty, let value = Decimal(string: cleaned), value.isFinite else {
+      return .failure(.notANumber)
+    }
+    return .success(value)
   }
 
   /// Rupees to paise, by integer arithmetic on `Decimal`.
@@ -55,6 +86,23 @@ public enum IntentDraftMapping {
   ///
   /// `isIncome` flips the direction rather than accepting a negative amount:
   /// "add minus five hundred" is not a sentence anyone says to Siri.
+  /// Entry point for the intent: text in, draft out.
+  public static func draft(
+    amountText: String,
+    note: String?,
+    categoryID: UUID?,
+    isIncome: Bool,
+    now: Date = Date()
+  ) -> Result<ManualTransactionDraft, Failure> {
+    switch decimal(from: amountText) {
+    case .failure(let failure):
+      return .failure(failure)
+    case .success(let amount):
+      return draft(
+        amount: amount, note: note, categoryID: categoryID, isIncome: isIncome, now: now)
+    }
+  }
+
   public static func draft(
     amount: Decimal,
     note: String?,

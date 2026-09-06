@@ -20,8 +20,12 @@ struct AddTransactionIntent: AppIntent {
     "Record a transaction in Nomi without opening the app.")
   static let openAppWhenRun = false
 
+  /// Text, not a number. `@Parameter` requires `_IntentValue` and `Decimal`
+  /// does not conform; `Double` cannot represent 12.99 exactly, which is the
+  /// one thing `IntentDraftMapping` exists to guarantee. Parsed and validated
+  /// there, and declined out loud if it is not a number.
   @Parameter(title: "Amount", description: "In rupees, e.g. 249.50")
-  var amount: Decimal
+  var amount: String
 
   @Parameter(title: "Description", description: "What it was for")
   var note: String?
@@ -49,7 +53,7 @@ struct AddTransactionIntent: AppIntent {
   func perform() async throws -> some IntentResult & ProvidesDialog {
     let draft: ManualTransactionDraft
     switch IntentDraftMapping.draft(
-      amount: amount, note: note, categoryID: category?.id, isIncome: isIncome)
+      amountText: amount, note: note, categoryID: category?.id, isIncome: isIncome)
     {
     case .success(let made):
       draft = made
@@ -72,12 +76,14 @@ enum AddTransactionError: Error, CustomLocalizedStringResourceConvertible {
   case tooPrecise
   case outOfRange
   case blankDescription
+  case notANumber
 
   init(_ failure: IntentDraftMapping.Failure) {
     switch failure {
     case .tooPrecise: self = .tooPrecise
     case .outOfRange: self = .outOfRange
     case .blankDescription: self = .blankDescription
+    case .notANumber: self = .notANumber
     }
   }
 
@@ -89,6 +95,8 @@ enum AddTransactionError: Error, CustomLocalizedStringResourceConvertible {
       return "That is not an amount Nomi can record."
     case .blankDescription:
       return "Say what the transaction was for."
+    case .notANumber:
+      return "That amount is not a number Nomi can read."
     }
   }
 }

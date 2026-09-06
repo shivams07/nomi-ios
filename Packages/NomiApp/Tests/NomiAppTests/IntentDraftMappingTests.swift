@@ -51,6 +51,47 @@ final class IntentDraftMappingTests: XCTestCase {
     XCTAssertEqual(IntentDraftMapping.minorUnits(from: amount), .failure(.outOfRange))
   }
 
+  // MARK: - Parsing what Shortcuts collected
+
+  /// The amount arrives as text: `@Parameter` will not take a `Decimal`, and a
+  /// `Double` cannot hold 12.99 exactly.
+  func testATypedAmountParsesExactly() {
+    XCTAssertEqual(IntentDraftMapping.decimal(from: "12.99"), .success(Decimal(string: "12.99")!))
+  }
+
+  /// `Decimal(string:)` stops at the first comma, so an unstripped "1,234.50"
+  /// parses as 1 - a hundred-fold error on an amount the user typed correctly,
+  /// with nothing thrown. Group separators are removed before parsing.
+  func testGroupSeparatorsDoNotTruncateTheAmount() throws {
+    XCTAssertEqual(
+      IntentDraftMapping.decimal(from: "1,234.50"), .success(Decimal(string: "1234.50")!))
+
+    let made = try draftText("1,234.50").get()
+    XCTAssertEqual(made.amountMinor, 123450, "not 100")
+  }
+
+  /// Dictation and typing both tend to include the symbol.
+  func testALeadingCurrencySymbolIsStripped() {
+    for text in ["₹499", "INR 499", "Rs. 499", "Rs 499", "  499  "] {
+      XCTAssertEqual(
+        IntentDraftMapping.decimal(from: text), .success(Decimal(499)),
+        "failed for \(text)")
+    }
+  }
+
+  func testTextThatIsNotANumberIsDeclined() {
+    for text in ["", "   ", "abc", "₹"] {
+      XCTAssertEqual(
+        IntentDraftMapping.decimal(from: text), .failure(.notANumber),
+        "failed for \(text)")
+    }
+  }
+
+  /// The precision rule still applies to text that parsed fine.
+  func testAPreciseTypedAmountIsStillRejected() {
+    XCTAssertEqual(failure(draftText("12.999")), .tooPrecise)
+  }
+
   // MARK: - Draft
 
   /// `isIncome` flips the direction rather than accepting a negative amount:
@@ -129,6 +170,13 @@ final class IntentDraftMappingTests: XCTestCase {
   ) -> IntentDraftMapping.Failure? {
     guard case .failure(let failure) = result else { return nil }
     return failure
+  }
+
+  private func draftText(_ amountText: String) -> Result<
+    ManualTransactionDraft, IntentDraftMapping.Failure
+  > {
+    IntentDraftMapping.draft(
+      amountText: amountText, note: "Coffee", categoryID: nil, isIncome: false)
   }
 
   private func draft(
