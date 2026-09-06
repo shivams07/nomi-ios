@@ -121,6 +121,15 @@ enum LedgerWindow {
 /// first reader; its fields are consumed as-is, not reshaped for this call
 /// site.
 enum LedgerFilterPredicate {
+  // CI (build 34008249071): the single-expression version of this predicate
+  // failed with "the compiler is unable to type-check this expression in
+  // reasonable time" — `#Predicate`'s macro expansion couldn't solve the
+  // combined date/category/search boolean tree in one shot. Named `let`
+  // bindings inside the closure, one leaf condition per line, are the
+  // compiler's own suggested fix ("try breaking up the expression into
+  // distinct sub-expressions"): each is now a small expression the checker
+  // solves independently, and the `return` is a flat `&&` of already-typed
+  // `Bool`s rather than one deeply nested expression.
   static func make(_ filter: TransactionFilter, since: Date) -> Predicate<NomiCore.Transaction> {
     let categoryIDs = filter.categoryIDs
     let hasCategoryFilter = !categoryIDs.isEmpty
@@ -128,13 +137,14 @@ enum LedgerFilterPredicate {
     let searchText = filter.searchText
     let hasSearchText = !searchText.isEmpty
     return #Predicate<NomiCore.Transaction> { transaction in
-      transaction.date >= since
-        && (!uncategorizedOnly || transaction.categoryID == nil)
-        && (!hasCategoryFilter || categoryIDs.contains(where: { $0 == transaction.categoryID }))
-        && (!hasSearchText
-          || transaction.descriptionText.localizedStandardContains(searchText)
-          || (transaction.merchantName ?? "").localizedStandardContains(searchText)
-          || (transaction.counterpartyVPA ?? "").localizedStandardContains(searchText))
+      let isWithinWindow = transaction.date >= since
+      let matchesUncategorized = !uncategorizedOnly || transaction.categoryID == nil
+      let matchesCategory = !hasCategoryFilter || categoryIDs.contains(where: { $0 == transaction.categoryID })
+      let matchesDescription = transaction.descriptionText.localizedStandardContains(searchText)
+      let matchesMerchant = (transaction.merchantName ?? "").localizedStandardContains(searchText)
+      let matchesVPA = (transaction.counterpartyVPA ?? "").localizedStandardContains(searchText)
+      let matchesSearch = !hasSearchText || matchesDescription || matchesMerchant || matchesVPA
+      return isWithinWindow && matchesUncategorized && matchesCategory && matchesSearch
     }
   }
 }
