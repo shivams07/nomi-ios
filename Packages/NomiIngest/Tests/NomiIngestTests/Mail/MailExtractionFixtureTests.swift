@@ -310,19 +310,6 @@ final class MailExtractionFixtureTests: XCTestCase {
     let message = try MailFixtures.message("axis_debit_atm.eml", uid: 4242)
     XCTAssertEqual(message.externalID, "INBOX/900100/4242")
   }
-}
-
-// MARK: - Test doubles
-
-private final class RecordingBindings: AccountBindingResolving, @unchecked Sendable {
-  private(set) var lastDomain: String?
-  private(set) var lastFragment: String?
-
-  func accountID(senderDomain: String, cardFragment: String) -> UUID? {
-    lastDomain = senderDomain
-    lastFragment = cardFragment
-    return nil
-  }
   // MARK: - B9: a sender that fails authentication is flagged, not dropped
 
   /// R6 applied to spoofing: a bank whose DKIM is broken, or a message that came
@@ -358,6 +345,19 @@ private final class RecordingBindings: AccountBindingResolving, @unchecked Senda
     XCTAssertEqual(draft.needsReviewReason, .unauthenticatedSender)
   }
 
+}
+
+// MARK: - Test doubles
+
+private final class RecordingBindings: AccountBindingResolving, @unchecked Sendable {
+  private(set) var lastDomain: String?
+  private(set) var lastFragment: String?
+
+  func accountID(senderDomain: String, cardFragment: String) -> UUID? {
+    lastDomain = senderDomain
+    lastFragment = cardFragment
+    return nil
+  }
 }
 
 private struct FixedBinding: AccountBindingResolving {
