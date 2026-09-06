@@ -28,10 +28,11 @@ import SwiftData
 /// not see a mapping written through a different context — which is the
 /// cross-instance visibility this type exists to give.
 ///
-/// **Compile-verified only, in part.** `swift test` in this CI cannot construct
-/// a `ModelContainer` (`NomiCore/Support/InMemoryModelContainer.swift` explains
-/// why), so keep decisions out of here: the encode/decode and the upsert choice
-/// are split into `ColumnMappingCoding` below, which is pure and is what
+/// **Not driven by a test today, though it could be.** A `ModelContainer` does
+/// build here under XCTest; only swift-testing traps
+/// (`NomiCore/Support/InMemoryModelContainer.swift` carries the measurement).
+/// Keep decisions out of here regardless: the encode/decode and the upsert
+/// choice are split into `ColumnMappingCoding` below, which is pure and is what
 /// `ColumnMappingStoreTests` exercises.
 public final class SwiftDataColumnMappingStore: ColumnMappingStore, @unchecked Sendable {
   /// `@unchecked` because the compiler cannot see that a `ModelContainer` is
@@ -105,11 +106,11 @@ public final class SwiftDataColumnMappingStore: ColumnMappingStore, @unchecked S
 /// The part of the store that decides anything, with no `@Model` and no
 /// container in it.
 ///
-/// It is separate because nothing above it can be executed on this project:
-/// `swift test` cannot construct a `ModelContainer` in this CI, so a
-/// `mappingJSON` written in a shape `mapping(forSignature:)` cannot read back
-/// would be a silent, permanent "the app never remembers my bank" with no test
-/// anywhere able to catch it. Here, it is one round-trip assertion.
+/// It is separate because a `mappingJSON` written in a shape
+/// `mapping(forSignature:)` cannot read back would be a silent, permanent "the
+/// app never remembers my bank". Here, that is one round-trip assertion needing
+/// no container. This once said nothing above it could be executed at all;
+/// that was measured wrong — see `InMemoryModelContainer`'s note.
 enum ColumnMappingCoding {
   static func json(from mapping: ColumnMapping) -> String? {
     guard let data = try? JSONEncoder().encode(mapping) else { return nil }

@@ -2,11 +2,11 @@ import Foundation
 import NomiCore
 import SwiftData
 
-/// One seeded category, as a value. Deliberately not a `@Model`: `swift test`
-/// cannot construct a SwiftData `@Model` in this CI at all (see
-/// `NomiCore/Support/InMemoryModelContainer.swift`), so the *content* of the
-/// seed — the count, the slots, the ids, the system flag — has to live on this
-/// side of the line or nothing about it is ever executed by a test.
+/// One seeded category, as a value. Deliberately not a `@Model`, though not for
+/// the reason first written here: a container does build under XCTest, and only
+/// swift-testing traps (see `NomiCore/Support/InMemoryModelContainer.swift`).
+/// The *content* of the seed — the count, the slots, the ids, the system flag —
+/// lives on this side of the line so a test can assert it without one.
 public struct CategorySeedSpec: Sendable, Equatable, Identifiable {
   public let id: UUID
   public let name: String
@@ -98,9 +98,9 @@ extension CategorySeedSpec {
 
 // MARK: - Applying the seed
 //
-// Below this line touches `@Model` and is therefore compile-verified only, the
-// same standing `SwiftDataPipelineStore` has. Keep it thin: everything that
-// decides anything is above.
+// Below this line touches `@Model`. No test drives it today, but one could —
+// an XCTest can build a container (see `InMemoryModelContainer`'s measured
+// note). Keep it thin regardless: everything that decides anything is above.
 
 extension DefaultCategorySeed {
   /// Inserts whatever is missing. Safe to call on every launch, and it is

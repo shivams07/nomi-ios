@@ -3,10 +3,10 @@ import NomiPreview
 import SwiftUI
 
 /// Anything with a `date` can be ranked by recency. Kept separate from
-/// `Transaction` so the sort/limit logic below is testable without
-/// constructing an `@Model` instance — this package's `swift test` runner
-/// cannot do that headlessly (see `InMemoryModelContainer`'s note in
-/// NomiCore). `Transaction`'s conformance costs nothing extra; it only reads
+/// `Transaction` so the sort/limit logic below is testable with no container —
+/// not because this package's runner cannot build one, which it can under
+/// XCTest (see `InMemoryModelContainer`'s measured note in NomiCore).
+/// `Transaction`'s conformance costs nothing extra; it only reads
 /// an existing `date` property, never constructs one.
 protocol DatedRow {
   var date: Date { get }

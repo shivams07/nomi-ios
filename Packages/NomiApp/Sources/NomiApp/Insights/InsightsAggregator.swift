@@ -3,10 +3,12 @@ import NomiCore
 
 /// A value-typed view of the fields the aggregates read.
 ///
-/// Same device as `TransactionSnapshot` in the pipeline, for the same reason:
-/// `swift test` cannot construct a SwiftData `@Model` in this CI at all (see
-/// `NomiCore/Support/InMemoryModelContainer.swift`). Every number on the
-/// dashboard is computed below this line, over these, where a test can run it.
+/// Same device as `TransactionSnapshot` in the pipeline. The reason first
+/// written here — that `swift test` could not construct a `@Model` in this CI
+/// at all — was measured wrong: a container builds fine under XCTest and only
+/// swift-testing traps (see `NomiCore/Support/InMemoryModelContainer.swift`).
+/// The split still earns its place. Every number on the dashboard is computed
+/// below this line, over these, where a test needs no container at all.
 /// `SwiftDataInsightsStore` fetches `Transaction` rows and maps them across.
 public struct LedgerRow: Sendable, Equatable, Identifiable {
   public let id: UUID

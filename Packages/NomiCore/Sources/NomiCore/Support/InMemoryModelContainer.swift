@@ -51,12 +51,7 @@ import SwiftData
 /// why the constraint looked universal from inside this file, and why NomiApp,
 /// NomiUI and NomiIngest could have been testing their `@Model` code all along.
 ///
-/// Several other files still describe themselves as compile-verified only and
-/// cite the old claim — `SwiftDataPipelineStore`, `SwiftDataColumnMappingStore`,
-/// `SwiftDataInsightsStore`, `DefaultCategorySeed`, `PipelineTypes`,
-/// `InsightsAggregator`. Those are stale as written and are deliberately left
-/// alone here: what to do about them is a repo-wide test-strategy call, not
-/// this file's.
+/// The files that cited the old claim now point here instead (U13).
 public enum InMemoryModelContainer {
   public static let shared: ModelContainer = {
     let schema = Schema([

@@ -2,9 +2,9 @@ import Foundation
 
 /// Drag-to-reorder writes priority through `RuleStore.reorder(_:)`, which
 /// takes the full ordered id list. Pulled out as a pure function operating on
-/// plain `UUID`s — never an `@Model` `Rule` — so it is testable without one
-/// (this package's `swift test` runner cannot construct `@Model` instances
-/// headlessly; see `InMemoryModelContainer`'s note in NomiCore).
+/// plain `UUID`s — never an `@Model` `Rule` — so it is testable with no
+/// container. Not because none can be built; one can, under XCTest (see
+/// `InMemoryModelContainer`'s measured note in NomiCore).
 enum RulesReorder {
   static func orderedIDs(current: [UUID], from source: IndexSet, to destination: Int) -> [UUID] {
     var ids = current

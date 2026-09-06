@@ -30,9 +30,9 @@ public enum BudgetNotificationError: Error, Sendable, Equatable {
 /// A thin `UNUserNotificationCenter` wrapper. It holds no state and touches the
 /// center lazily, so merely constructing one is safe in a test binary — which
 /// matters, because `UNUserNotificationCenter.current()` traps in a process with
-/// no bundle. Nothing in this package's tests calls its methods; it is
-/// compile-verified only, the same standing this project gives every other
-/// system-framework boundary.
+/// no bundle. Nothing in this package's tests calls its methods, and nothing
+/// here can: that trap is `UNUserNotificationCenter`'s own, unrelated to the
+/// SwiftData constraint `InMemoryModelContainer`'s note corrects.
 public struct BudgetNotificationScheduler: BudgetNotificationScheduling {
   private let categoryIdentifier = "nomi.budget-alert"
 

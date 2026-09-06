@@ -4,10 +4,10 @@ import SwiftData
 import SwiftUI
 
 /// Anything with `isSystem` can be checked for deletability — pulled out as a
-/// pure predicate so "system categories undeletable" is testable without
-/// constructing an `@Model` instance (this package's `swift test` runner
-/// cannot do that headlessly; see `InMemoryModelContainer`'s note in
-/// NomiCore). `CategoryStore.delete` already enforces this store-side; this
+/// pure predicate so "system categories undeletable" is testable with no
+/// container, rather than because none can be built; one can, under XCTest
+/// (see `InMemoryModelContainer`'s measured note in NomiCore).
+/// `CategoryStore.delete` already enforces this store-side; this
 /// is the UI-side check that keeps the swipe action from ever being offered
 /// in the first place.
 protocol SystemFlagged {
