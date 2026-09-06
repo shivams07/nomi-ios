@@ -1,10 +1,24 @@
 name: CI
 
+# A branch push and its pull_request both matched `branches: ["**"]`, so every
+# commit on an open PR ran the whole macOS job twice — two simulator builds and
+# ten `swift test` invocations for one commit. `push` is now main only (the
+# merge commit still gets its own run) and `pull_request` covers everything on
+# the way there.
+#
+# Consequence worth knowing: a branch pushed with no PR open no longer runs CI.
+# Open the PR — draft is enough — and the same commit runs once.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
-    branches: ["**"]
+
+# Superseded runs are cancelled rather than left to finish. Grouped by ref, so
+# a second commit to a PR cancels that PR's in-flight run and nothing else;
+# `main` only ever cancels `main`.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
@@ -16,8 +30,26 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_16.2.app
 
+      # HOMEBREW_NO_AUTO_UPDATE is the whole cost here: without it every run
+      # refreshes the entire formula index before installing one small tool.
       - name: Install XcodeGen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
         run: brew install xcodegen
+
+      # The five `swift test` steps below each resolve and build the same
+      # dependency graph (swift-nio, swift-nio-imap, CoreXLSX, SwiftSoup and
+      # their transitive packages) from scratch. Keyed on every Package.swift:
+      # there is no Package.resolved in this repo, so that manifest hash is the
+      # only committed description of the graph. A stale restore is safe —
+      # SwiftPM re-resolves whatever no longer matches.
+      - name: Cache SwiftPM build directories
+        uses: actions/cache@v4
+        with:
+          path: Packages/*/.build
+          key: spm-${{ runner.os }}-xcode16.2-${{ hashFiles('Packages/*/Package.swift') }}
+          restore-keys: |
+            spm-${{ runner.os }}-xcode16.2-
 
       - name: Generate Xcode project
         run: xcodegen generate
