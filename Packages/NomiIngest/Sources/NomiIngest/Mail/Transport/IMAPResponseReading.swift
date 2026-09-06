@@ -42,6 +42,18 @@ public enum IMAPTransportError: Error, Sendable, Equatable {
   case commandFailed(tag: String, status: IMAPCompletionStatus, text: String)
   case malformedResponse(String)
   case connectionClosed
+
+  /// The credential could not be put on the wire at all, so nothing was sent
+  /// and no socket was opened (B6).
+  ///
+  /// IMAP commands are CRLF-terminated, and a quoted-string cannot contain a
+  /// bare CR or LF (RFC 3501). `IMAPCommand.quoted` escapes `\` and `"` and
+  /// nothing else, because those are the only escapes the grammar has - a
+  /// newline pasted into the password field would end the LOGIN line early and
+  /// hand the remainder to the server as a fresh command. Users paste Google
+  /// app passwords out of a web page, so this is an ordinary accident rather
+  /// than an attack, and either way it is caught here.
+  case invalidCredentials(String)
 }
 
 /// Turns raw server bytes into `IMAPServerEvent`s, incrementally, across packet

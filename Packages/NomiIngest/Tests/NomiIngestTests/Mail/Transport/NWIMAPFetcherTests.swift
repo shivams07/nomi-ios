@@ -153,6 +153,86 @@ final class NWIMAPFetcherTests: XCTestCase {
     XCTAssertEqual(channel.operations.first, .open(host: "imap.gmail.com", port: 993))
   }
 
+  // MARK: - B6: a credential that cannot go on the wire never gets there
+
+  /// A Google app password pasted out of a web page brings a trailing newline
+  /// with it. IMAP commands are CRLF-terminated and a quoted-string has no
+  /// escape for CR or LF, so that newline would end the LOGIN line early and
+  /// hand `mnop" ...` to the server as a second command.
+  ///
+  /// Nothing is sent and nothing is opened: the guard runs before the socket.
+  func testAPasswordContainingALineBreakIsRejectedBeforeAnyByteIsSent() async {
+    for password in ["abcd efgh\r\nA001 LOGOUT", "abcd efgh\n", "abcd\refgh"] {
+      let channel = ScriptedChannel(replies: [loginOK])
+      let fetcher = NWIMAPFetcher(channel: channel, reader: NIOIMAPResponseReader())
+      let tainted = IMAPCredentials(
+        host: "imap.gmail.com", port: 993, address: "someone@gmail.com", password: password)
+
+      do {
+        try await fetcher.connect(tainted)
+        XCTFail("expected a failure for \(password.debugDescription)")
+      } catch let error as IMAPTransportError {
+        guard case .invalidCredentials(let reason) = error else {
+          return XCTFail("expected invalidCredentials, got \(error)")
+        }
+        XCTAssertTrue(reason.contains("line break"), reason)
+      } catch {
+        XCTFail("expected IMAPTransportError, got \(error)")
+      }
+
+      XCTAssertEqual(
+        channel.sentText, "",
+        "ZERO bytes on the wire for \(password.debugDescription)")
+      XCTAssertTrue(
+        channel.operations.isEmpty,
+        "no socket was opened either, so there is nothing to have leaked into")
+    }
+  }
+
+  /// The address is guarded too. A newline there would not smuggle a command
+  /// into the *password* argument, it would send the user's mail credentials
+  /// under an account name they did not type.
+  func testAnAddressContainingALineBreakIsRejectedBeforeAnyByteIsSent() async {
+    let channel = ScriptedChannel(replies: [loginOK])
+    let fetcher = NWIMAPFetcher(channel: channel, reader: NIOIMAPResponseReader())
+    let tainted = IMAPCredentials(
+      host: "imap.gmail.com", port: 993,
+      address: "someone@gmail.com\r\na002 LOGIN", password: "abcd efgh ijkl mnop")
+
+    do {
+      try await fetcher.connect(tainted)
+      XCTFail("expected a failure")
+    } catch let error as IMAPTransportError {
+      guard case .invalidCredentials = error else {
+        return XCTFail("expected invalidCredentials, got \(error)")
+      }
+    } catch {
+      XCTFail("expected IMAPTransportError, got \(error)")
+    }
+
+    XCTAssertEqual(channel.sentText, "")
+    XCTAssertTrue(channel.operations.isEmpty)
+  }
+
+  /// The guard is about CR and LF specifically. Every other character a real
+  /// app password contains still goes through, escaped where the grammar needs
+  /// it - rejecting more than necessary would lock people out of their own
+  /// mailboxes. Raw string literals both sides so the expectation is readable
+  /// as the bytes it is.
+  func testOrdinaryAwkwardPasswordsStillConnect() async throws {
+    let channel = ScriptedChannel(replies: [loginOK])
+    let fetcher = NWIMAPFetcher(channel: channel, reader: NIOIMAPResponseReader())
+    let awkward = IMAPCredentials(
+      host: "imap.gmail.com", port: 993, address: "someone@gmail.com",
+      password: #"ab"cd"#)
+
+    try await fetcher.connect(awkward)
+
+    XCTAssertEqual(
+      channel.sentText,
+      #"a001 LOGIN "someone@gmail.com" "ab\"cd""# + "\r\n")
+  }
+
   /// A rejected app password is the one failure here with a user action
   /// attached, so it gets its own error rather than the generic `commandFailed`
   /// — `IMAPMailConnectionService` maps it to `MailError.authenticationFailed`.

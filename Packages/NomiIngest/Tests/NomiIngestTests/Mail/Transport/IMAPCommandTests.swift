@@ -45,6 +45,38 @@ final class IMAPCommandTests: XCTestCase {
     }
   }
 
+  // MARK: - B6: what `quoted` does, and what it deliberately does not
+
+  /// Pinning the existing escaping, byte-exact, because B6 adds a guard *above*
+  /// this function rather than changing it — and a later "while I'm here" edit
+  /// to `quoted` would move the wire format for every command at once.
+  ///
+  /// A password of a backslash and a quote is the worst ordinary case: the
+  /// backslash doubles, the quote gains one.
+  func testQuotedEscapesBackslashAndQuoteAndNothingElse() {
+    let command = IMAPCommand.login(
+      tag: "a001", address: "a@b.com", password: #"pa\s"wd"#)
+
+    XCTAssertEqual(
+      command.wireText,
+      #"a001 LOGIN "a@b.com" "pa\\s\"wd""# + "\r\n")
+  }
+
+  /// The reason `NWIMAPFetcher.rejectUnsendable` has to exist. RFC 3501's
+  /// quoted-string has no escape for CR or LF, so `quoted` cannot make a
+  /// newline safe — it passes straight through and terminates the command line
+  /// early. This test documents that as the current, intended behaviour of
+  /// `quoted`; the fetcher is what stops such a value ever reaching it.
+  func testQuotedCannotNeutraliseALineBreakWhichIsWhyTheFetcherGuards() {
+    let command = IMAPCommand.login(
+      tag: "a001", address: "a@b.com", password: "pw\r\nA002 LOGOUT")
+
+    XCTAssertTrue(
+      command.wireText.contains("\r\nA002 LOGOUT"),
+      "unescaped, and therefore a second command line - guarded upstream, not here")
+    XCTAssertEqual(command.wireText.components(separatedBy: "\r\n").count - 1, 2)
+  }
+
   // MARK: - EXAMINE, not SELECT
 
   func testMailboxIsOpenedReadOnly() {

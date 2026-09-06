@@ -133,6 +133,13 @@ public struct IMAPCommand: Equatable, Sendable {
   ///
   /// This is what stops a password containing `"` from ending the string early
   /// and turning the rest of it into command syntax.
+  ///
+  /// **It cannot carry CR or LF, and does not try to.** RFC 3501's
+  /// quoted-string grammar excludes both and offers no escape for them, so a
+  /// newline in an argument would terminate the command line early whatever
+  /// this function did. `NWIMAPFetcher.rejectUnsendable` is the gate; this
+  /// function is deliberately left alone so there is one place that decides,
+  /// rather than an escape here that silently changes what the user typed.
   static func quoted(_ raw: String) -> String {
     let escaped = raw
       .replacingOccurrences(of: "\\", with: "\\\\")

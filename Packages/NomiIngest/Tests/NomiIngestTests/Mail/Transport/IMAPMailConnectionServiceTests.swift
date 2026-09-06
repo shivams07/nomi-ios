@@ -163,6 +163,39 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
     XCTAssertTrue(store.isEmpty)
   }
 
+  /// B6. The transport guard rejects the credential before any byte is sent;
+  /// this is what the user is told about it, and what happens to the password
+  /// they typed.
+  ///
+  /// `MailError` is deliberately not given a new case: the copy is the whole
+  /// payload here, and a case nothing switches on is a case that goes stale.
+  func testALineBreakInTheCredentialSurfacesAsReadableCopyAndStoresNothing() async {
+    let fetcher = FlakyFetcher()
+    fetcher.connectError = IMAPTransportError.invalidCredentials(
+      "The password contains a line break.")
+    let (service, _, store, _) = makeService(fetcher: fetcher)
+
+    do {
+      try await service.connect(credentials)
+      XCTFail("connect should have thrown")
+    } catch {
+      // expected
+    }
+
+    XCTAssertTrue(store.isEmpty, "a credential that cannot be sent is not kept")
+    XCTAssertEqual(store.deleteCount, 1)
+
+    var seen: [MailConnectionState] = []
+    for await state in service.state.prefix(3) { seen.append(state) }
+    XCTAssertEqual(
+      seen,
+      [
+        .disconnected, .connecting,
+        .failed(.unknown("The password contains a line break.")),
+      ],
+      "not .authenticationFailed - the server never saw it, so 'wrong password' would be a lie")
+  }
+
   func testAFailedConnectReportsAuthenticationFailureRatherThanAGenericOne() async {
     let fetcher = FlakyFetcher()
     fetcher.connectError = IMAPTransportError.authenticationFailed("Invalid credentials")
