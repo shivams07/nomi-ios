@@ -3,10 +3,10 @@ import NomiCore
 
 /// The two-tap manual-entry path (U6 done-when): one tap presents `EntryView`,
 /// one tap on Save commits it. Amount is the only required input — everything
-/// else pulled out here as pure functions so that rule is directly testable
-/// without constructing an `@Model` instance (see `InMemoryModelContainer`'s
-/// note in NomiCore: this package's `swift test` runner cannot do that
-/// headlessly).
+/// else pulled out here as pure functions so that rule is testable with no
+/// container — not because this package's runner cannot build one, which it
+/// can under XCTest (see `InMemoryModelContainer`'s measured note in
+/// NomiCore).
 enum EntryDefaults {
   static let direction: Direction = .debit
 }
@@ -63,9 +63,9 @@ enum EntrySaveGate {
 }
 
 /// M3. Kept separate from `NomiCore.Account` so `preselection` is testable
-/// without constructing an `@Model` instance — this package's `swift test`
-/// runner cannot do that headlessly (see `InMemoryModelContainer`'s note in
-/// NomiCore), same reason `LedgerRow`/`DatedRow` exist elsewhere in this
+/// with no container — not because this package's runner cannot build one,
+/// which it can under XCTest (see `InMemoryModelContainer`'s measured note
+/// in NomiCore) — same reason `LedgerRow`/`DatedRow` exist elsewhere in this
 /// module. `Account` costs nothing extra to conform.
 protocol AccountArchivable {
   var id: UUID { get }
