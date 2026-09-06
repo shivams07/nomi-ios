@@ -80,4 +80,22 @@ final class TransactionDetailLogicTests: XCTestCase {
   func testKindLabelForAnUnknownRawValueIsNil() {
     XCTAssertNil(UPIDisplay.kindLabel("unknown"))
   }
+
+  // MARK: - U24: noteToSave
+
+  func testNoteToSavePassesThroughNonBlankText() {
+    XCTAssertEqual(TransactionDetailLogic.noteToSave(from: "Split with Riya"), "Split with Riya")
+  }
+
+  func testNoteToSaveTrimsSurroundingWhitespace() {
+    XCTAssertEqual(TransactionDetailLogic.noteToSave(from: "  Split with Riya  "), "Split with Riya")
+  }
+
+  func testNoteToSaveTreatsEmptyStringAsNoNote() {
+    XCTAssertNil(TransactionDetailLogic.noteToSave(from: ""))
+  }
+
+  func testNoteToSaveTreatsWhitespaceOnlyAsNoNote() {
+    XCTAssertNil(TransactionDetailLogic.noteToSave(from: "   \n  "))
+  }
 }
