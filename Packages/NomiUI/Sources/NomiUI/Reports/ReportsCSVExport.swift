@@ -13,14 +13,23 @@ enum ReportsCSVExport {
     case writeFailed
   }
 
-  static func write(_ transactions: [Transaction], filename: String = "nomi-report.csv") throws -> URL {
-    let csv = TransactionCSVExporter.export(transactions)
+  /// The file this type last wrote, so the next write can remove it (T5) —
+  /// each export tap otherwise leaves the previous CSV behind in `tmp`.
+  private static var lastWrittenURL: URL?
+
+  static func write(_ transactions: [Transaction], names: CSVNameMaps, periodLabel: String) throws -> URL {
+    let csv = TransactionCSVExporter.export(transactions, names: names)
+    let filename = "nomi-report-\(periodLabel)-\(UUID().uuidString).csv"
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
     do {
       try csv.write(to: url, atomically: true, encoding: .utf8)
     } catch {
       throw ExportError.writeFailed
     }
+    if let previous = lastWrittenURL {
+      try? FileManager.default.removeItem(at: previous)
+    }
+    lastWrittenURL = url
     return url
   }
 }

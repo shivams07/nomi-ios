@@ -1,5 +1,6 @@
 import Foundation
 import NomiCore
+import SwiftData
 import SwiftUI
 
 /// The Reports/Insights page (U13, v5 new) — the largest of the four new
@@ -23,6 +24,9 @@ public struct ReportsScreen: View {
   /// not a coincidence of it being unused. Do not delete it for looking dead.
   public let refreshToken: Int
 
+  @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
+  @Query(sort: \NomiCore.Account.displayName) private var accounts: [NomiCore.Account]
+
   @State private var basis: PeriodBasis
   @State private var anchor: Date
   @State private var exportURL: URL?
@@ -44,10 +48,22 @@ public struct ReportsScreen: View {
     ReportsPeriod.period(basis: basis, anchor: anchor)
   }
 
+  /// `nil` means `insightsStore.insights(for:)` threw — a real fetch error,
+  /// not "no transactions this period" (that case still comes back as a
+  /// successful, all-zero `PeriodInsights`). The body's fallback branch
+  /// reflects that: it reads as a load failure, not an empty state.
   private var viewModel: ReportsViewModel? {
     guard let insights = try? insightsStore.insights(for: period) else { return nil }
     let trend = (try? insightsStore.trend(months: ReportsPeriod.trendMonths(for: basis))) ?? []
     return ReportsViewModelBuilder.make(period: period, insights: insights, trend: trend)
+  }
+
+  private var categoryNames: [UUID: String] {
+    Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0.name) })
+  }
+
+  private var accountNames: [UUID: String] {
+    Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0.displayName) })
   }
 
   public var body: some View {
@@ -60,7 +76,7 @@ public struct ReportsScreen: View {
           ReportsCategoryBreakdownCard(slices: viewModel.categories)
           exportButton
         } else {
-          Text("No data for this period")
+          Text("Couldn't load report data")
             .nomiTextStyle(.caption)
             .foregroundStyle(NomiColor.textTertiary)
         }
@@ -151,7 +167,8 @@ public struct ReportsScreen: View {
       exportError = true
       return
     }
-    guard let url = try? ReportsCSVExport.write(transactions) else {
+    let names = CSVNameMaps(categories: categoryNames, accounts: accountNames)
+    guard let url = try? ReportsCSVExport.write(transactions, names: names, periodLabel: ReportsPeriod.label(for: period)) else {
       exportError = true
       return
     }
@@ -171,6 +188,19 @@ extension ReportsScreen: Equatable {
 
 private let previewAnchor = Calendar(identifier: .gregorian).date(from: DateComponents(year: 2026, month: 8, day: 15))!
 
+/// A fresh in-memory container per call, just to give the new `@Query`s
+/// something to bind to in the canvas — `ReportsPreviewSupport`'s category
+/// fixtures live behind `FakeInsightsStore`, not a `ModelContainer`, and
+/// none of these previews render category/account names directly (they only
+/// feed the export button's CSV, off-screen), so an empty store is enough.
+@MainActor
+private func reportsCSVExportPreviewContainer() -> ModelContainer {
+  try! ModelContainer(
+    for: Schema([NomiCore.Category.self, NomiCore.Account.self]),
+    configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+  )
+}
+
 #Preview("Reports — calendar month, dark") {
   NavigationStack {
     ReportsScreen(
@@ -179,6 +209,7 @@ private let previewAnchor = Calendar(identifier: .gregorian).date(from: DateComp
       initialAnchor: previewAnchor
     )
   }
+  .modelContainer(reportsCSVExportPreviewContainer())
   .preferredColorScheme(.dark)
 }
 
@@ -190,6 +221,7 @@ private let previewAnchor = Calendar(identifier: .gregorian).date(from: DateComp
       initialAnchor: previewAnchor
     )
   }
+  .modelContainer(reportsCSVExportPreviewContainer())
   .preferredColorScheme(.dark)
 }
 
@@ -201,6 +233,7 @@ private let previewAnchor = Calendar(identifier: .gregorian).date(from: DateComp
       initialAnchor: previewAnchor
     )
   }
+  .modelContainer(reportsCSVExportPreviewContainer())
   .preferredColorScheme(.dark)
 }
 
@@ -212,6 +245,7 @@ private let previewAnchor = Calendar(identifier: .gregorian).date(from: DateComp
       initialAnchor: previewAnchor
     )
   }
+  .modelContainer(reportsCSVExportPreviewContainer())
   .preferredColorScheme(.dark)
 }
 
@@ -223,6 +257,7 @@ private let previewAnchor = Calendar(identifier: .gregorian).date(from: DateComp
       initialAnchor: previewAnchor
     )
   }
+  .modelContainer(reportsCSVExportPreviewContainer())
   .environment(\.dynamicTypeSize, .accessibility3)
   .preferredColorScheme(.dark)
 }
