@@ -69,6 +69,12 @@ public struct NomiAppScene: Scene {
       switch phase {
       case .active:
         Task { await environment.sync.didBecomeActive() }
+        // U9b. `.CKAccountChanged` is not guaranteed to reach a process that
+        // was backgrounded while the user signed in or out, so every
+        // foreground re-probes. `refresh()` publishes only on a real change,
+        // so the common case — nothing changed — costs one status query and
+        // no re-render.
+        Task { await environment.storageMonitor.refresh() }
       case .background, .inactive:
         Task { await environment.sync.didEnterBackground() }
       @unknown default:
@@ -109,6 +115,12 @@ struct RootContainerView: View {
     }
     .task {
       await observeRemoteChanges()
+    }
+    .task {
+      // U9b. Probes once, then follows `.CKAccountChanged` for as long as this
+      // view is alive. A `.task` rather than a fire-and-forget `Task` so it is
+      // cancelled with the view instead of outliving it.
+      await environment.storageMonitor.run()
     }
   }
 

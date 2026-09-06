@@ -15,28 +15,64 @@ enum NotificationToggleDisplay {
   }
 }
 
-/// The "iCloud sync" row (B11).
+/// The "iCloud sync" row (B11, then U9b).
 ///
 /// The app falls back to a local-only store when the CloudKit container will
-/// not construct, which is correct — but until now it announced that with a
-/// `print`, so the only person who could tell was one with Xcode attached. A
-/// user in that state has an app that works and simply never appears on their
-/// second device.
+/// not construct, and it *pauses* sync when there is no usable iCloud account.
+/// Until B11 it announced neither, so a user in either state had an app that
+/// worked and simply never appeared on their second device.
+///
+/// The two are worth distinguishing to the user because the fix differs:
+/// `.localOnly` needs a relaunch to regain sync, `.cloudKitPaused` resumes on
+/// its own as soon as an account is available.
 enum StorageModeDisplay {
+  /// The value on the right of the row.
+  ///
+  /// `.temporarilyUnavailable` is the one paused state that does not read
+  /// "Off", because it is the one expected to resolve without the user doing
+  /// anything — telling them sync is off would invite them to go fix something
+  /// that is not broken.
   static func text(for mode: StorageMode) -> String {
-    mode.isSyncing ? "On" : "Off — this device only"
+    switch mode {
+    case .cloudKit: return "On"
+    case .localOnly: return "Off — this device only"
+    case .cloudKitPaused(.noAccount): return "Off — not signed in to iCloud"
+    case .cloudKitPaused(.restricted): return "Off — iCloud restricted"
+    case .cloudKitPaused(.temporarilyUnavailable): return "Waiting for iCloud"
+    case .cloudKitPaused(.couldNotDetermine): return "Off — iCloud status unknown"
+    }
   }
 
   /// The caption under the row. `nil` when syncing, so the row renders as one
   /// line and nothing is said where there is nothing to say.
   ///
-  /// The reason is the underlying error's description: developer-shaped text,
-  /// deliberately. A user who can read it out loud gives a usable report, and
-  /// a hand-written friendly string would have to guess at causes this code
-  /// does not know.
+  /// **Every non-syncing caption opens by saying the data is safe**, because
+  /// the report this row exists to prevent is "the app lost my transactions"
+  /// — which is what a user concludes when their second device is empty. The
+  /// reassurance has to come before the explanation, not after it.
+  ///
+  /// `.localOnly` and `.couldNotDetermine` end in developer-shaped text,
+  /// deliberately: a user who can read it out gives a usable report, and a
+  /// hand-written friendly string would have to guess at causes this code does
+  /// not know. The other paused reasons are known exactly, so they get a
+  /// sentence written for a person, and `.noAccount` names where to go.
   static func caption(for mode: StorageMode) -> String? {
-    guard let reason = mode.reason else { return nil }
-    return "Your data is safe on this device, but it is not syncing to iCloud. \(reason)"
+    switch mode {
+    case .cloudKit:
+      return nil
+    case .localOnly(let reason):
+      return "Your data is safe on this device, but it is not syncing to iCloud. \(reason)"
+    case .cloudKitPaused(.noAccount):
+      return "Your data is safe on this device. Sign in to iCloud in the Settings app to sync."
+    case .cloudKitPaused(.restricted):
+      return
+        "Your data is safe on this device. iCloud is restricted on this device (Screen Time or a management profile)."
+    case .cloudKitPaused(.temporarilyUnavailable):
+      return
+        "Your data is safe on this device. iCloud is temporarily unavailable — syncing resumes on its own."
+    case .cloudKitPaused(.couldNotDetermine(let detail)):
+      return "Your data is safe on this device. \(detail)"
+    }
   }
 }
 
