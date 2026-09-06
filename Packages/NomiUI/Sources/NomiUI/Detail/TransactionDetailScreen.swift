@@ -47,6 +47,7 @@ public struct TransactionDetailScreen: View {
   @State private var amountText = ""
   @State private var editedDate = Date()
   @State private var editedDescription = ""
+  @State private var editedNote = ""
   @State private var didPrefillEdit = false
 
   public init(
@@ -152,6 +153,13 @@ public struct TransactionDetailScreen: View {
         Text(NomiFormatters.dayMonthYear.string(from: transaction.date))
           .nomiTextStyle(.caption)
           .foregroundStyle(NomiColor.textTertiary)
+        // U24: shown only when present — a note is a fact about the row,
+        // not a flag, so it sits with the date rather than in `flagReasons`.
+        if let note = transaction.note {
+          Text(note)
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.textSecondary)
+        }
         ForEach(
           TransactionDetailLogic.flagReasons(
             accountID: transaction.accountID, needsReview: transaction.needsReview,
@@ -229,6 +237,7 @@ public struct TransactionDetailScreen: View {
         }
       }
       TextField("Description", text: $editedDescription)
+      TextField("Note", text: $editedNote)
       Button("Save changes") { saveEdit() }
         .disabled(!canSaveEdit)
     }
@@ -305,6 +314,7 @@ public struct TransactionDetailScreen: View {
     amountText = String(format: "%.2f", Double(transaction.amountMinor) / 100)
     editedDate = transaction.date
     editedDescription = transaction.descriptionText
+    editedNote = transaction.note ?? ""
   }
 
   private func updateCategory(to categoryID: UUID) {
@@ -327,7 +337,8 @@ public struct TransactionDetailScreen: View {
     guard canSaveEdit else { return }
     do {
       try editor.update(
-        transactionID, amountMinor: editedAmountMinor, date: editedDate, descriptionText: editedDescription)
+        transactionID, amountMinor: editedAmountMinor, date: editedDate, descriptionText: editedDescription,
+        note: TransactionDetailLogic.noteToSave(from: editedNote))
     } catch {
       errorMessage = "Could not save the changes."
     }
@@ -381,6 +392,35 @@ private enum TransactionDetailPreviewFixtures {
       updatedAt: date
     )
   }()
+
+  /// U24: none of `PreviewData.transactions` carries a note, so the
+  /// done-when's "row with a note" preview needs its own fixture, same
+  /// convention as `manual` above.
+  static let noted: NomiCore.Transaction = {
+    let date = Date(timeIntervalSinceNow: -1 * 86400)
+    let description = "DINE OUT/SWIGGY/REF2"
+    let normalized = normalizeDescription(description)
+    return NomiCore.Transaction(
+      id: UUID(uuidString: "00000000-0000-0000-0000-000000000602")!,
+      date: date,
+      descriptionText: description,
+      merchantName: "Swiggy",
+      normalizedDescription: normalized,
+      amountMinor: 68_00,
+      directionRaw: Direction.debit.rawValue,
+      categoryID: PreviewData.categories[0].id,
+      categorySourceRaw: CategorySource.manual.rawValue,
+      accountID: PreviewData.accounts[0].id,
+      sourceRaw: IngestSource.email.rawValue,
+      sourceRefs: [SourceRef(source: .email, externalID: UUID().uuidString, capturedAt: date)],
+      dedupeKey: makeDedupeKey(
+        date: date, amountMinor: 68_00, directionRaw: Direction.debit.rawValue, normalizedDescription: normalized
+      ),
+      createdAt: date,
+      updatedAt: date,
+      note: "Split with Riya"
+    )
+  }()
 }
 
 #Preview("Transaction detail — flagged email row, dark") {
@@ -418,6 +458,24 @@ private enum TransactionDetailPreviewFixtures {
   NavigationStack {
     TransactionDetailScreen(
       transactionID: TransactionDetailPreviewFixtures.manual.id,
+      transactionStore: FakeTransactionStore(transactions: transactions),
+      editor: FakeTransactionEditor(transactions: transactions),
+      categoryStore: FakeCategoryStore(),
+      accountStore: FakeAccountStore()
+    )
+  }
+  .modelContainer(LedgerPreviewSupport.makeContainer(transactions: transactions))
+  .preferredColorScheme(.dark)
+}
+
+/// U24 done-when: "row with a note" — `.noted` — paired with every row above
+/// this one, which all come from `PreviewData.transactions` and so already
+/// cover "row without".
+#Preview("Transaction detail — with a note, dark") {
+  let transactions = PreviewData.transactions + [TransactionDetailPreviewFixtures.noted]
+  NavigationStack {
+    TransactionDetailScreen(
+      transactionID: TransactionDetailPreviewFixtures.noted.id,
       transactionStore: FakeTransactionStore(transactions: transactions),
       editor: FakeTransactionEditor(transactions: transactions),
       categoryStore: FakeCategoryStore(),
