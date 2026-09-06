@@ -67,8 +67,19 @@ final class EntitlementsParityTests: XCTestCase {
       // path or it sends the reader looking in the wrong place.
       throw EntitlementsUnreadable(path: url.path)
     }
+    decodedFromDisk = String(data: data, encoding: .utf8) ?? "<not UTF-8, \(data.count) bytes>"
     return try PropertyListDecoder().decode(Entitlements.self, from: data)
   }
+
+  /// What was actually on disk, carried into the failure messages.
+  ///
+  /// Both assertions failed twice with "nil is not equal to …", which says the
+  /// key was absent but not *why* — and the file is correct in git, so the
+  /// interesting question is what the file looked like by the time the test
+  /// ran. A parity test whose failure does not show both sides of the
+  /// comparison sends the reader to the wrong file.
+  private var decodedFromDisk = "<not read>"
+
 
   /// The parity that matters: a mismatch here means the app asks CloudKit for
   /// a container it is not entitled to use, and crashes on first sync.
@@ -78,9 +89,10 @@ final class EntitlementsParityTests: XCTestCase {
     XCTAssertEqual(
       identifiers, [NomiModelContainer.cloudKitContainerIdentifier],
       """
-      App/Nomi.entitlements and NomiModelContainer.cloudKitContainerIdentifier \
-      disagree. Whichever one is wrong, the build crashes on first CloudKit \
-      access - there is no runtime check that can catch this.
+      App/Nomi.entitlements and NomiModelContainer.cloudKitContainerIdentifier       disagree. Whichever one is wrong, the build crashes on first CloudKit       access - there is no runtime check that can catch this.
+
+      On disk at test time:
+      \(decodedFromDisk)
       """)
   }
 
@@ -89,6 +101,13 @@ final class EntitlementsParityTests: XCTestCase {
   func testTheEntitlementsEnableCloudKitItself() throws {
     let services = try entitlements().services
 
-    XCTAssertEqual(services, ["CloudKit"])
+    XCTAssertEqual(
+      services, ["CloudKit"],
+      """
+      App/Nomi.entitlements does not enable the CloudKit service.
+
+      On disk at test time:
+      \(decodedFromDisk)
+      """)
   }
 }
