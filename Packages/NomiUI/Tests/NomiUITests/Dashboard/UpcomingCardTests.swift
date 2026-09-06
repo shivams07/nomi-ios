@@ -11,30 +11,30 @@ import XCTest
 final class UpcomingCardTests: XCTestCase {
 
   func testCapsAtFiveEvenWithMoreSeriesAvailable() {
-    let series = (0..<8).map { series(id: "S\($0)", daysFromNow: $0) }
+    let allSeries = (0..<8).map { makeSeries(id: "S\($0)", daysFromNow: $0) }
 
-    XCTAssertEqual(UpcomingRows.soonest(series).count, 5)
+    XCTAssertEqual(UpcomingRows.soonest(allSeries).count, 5)
   }
 
   func testOrdersByNextExpectedAscendingRegardlessOfInputOrder() {
-    let soon = series(id: "SOON", daysFromNow: 1)
-    let soonest = series(id: "SOONEST", daysFromNow: 0)
-    let later = series(id: "LATER", daysFromNow: 10)
-    let latest = series(id: "LATEST", daysFromNow: 20)
+    let soon = makeSeries(id: "SOON", daysFromNow: 1)
+    let soonest = makeSeries(id: "SOONEST", daysFromNow: 0)
+    let later = makeSeries(id: "LATER", daysFromNow: 10)
+    let latest = makeSeries(id: "LATEST", daysFromNow: 20)
 
     let result = UpcomingRows.soonest([later, latest, soon, soonest])
 
-    XCTAssertEqual(result.map(\.id), ["SOONEST", "SOON", "LATER", "LATEST"])
+    XCTAssertEqual(result.map { $0.id }, ["SOONEST", "SOON", "LATER", "LATEST"])
   }
 
   func testCapKeepsTheFiveSoonestNotTheFirstFiveInInputOrder() {
     // Deliberately fed latest-first, so a cap that truncated before sorting
     // would keep the wrong five.
-    let series = (0..<8).map { series(id: "S\($0)", daysFromNow: 7 - $0) }
+    let allSeries = (0..<8).map { makeSeries(id: "S\($0)", daysFromNow: 7 - $0) }
 
-    let result = UpcomingRows.soonest(series)
+    let result = UpcomingRows.soonest(allSeries)
 
-    XCTAssertEqual(result.map(\.id), ["S7", "S6", "S5", "S4", "S3"])
+    XCTAssertEqual(result.map { $0.id }, ["S7", "S6", "S5", "S4", "S3"])
   }
 
   func testEmptyInputProducesEmptyOutput() {
@@ -43,7 +43,7 @@ final class UpcomingCardTests: XCTestCase {
 
   // MARK: -
 
-  private func series(id: String, daysFromNow: Int) -> RecurringSeries {
+  private func makeSeries(id: String, daysFromNow: Int) -> RecurringSeries {
     RecurringSeries(
       id: id,
       label: id,
