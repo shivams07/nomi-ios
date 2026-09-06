@@ -27,9 +27,69 @@ enum DashboardWiring {
   /// itself is not reachable from `swift test`.
   static let recentTransactionLimit = 5
 
+  /// A read that failed is not a read that succeeded and found nothing (F3).
+  /// `try?` used to conflate the two — a store error rendered identically to
+  /// a genuinely empty period. `.failed` is a distinct, retryable state;
+  /// `.loaded`, even with an empty payload, renders the same card it always
+  /// did.
+  enum Load<T> {
+    case loaded(T)
+    case failed
+  }
+
   @MainActor
-  static func recentTransactions(from store: InsightsStore) -> [NomiCore.Transaction] {
-    (try? store.recentTransactions(limit: recentTransactionLimit)) ?? []
+  static func recentTransactions(from store: InsightsStore) -> Load<[NomiCore.Transaction]> {
+    do {
+      return .loaded(try store.recentTransactions(limit: recentTransactionLimit))
+    } catch {
+      return .failed
+    }
+  }
+
+  /// `nil` in financial-year basis: budgets are monthly and the FY view has
+  /// no single calendar month to evaluate progress against.
+  static func budgetMonth(basis: PeriodBasis, anchor: Date, calendar: Calendar) -> (year: Int, month: Int)? {
+    guard basis == .calendarMonth else { return nil }
+    let components = calendar.dateComponents([.year, .month], from: anchor)
+    guard let year = components.year, let month = components.month else { return nil }
+    return (year, month)
+  }
+
+  // MARK: - F3: the rest of the dashboard's reads, pulled out of `body` for
+  // the same reason `recentTransactions(from:)` above already is — `swift
+  // test` cannot reach `DashboardView.body` or its private computed
+  // properties at all.
+
+  @MainActor
+  static func insights(for period: InsightPeriod, from store: InsightsStore) -> Load<PeriodInsights> {
+    do {
+      return .loaded(try store.insights(for: period))
+    } catch {
+      return .failed
+    }
+  }
+
+  @MainActor
+  static func accounts(from store: InsightsStore) -> Load<[AccountSummary]> {
+    do {
+      return .loaded(try store.accountSummaries(includeArchived: accountsIncludeArchived))
+    } catch {
+      return .failed
+    }
+  }
+
+  /// `month == nil` (FY basis) passes straight through as `nil` — a third
+  /// state, distinct from both cases of `Load`, since the FY basis has no
+  /// budget concept at all rather than a successful empty answer or a
+  /// failure.
+  @MainActor
+  static func budgetProgress(month: (year: Int, month: Int)?, from store: InsightsStore) -> Load<[BudgetProgress]>? {
+    guard let month else { return nil }
+    do {
+      return .loaded(try store.budgetProgress(year: month.year, month: month.month))
+    } catch {
+      return .failed
+    }
   }
 }
 
@@ -53,31 +113,46 @@ public struct DashboardView: View {
   @State private var anchor: Date = Date()
   @State private var mailState: MailConnectionState = .disconnected
 
-  public init(insightsStore: InsightsStore, mailConnectionService: MailConnectionService? = nil, refreshToken: Int = 0) {
+  /// Bumped by every "tap to retry" — a stored property changing is what
+  /// makes SwiftUI re-invoke `body` (and so re-run the `Load`-returning
+  /// computed properties below) even though none of them read it, same
+  /// mechanism `refreshToken` above already relies on.
+  @State private var retryToken = 0
+
+  public init(
+    insightsStore: InsightsStore,
+    mailConnectionService: MailConnectionService? = nil,
+    refreshToken: Int = 0,
+    basis: PeriodBasis = .calendarMonth,
+    anchor: Date = Date()
+  ) {
     self.insightsStore = insightsStore
     self.mailConnectionService = mailConnectionService
     self.refreshToken = refreshToken
+    _basis = State(initialValue: basis)
+    _anchor = State(initialValue: anchor)
   }
 
   private var period: InsightPeriod {
     DashboardPeriod.period(basis: basis, anchor: anchor)
   }
 
-  private var insights: PeriodInsights? {
-    try? insightsStore.insights(for: period)
+  private var insights: DashboardWiring.Load<PeriodInsights> {
+    DashboardWiring.insights(for: period, from: insightsStore)
   }
 
-  private var accounts: [AccountSummary] {
-    (try? insightsStore.accountSummaries(includeArchived: DashboardWiring.accountsIncludeArchived)) ?? []
+  private var accounts: DashboardWiring.Load<[AccountSummary]> {
+    DashboardWiring.accounts(from: insightsStore)
   }
 
-  private var budgetProgress: [BudgetProgress] {
-    let components = Calendar.current.dateComponents([.year, .month], from: anchor)
-    guard let year = components.year, let month = components.month else { return [] }
-    return (try? insightsStore.budgetProgress(year: year, month: month)) ?? []
+  private var budgetProgress: DashboardWiring.Load<[BudgetProgress]>? {
+    DashboardWiring.budgetProgress(
+      month: DashboardWiring.budgetMonth(basis: basis, anchor: anchor, calendar: .current),
+      from: insightsStore
+    )
   }
 
-  private var recentTransactions: [NomiCore.Transaction] {
+  private var recentTransactions: DashboardWiring.Load<[NomiCore.Transaction]> {
     DashboardWiring.recentTransactions(from: insightsStore)
   }
 
@@ -86,18 +161,19 @@ public struct DashboardView: View {
       VStack(alignment: .leading, spacing: NomiSpacing.cardToCard) {
         SyncStatusRow(state: mailState)
         periodSelector
-        if let insights {
+        switch insights {
+        case .loaded(let insights):
           HeroTotalCard(insights: insights)
           SpendPerDayChartCard(byDay: insights.byDay)
           CategoryBreakdownCard(slices: insights.byCategory)
-          if DashboardWiring.shouldShowBudgetModule(budgetProgress) {
-            BudgetProgressCard(items: budgetProgress)
-          }
-          RecentTransactionsCard(transactions: recentTransactions)
+          budgetModule
+          recentTransactionsModule
           TopMerchantsCard(merchants: insights.topMerchants)
           NeedsYouCard(needsReviewCount: insights.needsReviewCount, uncategorizedCount: insights.uncategorizedCount)
+        case .failed:
+          FailedLoadCaption { retryToken += 1 }
         }
-        AccountsCard(accounts: accounts)
+        accountsModule
       }
       .padding(.horizontal, NomiSpacing.screenGutter)
       .padding(.vertical, NomiSpacing.screenGutter)
@@ -107,6 +183,44 @@ public struct DashboardView: View {
       for await state in mailConnectionService.state {
         mailState = state
       }
+    }
+  }
+
+  @ViewBuilder
+  private var budgetModule: some View {
+    switch budgetProgress {
+    case .loaded(let items) where DashboardWiring.shouldShowBudgetModule(items):
+      BudgetProgressCard(items: items)
+    case .loaded:
+      EmptyView()
+    case .failed:
+      FailedLoadCaption { retryToken += 1 }
+    case nil:
+      // FY basis: budgets are monthly, so there is nothing to show progress
+      // against — a caption, not a hidden module masquerading as "on time".
+      Text("Budgets are monthly — switch to Calendar Month to see progress.")
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.textTertiary)
+    }
+  }
+
+  @ViewBuilder
+  private var recentTransactionsModule: some View {
+    switch recentTransactions {
+    case .loaded(let transactions):
+      RecentTransactionsCard(transactions: transactions)
+    case .failed:
+      FailedLoadCaption { retryToken += 1 }
+    }
+  }
+
+  @ViewBuilder
+  private var accountsModule: some View {
+    switch accounts {
+    case .loaded(let accounts):
+      AccountsCard(accounts: accounts)
+    case .failed:
+      FailedLoadCaption { retryToken += 1 }
     }
   }
 
@@ -129,6 +243,22 @@ public struct DashboardView: View {
           .foregroundStyle(NomiColor.textSecondary)
       }
       NomiSegmentedPill(basis: $basis)
+    }
+  }
+}
+
+/// F3: a "Couldn't load" state, distinct from an empty one — tapping it
+/// bumps `retryToken`, which is all a retry can do here since none of these
+/// reads carry their own retry mechanism; the next `body` re-evaluation
+/// simply tries the read again.
+private struct FailedLoadCaption: View {
+  let retry: () -> Void
+
+  var body: some View {
+    Button(action: retry) {
+      Text("Couldn't load — tap to retry")
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.overBudget)
     }
   }
 }
@@ -176,4 +306,37 @@ extension DashboardView: Equatable {
     DashboardView(insightsStore: FakeInsightsStore(budgets: []), mailConnectionService: FakeMailConnectionService())
   }
   .preferredColorScheme(.dark)
+}
+
+#Preview("Dashboard — financial year basis, budget caption, dark") {
+  NomiTabShell {
+    DashboardView(
+      insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService(),
+      basis: .financialYear
+    )
+  }
+  .preferredColorScheme(.dark)
+}
+
+#Preview("Dashboard — failed load, dark") {
+  NomiTabShell {
+    DashboardView(
+      insightsStore: FailingInsightsStorePreviewFixture(), mailConnectionService: FakeMailConnectionService()
+    )
+  }
+  .preferredColorScheme(.dark)
+}
+
+/// A store that fails every read — for the preview above only. Kept local to
+/// this file rather than added to `NomiPreview`, which is not in this unit's
+/// file list.
+@MainActor
+private final class FailingInsightsStorePreviewFixture: InsightsStore {
+  private struct Failure: Error {}
+  func insights(for period: InsightPeriod) throws -> PeriodInsights { throw Failure() }
+  func trend(months: Int) throws -> [MonthBucket] { throw Failure() }
+  func accountSummaries(includeArchived: Bool) throws -> [AccountSummary] { throw Failure() }
+  func budgetProgress(year: Int, month: Int) throws -> [BudgetProgress] { throw Failure() }
+  func transactions(in period: InsightPeriod) throws -> [NomiCore.Transaction] { throw Failure() }
+  func recentTransactions(limit: Int) throws -> [NomiCore.Transaction] { throw Failure() }
 }

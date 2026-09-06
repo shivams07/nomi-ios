@@ -46,8 +46,11 @@ final class DashboardWiringTests: XCTestCase {
   func testRecentTransactionsAsksForFiveAndNeverForAllTime() {
     let spy = SpyInsightsStore()
 
-    _ = DashboardWiring.recentTransactions(from: spy)
+    guard case .loaded(let rows) = DashboardWiring.recentTransactions(from: spy) else {
+      return XCTFail("a non-throwing store must yield .loaded")
+    }
 
+    XCTAssertTrue(rows.isEmpty)
     XCTAssertEqual(spy.recentLimits, [5])
     XCTAssertEqual(DashboardWiring.recentTransactionLimit, 5)
     XCTAssertTrue(
@@ -55,16 +58,88 @@ final class DashboardWiringTests: XCTestCase {
       "transactions(in:) is the all-time fetch F2 removes; the dashboard must not call it")
   }
 
-  /// The call is wrapped in `try?`, so a store error has to become an empty
-  /// card rather than a crash - and the call must still have been made.
+  /// F3: a store error must be distinguishable from a genuinely empty
+  /// answer, not collapsed into the same empty card `try?` used to produce.
   @MainActor
-  func testAThrowingStoreProducesAnEmptyCardNotACrash() {
+  func testAThrowingStoreYieldsFailedNotLoadedEmpty() {
     let spy = SpyInsightsStore(shouldThrow: true)
 
-    let rows = DashboardWiring.recentTransactions(from: spy)
+    let result = DashboardWiring.recentTransactions(from: spy)
 
-    XCTAssertTrue(rows.isEmpty)
-    XCTAssertEqual(spy.recentLimits, [5])
+    guard case .failed = result else {
+      return XCTFail("a throwing store must yield .failed, not .loaded([])")
+    }
+    XCTAssertEqual(spy.recentLimits, [5], "the call must still have been made")
+  }
+
+  // MARK: - F5: FY basis has no budget month
+
+  private var ist: Calendar {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Asia/Kolkata")!
+    return calendar
+  }
+
+  private func date(_ year: Int, _ month: Int, _ day: Int = 15) -> Date {
+    var components = DateComponents()
+    components.year = year
+    components.month = month
+    components.day = day
+    return ist.date(from: components)!
+  }
+
+  func testBudgetMonthIsNilForFinancialYearBasis() {
+    XCTAssertNil(DashboardWiring.budgetMonth(basis: .financialYear, anchor: date(2026, 9), calendar: ist))
+  }
+
+  func testBudgetMonthIsYearAndMonthForCalendarMonthBasis() {
+    let month = DashboardWiring.budgetMonth(basis: .calendarMonth, anchor: date(2026, 9), calendar: ist)
+    XCTAssertEqual(month?.year, 2026)
+    XCTAssertEqual(month?.month, 9)
+  }
+
+  // MARK: - F3: the rest of the dashboard's reads
+
+  @MainActor
+  func testAThrowingInsightsStoreYieldsFailedNotLoadedEmpty() {
+    let spy = SpyInsightsStore(shouldThrow: true)
+
+    guard case .failed = DashboardWiring.insights(for: .month(year: 2026, month: 9), from: spy) else {
+      return XCTFail("a throwing store must yield .failed, not .loaded(empty)")
+    }
+  }
+
+  @MainActor
+  func testANonThrowingInsightsStoreYieldsLoaded() {
+    let spy = SpyInsightsStore()
+
+    guard case .loaded = DashboardWiring.insights(for: .month(year: 2026, month: 9), from: spy) else {
+      return XCTFail("a non-throwing store must yield .loaded")
+    }
+  }
+
+  @MainActor
+  func testAThrowingAccountsStoreYieldsFailed() {
+    let spy = SpyInsightsStore(shouldThrow: true)
+
+    guard case .failed = DashboardWiring.accounts(from: spy) else {
+      return XCTFail("a throwing store must yield .failed")
+    }
+  }
+
+  @MainActor
+  func testBudgetProgressIsNilWhenMonthIsNil() {
+    let spy = SpyInsightsStore()
+    XCTAssertNil(DashboardWiring.budgetProgress(month: nil, from: spy))
+  }
+
+  @MainActor
+  func testAThrowingBudgetProgressStoreYieldsFailedWhenAMonthExists() {
+    let spy = SpyInsightsStore(shouldThrow: true)
+
+    guard case .failed = DashboardWiring.budgetProgress(month: (2026, 9), from: spy) else {
+      return XCTFail("a throwing store must yield .failed when there is a month to evaluate")
+    }
   }
 }
 
@@ -98,8 +173,24 @@ private final class SpyInsightsStore: InsightsStore {
     return []
   }
 
-  func insights(for period: InsightPeriod) throws -> PeriodInsights { throw Failure() }
+  func insights(for period: InsightPeriod) throws -> PeriodInsights {
+    if shouldThrow { throw Failure() }
+    return PeriodInsights(
+      period: period, debitMinor: 0, creditMinor: 0, netMinor: 0,
+      priorDebitMinor: nil, priorCreditMinor: nil, transactionCount: 0, byDay: [], byCategory: [],
+      topMerchants: [], needsReviewCount: 0, uncategorizedCount: 0
+    )
+  }
+
   func trend(months: Int) throws -> [MonthBucket] { [] }
-  func accountSummaries(includeArchived: Bool) throws -> [AccountSummary] { [] }
-  func budgetProgress(year: Int, month: Int) throws -> [BudgetProgress] { [] }
+
+  func accountSummaries(includeArchived: Bool) throws -> [AccountSummary] {
+    if shouldThrow { throw Failure() }
+    return []
+  }
+
+  func budgetProgress(year: Int, month: Int) throws -> [BudgetProgress] {
+    if shouldThrow { throw Failure() }
+    return []
+  }
 }
