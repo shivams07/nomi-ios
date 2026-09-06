@@ -25,6 +25,18 @@ public struct MailMessage: Sendable, Equatable {
   /// `text/plain` part, if the message had one.
   public let textBody: String?
 
+  /// The TOPMOST `Authentication-Results` header, verbatim, or nil when the
+  /// message had none (B9).
+  ///
+  /// Topmost because each hop prepends its own and only the receiving server's
+  /// is worth anything - a forger controls every line below it. `RFC822Message`
+  /// keeps the first occurrence of a duplicate header, which is exactly that
+  /// one.
+  ///
+  /// Kept raw rather than pre-parsed so the parsing rule lives in one place
+  /// (`MailAuthentication`) and a fixture keeps a real header in it.
+  public let authenticationResultsRaw: String?
+
   public init(
     uid: UInt32,
     uidValidity: UInt32,
@@ -33,7 +45,10 @@ public struct MailMessage: Sendable, Equatable {
     subject: String,
     headerDate: Date,
     htmlBody: String?,
-    textBody: String?
+    textBody: String?,
+    // Trailing, with a default, so every existing fixture, test and call site
+    // compiles unchanged.
+    authenticationResultsRaw: String? = nil
   ) {
     self.uid = uid
     self.uidValidity = uidValidity
@@ -43,6 +58,7 @@ public struct MailMessage: Sendable, Equatable {
     self.headerDate = headerDate
     self.htmlBody = htmlBody
     self.textBody = textBody
+    self.authenticationResultsRaw = authenticationResultsRaw
   }
 
   /// The bare address inside `fromRaw`, lowercased. `""` when there isn't one.

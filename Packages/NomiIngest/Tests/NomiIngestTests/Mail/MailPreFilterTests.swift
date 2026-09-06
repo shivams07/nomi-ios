@@ -239,10 +239,13 @@ final class MailPreFilterTests: XCTestCase {
   /// The domains this unit adds to `senders.json`'s `candidateDomains`.
   ///
   /// Every one of them is TOKENLESS, and that is the entire selection rule.
-  /// Ring 3 of `isCandidateDomain` is `domain.contains(token)` over the eight
-  /// `candidateDomainTokens`, so any domain carrying `bank`, `card`, `upi`,
-  /// `netbanking`, `alerts`, `paytm`, `phonepe` or `npci` was already admitted
-  /// before anyone typed it. Measured at `92d90c5`: 17 of the 22 entries then on
+  /// Ring 3 of `isCandidateDomain` was `domain.contains(token)` over eight
+  /// `candidateDomainTokens` when this list was written, so any domain carrying
+  /// `bank`, `card`, `upi`, `netbanking`, `alerts`, `paytm`, `phonepe` or `npci`
+  /// was already admitted before anyone typed it. U1b narrowed ring 3 to label
+  /// matching and dropped two of the tokens, which can only make this list MORE
+  /// load-bearing, never less - the assertions below are unchanged and still
+  /// hold. Measured at `92d90c5`: 17 of the 22 entries then on
   /// the list are dead weight for exactly that reason, and only five -
   /// `sbi.co.in`, `kotak.com`, `americanexpress.com`, `pnb.co.in`,
   /// `indusind.com` - carry any admission at all. This list is the same shape as
@@ -288,7 +291,12 @@ final class MailPreFilterTests: XCTestCase {
   /// at all, and a diff that reads like widening while doing nothing.
   func testEveryDomainAddedByThisUnitIsTokenless() {
     let tokens = SenderPack.bundled.candidateDomainTokens
-    XCTAssertEqual(tokens.count, 8, "the token ring changed - re-measure the list")
+    // Six since U1b: `alerts` and `card` are gone. The count is pinned rather
+    // than ignored because a token silently reappearing would widen admission
+    // for every domain in the pack at once.
+    XCTAssertEqual(tokens.count, 6, "the token ring changed - re-measure the list")
+    XCTAssertFalse(tokens.contains("alerts"), "B7 removed this one")
+    XCTAssertFalse(tokens.contains("card"), "B7 removed this one")
 
     for domain in Self.domainsAddedByThisUnit {
       for token in tokens {
