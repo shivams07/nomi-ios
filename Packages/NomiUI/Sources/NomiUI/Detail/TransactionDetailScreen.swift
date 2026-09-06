@@ -3,6 +3,12 @@ import NomiPreview
 import SwiftData
 import SwiftUI
 
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
 /// The transaction detail screen (fix-plan unit 1). Pushed from `LedgerScreen`
 /// via `NavigationLink(value: transaction.id)` / `.navigationDestination(for:
 /// UUID.self)`, so it takes an id rather than the row itself and reads the row,
@@ -72,6 +78,9 @@ public struct TransactionDetailScreen: View {
           accountSection(transaction)
           editSection
           sourceSection(transaction)
+          if transaction.upiKindRaw != nil {
+            upiSection(transaction)
+          }
           if TransactionDetailLogic.availableActions(needsReview: transaction.needsReview).contains(.markReviewed) {
             Section {
               Button("Mark reviewed") { markReviewed() }
@@ -134,7 +143,10 @@ public struct TransactionDetailScreen: View {
         Text(transaction.merchantName ?? transaction.descriptionText)
           .nomiTextStyle(.body)
           .foregroundStyle(NomiColor.textPrimary)
-        Text(TransactionRow.amountText(minor: transaction.amountMinor, direction: transaction.direction))
+        Text(
+          TransactionRow.amountText(
+            minor: transaction.amountMinor, direction: transaction.direction, currencyCode: transaction.currencyCode)
+        )
           .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 20))
           .foregroundStyle(transaction.direction == .credit ? NomiColor.creditText : NomiColor.debitText)
         Text(NomiFormatters.dayMonthYear.string(from: transaction.date))
@@ -240,20 +252,52 @@ public struct TransactionDetailScreen: View {
       Text(transaction.descriptionText)
         .font(.system(.caption, design: .monospaced))
         .foregroundStyle(NomiColor.textSecondary)
-      if let merchantName = transaction.merchantName {
-        Text("Merchant: \(merchantName)").nomiTextStyle(.caption).foregroundStyle(NomiColor.textTertiary)
+    }
+    .listRowBackground(NomiColor.surfaceRaised)
+  }
+
+  // MARK: - UPI
+
+  /// M6: replaces the three plain caption lines (merchant/VPA/kind) "Source"
+  /// used to carry — `merchantName` is already the header's title, so it
+  /// isn't repeated here.
+  private func upiSection(_ transaction: NomiCore.Transaction) -> some View {
+    Section("UPI") {
+      if let kindRaw = transaction.upiKindRaw {
+        Text(UPIDisplay.kindLabel(kindRaw) ?? kindRaw.capitalized)
+          .foregroundStyle(NomiColor.textPrimary)
       }
-      if let counterpartyVPA = transaction.counterpartyVPA {
-        Text("VPA: \(counterpartyVPA)").nomiTextStyle(.caption).foregroundStyle(NomiColor.textTertiary)
-      }
-      if let upiKindRaw = transaction.upiKindRaw {
-        Text("UPI: \(upiKindRaw)").nomiTextStyle(.caption).foregroundStyle(NomiColor.textTertiary)
+      if let vpa = transaction.counterpartyVPA {
+        HStack {
+          Text(vpa)
+            .foregroundStyle(NomiColor.textSecondary)
+          Spacer()
+          Button {
+            copyToPasteboard(vpa)
+          } label: {
+            Image(systemName: "doc.on.doc")
+              .foregroundStyle(NomiColor.textTertiary)
+          }
+          .buttonStyle(.plain)
+        }
       }
     }
     .listRowBackground(NomiColor.surfaceRaised)
   }
 
   // MARK: - Actions
+
+  /// This package's `swift test` also builds for plain macOS (see
+  /// `AccountsScreen`'s note on `.swipeActions`), so the copy button needs
+  /// both pasteboard APIs, not just `UIPasteboard`.
+  private func copyToPasteboard(_ text: String) {
+    #if os(iOS)
+    UIPasteboard.general.string = text
+    #elseif os(macOS)
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+    #endif
+  }
 
   private func prefillEditIfNeeded(_ transaction: NomiCore.Transaction) {
     guard !didPrefillEdit else { return }

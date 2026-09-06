@@ -32,25 +32,50 @@ public struct TransactionRow: View {
   }
 
   private var amountText: String {
-    Self.amountText(minor: transaction.amountMinor, direction: transaction.direction)
+    Self.amountText(minor: transaction.amountMinor, direction: transaction.direction, currencyCode: transaction.currencyCode)
   }
 
   private var subtitle: String {
-    Self.subtitle(categoryName: categoryName, accountName: accountName)
+    Self.subtitle(categoryName: categoryName, accountName: accountName, vpa: transaction.counterpartyVPA)
+  }
+
+  /// M6: a P2P/Merchant capsule from `upiKindRaw` — short labels for a
+  /// row-width capsule, not `UPIDisplay.kindLabel`'s full words
+  /// (`TransactionDetailLogic`'s "Person"/"Merchant" for the detail screen's
+  /// prose). `nil` for anything not `"p2p"`/`"p2m"`, including a non-UPI row.
+  static func upiKindCapsuleText(for kindRaw: String?) -> String? {
+    switch kindRaw {
+    case "p2p": return "P2P"
+    case "p2m": return "Merchant"
+    default: return nil
+    }
+  }
+
+  private var upiKindCapsuleText: String? {
+    Self.upiKindCapsuleText(for: transaction.upiKindRaw)
   }
 
   /// Pure — no `@Model` access — so it is directly unit-testable. `swift test`
   /// on this package's CI runner cannot construct `@Model` instances
   /// headlessly (see `InMemoryModelContainer`'s note in NomiCore), so display
   /// logic that needs coverage lives here rather than on the `Transaction`-typed properties above.
-  static func subtitle(categoryName: String?, accountName: String?) -> String {
-    [categoryName ?? "Uncategorized", accountName ?? "Unassigned"].joined(separator: " · ")
+  /// `vpa` becomes the subtitle's third segment when present — M6.
+  static func subtitle(categoryName: String?, accountName: String?, vpa: String? = nil) -> String {
+    var segments = [categoryName ?? "Uncategorized", accountName ?? "Unassigned"]
+    if let vpa, !vpa.isEmpty { segments.append(vpa) }
+    return segments.joined(separator: " · ")
   }
 
-  /// Pure — see `subtitle(categoryName:accountName:)`.
-  static func amountText(minor: Int, direction: Direction) -> String {
+  /// Pure — see `subtitle(categoryName:accountName:vpa:)`. `currencyCode`
+  /// trails the amount when it is not `"INR"` — pre-positioned for U18
+  /// (foreign-currency flagging); every row is INR on `main` today, so
+  /// nothing visible changes yet. `NomiFormatters.amountString` always
+  /// renders `₹` regardless of code — that mismatch is U18's to fix, not
+  /// this unit's.
+  static func amountText(minor: Int, direction: Direction, currencyCode: String = "INR") -> String {
     let sign = direction == .credit ? "+" : ""
-    return sign + NomiFormatters.amountString(minor: minor)
+    let amount = sign + NomiFormatters.amountString(minor: minor)
+    return currencyCode == "INR" ? amount : "\(amount) \(currencyCode)"
   }
 
   public var body: some View {
@@ -88,6 +113,9 @@ public struct TransactionRow: View {
           .nomiTextStyle(.body)
           .foregroundStyle(NomiColor.textPrimary)
           .fixedSize(horizontal: false, vertical: true)
+        if let upiKindCapsuleText {
+          upiKindCapsule(text: upiKindCapsuleText)
+        }
         if transaction.mergedCount > 1 {
           mergeFlag
         }
@@ -129,6 +157,16 @@ public struct TransactionRow: View {
       .frame(width: 32, height: 32)
       .background(iconTint.opacity(0.16))
       .nomiCornerRadius(NomiRadius.tile)
+  }
+
+  /// Same capsule shape as `mergeFlag` — glass fill, no new token.
+  private func upiKindCapsule(text: String) -> some View {
+    Text(text)
+      .nomiTextStyle(.caption)
+      .foregroundStyle(NomiColor.textTertiary)
+      .padding(.horizontal, NomiSpacing.xxs)
+      .background(NomiColor.glassFill)
+      .clipShape(Capsule(style: .continuous))
   }
 
   private var mergeFlag: some View {
@@ -187,6 +225,58 @@ public struct TransactionRow: View {
       .nomiTextStyle(.caption)
       .foregroundStyle(NomiColor.textTertiary)
   }
+  .padding()
+  .background(NomiColor.surfaceRow)
+  .preferredColorScheme(.dark)
+}
+
+/// `PreviewData.transactions`' main seed rows already carry `upiKindRaw:
+/// "p2m"` and a `counterpartyVPA` — no merchant fixture needed. There is no
+/// `"p2p"` row in the seed, so this file adds the one M6 needs.
+private enum TransactionRowUPIFixtures {
+  static let p2p: NomiCore.Transaction = {
+    let date = Date(timeIntervalSinceNow: -2 * 86400)
+    let description = "UPI/P2A/412345678901/RAHUL SHARMA"
+    let normalized = normalizeDescription(description)
+    return NomiCore.Transaction(
+      id: UUID(uuidString: "00000000-0000-0000-0000-000000000701")!,
+      date: date,
+      descriptionText: description,
+      merchantName: nil,
+      upiKindRaw: "p2p",
+      counterpartyVPA: "rahul.sharma@okaxis",
+      normalizedDescription: normalized,
+      amountMinor: 150_00,
+      directionRaw: Direction.debit.rawValue,
+      sourceRaw: IngestSource.email.rawValue,
+      dedupeKey: makeDedupeKey(
+        date: date, amountMinor: 150_00, directionRaw: Direction.debit.rawValue, normalizedDescription: normalized
+      ),
+      createdAt: date,
+      updatedAt: date
+    )
+  }()
+}
+
+#Preview("UPI — P2P row, dark") {
+  TransactionRow(
+    transaction: TransactionRowUPIFixtures.p2p,
+    categoryName: nil,
+    accountName: "HDFC •• 4471"
+  )
+  .padding()
+  .background(NomiColor.surfaceRow)
+  .preferredColorScheme(.dark)
+}
+
+#Preview("UPI — merchant row, dark") {
+  TransactionRow(
+    transaction: PreviewData.transactions.first { $0.mergedCount == 1 && !$0.needsReview }!,
+    categoryName: "Food & Dining",
+    accountName: "HDFC •• 4471",
+    categorySymbolName: "fork.knife",
+    categoryPaletteSlot: 0
+  )
   .padding()
   .background(NomiColor.surfaceRow)
   .preferredColorScheme(.dark)
