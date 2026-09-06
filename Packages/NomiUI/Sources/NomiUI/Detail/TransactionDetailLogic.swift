@@ -38,6 +38,15 @@ public enum TransactionDetailLogic {
     if mergedCount > 1 { reasons.append("Merged from \(mergedCount) sources") }
     return reasons
   }
+
+  /// U24: what `saveEdit()` sends to `TransactionEditing.update`'s `note`
+  /// parameter. Blank/whitespace-only input clears the note rather than
+  /// storing it — `nil` is what `Transaction.note` uses for "no note", and
+  /// the header's "shown when present" check reads exactly that.
+  public static func noteToSave(from text: String) -> String? {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
 }
 
 /// M6: the detail screen's "UPI" section prose. Full words, unlike

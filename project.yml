@@ -33,12 +33,11 @@ targets:
         excludes:
           - "Info.plist"
           - "Nomi.entitlements"
-    info:
-      path: App/Info.plist
-    entitlements:
-      path: App/Nomi.entitlements
     settings:
       base:
+        INFOPLIST_FILE: App/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: App/Nomi.entitlements
         PRODUCT_BUNDLE_IDENTIFIER: com.shivams07.nomi
         PRODUCT_NAME: Nomi
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

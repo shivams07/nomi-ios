@@ -42,7 +42,7 @@ final class TransactionEditorTests: XCTestCase {
 
     let id = transaction.id
     let newDate = Date(timeIntervalSince1970: 1_701_000_000)
-    try editor.update(id, amountMinor: 45_00, date: newDate, descriptionText: "NEW DESCRIPTION")
+    try editor.update(id, amountMinor: 45_00, date: newDate, descriptionText: "NEW DESCRIPTION", note: nil)
 
     let refetched = try XCTUnwrap(
       context.fetch(
@@ -72,8 +72,67 @@ final class TransactionEditorTests: XCTestCase {
 
   func testUpdateOnAMissingRowDoesNothing() throws {
     let (editor, context, _) = try makeEditor()
-    try editor.update(UUID(), amountMinor: 100, date: Date(), descriptionText: "x")
+    try editor.update(UUID(), amountMinor: 100, date: Date(), descriptionText: "x", note: "unrelated")
     XCTAssertTrue(try context.fetch(FetchDescriptor<Transaction>()).isEmpty)
+  }
+
+  /// U24's own acceptance test: a note stores, and touches neither
+  /// derivation `note` is deliberately excluded from.
+  func testUpdateWithANoteStoresItAndLeavesDedupeKeyAndNormalizedDescriptionUnchanged() throws {
+    let (editor, context, _) = try makeEditor()
+    let date = Date(timeIntervalSince1970: 1_700_000_000)
+    let normalized = normalizeDescription("COFFEE SHOP")
+    let originalKey = makeDedupeKey(
+      date: date, amountMinor: 450, directionRaw: Direction.debit.rawValue, normalizedDescription: normalized
+    )
+    let transaction = Transaction(
+      date: date,
+      descriptionText: "COFFEE SHOP",
+      normalizedDescription: normalized,
+      amountMinor: 450,
+      directionRaw: Direction.debit.rawValue,
+      dedupeKey: originalKey
+    )
+    context.insert(transaction)
+    try context.save()
+
+    let id = transaction.id
+    try editor.update(id, amountMinor: 450, date: date, descriptionText: "COFFEE SHOP", note: "Split with Riya")
+
+    let refetched = try XCTUnwrap(
+      context.fetch(
+        FetchDescriptor<Transaction>(predicate: #Predicate<Transaction> { $0.id == id })
+      ).first
+    )
+
+    XCTAssertEqual(refetched.note, "Split with Riya")
+    XCTAssertEqual(refetched.dedupeKey, originalKey, "a note must not re-key an already-keyed row")
+    XCTAssertEqual(refetched.normalizedDescription, normalized, "a note is not the source's narration")
+  }
+
+  func testUpdateWithANilNoteClearsAnExistingOne() throws {
+    let (editor, context, _) = try makeEditor()
+    let transaction = Transaction(
+      date: Date(timeIntervalSince1970: 1_700_000_000),
+      descriptionText: "COFFEE SHOP",
+      amountMinor: 450,
+      directionRaw: Direction.debit.rawValue,
+      dedupeKey: "key",
+      note: "Split with Riya"
+    )
+    context.insert(transaction)
+    try context.save()
+
+    let id = transaction.id
+    try editor.update(
+      id, amountMinor: 450, date: transaction.date, descriptionText: "COFFEE SHOP", note: nil)
+
+    let refetched = try XCTUnwrap(
+      context.fetch(
+        FetchDescriptor<Transaction>(predicate: #Predicate<Transaction> { $0.id == id })
+      ).first
+    )
+    XCTAssertNil(refetched.note)
   }
 
   // MARK: -

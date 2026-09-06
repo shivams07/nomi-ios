@@ -39,7 +39,8 @@ public enum RFC822Message {
       headerDate: MailDate.parseHeaderDate(headers["date"] ?? "")
         ?? Date(timeIntervalSince1970: 0),
       htmlBody: parts.html,
-      textBody: parts.text
+      textBody: parts.text,
+      authenticationResultsRaw: headers["authentication-results"]
     )
   }
 
@@ -98,7 +99,10 @@ public enum RFC822Message {
       return walkMultipart(body, boundary: boundary)
     }
 
-    let decoded = decodeTransfer(body, encoding: headers["content-transfer-encoding"])
+    let decoded = decodeTransfer(
+      body,
+      encoding: headers["content-transfer-encoding"],
+      charset: parameter("charset", in: contentType))
     if contentType.lowercased().contains("text/html") {
       return (decoded, nil)
     }
@@ -131,7 +135,10 @@ public enum RFC822Message {
         continue
       }
 
-      let decoded = decodeTransfer(partBody, encoding: partHeaders["content-transfer-encoding"])
+      let decoded = decodeTransfer(
+        partBody,
+        encoding: partHeaders["content-transfer-encoding"],
+        charset: parameter("charset", in: partType))
       if partType.contains("text/html") {
         html = html ?? decoded
       } else if partType.contains("text/plain") {
@@ -141,19 +148,53 @@ public enum RFC822Message {
     return (html, text)
   }
 
-  static func decodeTransfer(_ body: String, encoding: String?) -> String {
+  /// B3. The three-step decode, in the same order as `parse(Data:)`: UTF-8,
+  /// then the part's declared `charset`, then ISO-8859-1.
+  ///
+  /// The middle step is the one that was missing, and its absence was not
+  /// cosmetic. A base64 part whose bytes are Latin-1 failed the UTF-8 decode and
+  /// this function returned the base64 SOURCE - so what reached the pre-filter
+  /// was a run of base64 characters carrying no amount, no verb and no date. The
+  /// message was rejected as "not a transaction" and the row silently never
+  /// existed. Returning the source is the correct last resort for a body that
+  /// cannot be decoded at all; it was wrong as the answer to "not UTF-8".
+  ///
+  /// ISO-8859-1 last and unconditional because it cannot fail: every byte
+  /// sequence is valid Latin-1. That makes it a real floor rather than another
+  /// maybe, and mojibake in a flagged row beats a transaction that vanished.
+  ///
+  /// Quoted-printable is deliberately NOT routed through `charset` here - it
+  /// still assumes UTF-8, which is the same latent bug in a rarer encoding.
+  /// Out of this unit's scope; named so it is not mistaken for handled.
+  static func decodeTransfer(_ body: String, encoding: String?, charset: String? = nil) -> String {
     switch (encoding ?? "7bit").lowercased().trimmingCharacters(in: .whitespaces) {
     case "quoted-printable":
       return decodeQuotedPrintable(body)
     case "base64":
       let joined = body.components(separatedBy: .whitespacesAndNewlines).joined()
-      guard let data = Data(base64Encoded: joined, options: [.ignoreUnknownCharacters]),
-        let decoded = String(data: data, encoding: .utf8)
+      guard let data = Data(base64Encoded: joined, options: [.ignoreUnknownCharacters])
       else { return body }
-      return decoded
+      if let utf8 = String(data: data, encoding: .utf8) { return utf8 }
+      if let declared = charset.flatMap({ stringEncoding(forCharset: $0) }),
+        declared != .utf8,
+        let decoded = String(data: data, encoding: declared)
+      { return decoded }
+      return String(data: data, encoding: .isoLatin1) ?? body
     default:
       return body
     }
+  }
+
+  /// An IANA charset name to a `String.Encoding`, via CoreFoundation's table
+  /// rather than a hand-written switch: banks send `ISO-8859-1`, `windows-1252`
+  /// and `Shift_JIS`-shaped names with equal enthusiasm, and a switch would list
+  /// three of them and silently fall through on the fourth.
+  private static func stringEncoding(forCharset name: String) -> String.Encoding? {
+    let trimmed = name.trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+    guard !trimmed.isEmpty else { return nil }
+    let cfEncoding = CFStringConvertIANACharSetNameToEncoding(trimmed as CFString)
+    guard cfEncoding != kCFStringEncodingInvalidId else { return nil }
+    return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(cfEncoding))
   }
 
   static func decodeQuotedPrintable(_ raw: String) -> String {

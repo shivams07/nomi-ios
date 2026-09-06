@@ -20,7 +20,7 @@ let package = Package(
     ),
     .testTarget(
       name: "NomiAppTests",
-      dependencies: ["NomiApp"]
+      dependencies: ["NomiApp", "NomiUI"]
     ),
   ]
 )

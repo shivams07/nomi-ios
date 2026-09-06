@@ -24,7 +24,7 @@ public final class SwiftDataTransactionEditor: TransactionEditing {
     self.now = now
   }
 
-  public func update(_ id: UUID, amountMinor: Int, date: Date, descriptionText: String) throws {
+  public func update(_ id: UUID, amountMinor: Int, date: Date, descriptionText: String, note: String?) throws {
     guard let row = try row(id: id) else { return }
     let normalized = normalizeDescription(descriptionText)
 
@@ -41,6 +41,10 @@ public final class SwiftDataTransactionEditor: TransactionEditing {
       directionRaw: row.directionRaw,
       normalizedDescription: normalized
     )
+    // U24: stored as-is, same as every other field here — `note` never
+    // feeds `dedupeKey`/`normalizedDescription` (see `Transaction.note`'s
+    // doc: two devices' notes on the same row must not split it in two).
+    row.note = note
     row.updatedAt = now()
 
     try context.save()

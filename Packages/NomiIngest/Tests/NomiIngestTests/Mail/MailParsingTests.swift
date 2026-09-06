@@ -298,4 +298,39 @@ final class MailParsingTests: XCTestCase {
     XCTAssertNil(
       SenderPack.bundled.entry(forDomain: "hdfcbank.net", subject: "Your monthly newsletter"))
   }
+  // MARK: - B3: a base64 part is not always UTF-8
+
+  /// **Fails before this unit.** `decodeTransfer` base64-decodes, tries UTF-8,
+  /// and on failure returns the base64 SOURCE verbatim - so a Latin-1 bank alert
+  /// reaches the extractor as an unbroken run of base64 characters. It carries no
+  /// amount, no verb and no date, so the message is rejected at the pre-filter
+  /// and the transaction silently never exists.
+  ///
+  /// The fixture is genuinely undecodable as UTF-8: the byte after `Ltd` is a
+  /// lone `0xAE`, a continuation byte with nothing to continue.
+  func testABase64Latin1PartDecodesToTextRatherThanToItsOwnBase64() throws {
+    let message = try MailFixtures.message("hdfc_debit_base64_latin1.eml")
+    let text = message.extractableText()
+
+    XCTAssertFalse(
+      text.contains("RGVhciBDdXN0b21lciwK"), "still the raw base64 source: " + text)
+    XCTAssertTrue(text.contains("2,499.00"), "decoded: " + text)
+    XCTAssertTrue(
+      text.contains("HDFC Bank Ltd\u{00AE}"),
+      "the Latin-1 byte came through as a character, not as a replacement")
+    XCTAssertEqual(MailAmount.firstAmount(in: text), 249_900)
+  }
+
+  /// The consequence, end to end: an undecoded body is not merely ugly, it is a
+  /// transaction that never reaches the ledger.
+  func testTheLatin1FixtureProducesADraftAtAll() throws {
+    let message = try MailFixtures.message("hdfc_debit_base64_latin1.eml")
+
+    let draft = try XCTUnwrap(
+      MailTransactionExtractor().outcome(for: message).draft,
+      "an undecoded body has no amount and no verb, so the pre-filter drops it")
+
+    XCTAssertEqual(draft.amountMinor, 249_900)
+  }
+
 }

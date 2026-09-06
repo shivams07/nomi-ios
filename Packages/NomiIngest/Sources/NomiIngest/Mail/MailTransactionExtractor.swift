@@ -222,6 +222,13 @@ public struct MailTransactionExtractor: TransactionExtractor {
     cardFragment: String
   ) -> TransactionDraft {
     let unreadableDate = date == Date(timeIntervalSince1970: 0)
+    // B9. Read here rather than in the three layers above for the same reason
+    // the epoch check is here: it is a property of the message, not of the layer
+    // that managed to read it. `accountID` is deliberately untouched - which
+    // account the money left is a different question from whether the sender is
+    // who it claims to be, and dropping a resolved binding would hand the user
+    // two problems instead of one.
+    let unauthenticated = MailAuthentication.verdict(message.authenticationResultsRaw) == .fail
     return TransactionDraft(
       date: date,
       descriptionText: narration,
@@ -238,15 +245,20 @@ public struct MailTransactionExtractor: TransactionExtractor {
       // fallback has to carry a flag out with it. Checked here rather than at
       // the three call sites because it is a property of the value, not of the
       // layer that produced it.
-      needsReview: needsReview || unreadableDate,
+      needsReview: needsReview || unreadableDate || unauthenticated,
       // merchantName / upiKindRaw / counterpartyVPA are deliberately NOT set.
       // U4 derives them from descriptionText (§2.4); an ingester that fills them
       // in trips the pipeline's assert.
       senderDomain: AccountBindingKey.domain(message.senderDomain),
       cardFragment: AccountBindingKey.fragment(cardFragment),
-      // The epoch overrides whatever the layer thought, including "the account
-      // resolved fine". A 1970 row is the thing worth saying about the row.
-      needsReviewReason: unreadableDate ? .unreadableDate : reason
+      // Precedence, and only one reason fits in the column: a sender that
+      // failed authentication first, then the epoch, then whatever the layer
+      // thought. A row whose sender may be forged is a row not to trust at all,
+      // which outranks "its date was unreadable" - and both flag it either way,
+      // so nothing becomes invisible by losing the tie.
+      needsReviewReason: unauthenticated
+        ? .unauthenticatedSender
+        : (unreadableDate ? .unreadableDate : reason)
     )
   }
 }

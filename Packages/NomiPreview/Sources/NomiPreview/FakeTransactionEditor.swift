@@ -13,7 +13,7 @@ public final class FakeTransactionEditor: TransactionEditing {
     self.transactions = transactions
   }
 
-  public func update(_ id: UUID, amountMinor: Int, date: Date, descriptionText: String) throws {
+  public func update(_ id: UUID, amountMinor: Int, date: Date, descriptionText: String, note: String?) throws {
     guard let transaction = transactions.first(where: { $0.id == id }) else { return }
     let normalized = normalizeDescription(descriptionText)
     transaction.amountMinor = amountMinor
@@ -26,6 +26,7 @@ public final class FakeTransactionEditor: TransactionEditing {
       directionRaw: transaction.directionRaw,
       normalizedDescription: normalized
     )
+    transaction.note = note
     transaction.updatedAt = Date()
   }
 }
