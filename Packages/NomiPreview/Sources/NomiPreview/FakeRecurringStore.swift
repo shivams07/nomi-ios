@@ -28,7 +28,12 @@ public final class FakeRecurringStore: RecurringInsightsStore {
   }
 
   /// Three subscriptions at the amounts and cadences the detector is tuned for.
-  public static let sampleSeries: [RecurringSeries] = {
+  ///
+  /// `nonisolated` because `init` names it as a default argument, and default
+  /// arguments are evaluated at the call site rather than inside the actor.
+  /// Without it the reference is a warning today and an error under the Swift 6
+  /// language mode. Safe: `RecurringSeries` is `Sendable` and this is a `let`.
+  nonisolated public static let sampleSeries: [RecurringSeries] = {
     let day: TimeInterval = 86_400
     return [
       RecurringSeries(
