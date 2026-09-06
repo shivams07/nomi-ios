@@ -15,6 +15,12 @@ public enum InsightsCacheKey: Hashable, Sendable {
   case budgetProgress(year: Int, month: Int)
   case transactions(InsightPeriod)
   case recent(limit: Int)
+
+  /// U17a. No associated value: the six-month window belongs to
+  /// `SwiftDataRecurringStore`, not to the caller, so there is only ever one
+  /// answer to cache. Holds `[RecurringSeries]` — value types, no `@Model`
+  /// references — so it is not in the `.transactions` bucket below.
+  case recurring
 }
 
 /// R14's "cached per period and invalidated on write", as a thing by itself.
