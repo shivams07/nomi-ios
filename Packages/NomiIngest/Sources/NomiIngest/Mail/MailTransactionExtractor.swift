@@ -71,6 +71,12 @@ public struct MailTransactionExtractor: TransactionExtractor {
       return ExtractionOutcome(draft: draft, layer: .heuristic, wasUnparseableCandidate: false)
     }
 
+    // U18. Only reached when no rupee amount was found by either layer above:
+    // a mail carrying both is an INR transaction that quotes a foreign one.
+    if let draft = foreignCurrencyDraft(message, text: text) {
+      return ExtractionOutcome(draft: draft, layer: .heuristic, wasUnparseableCandidate: false)
+    }
+
     // A real candidate nobody could read. §1.4's safety net: ONE flagged row
     // carrying the raw narration, never a silent miss. A wrong amount you can
     // see beats a transaction that vanished.
@@ -191,6 +197,35 @@ public struct MailTransactionExtractor: TransactionExtractor {
     )
   }
 
+  /// A transaction the app can see but cannot total (U18 / M9).
+  ///
+  /// `amountMinor` is in the foreign currency's minor unit and `currencyCode`
+  /// says which — there is no rate source in this app and none is guessed. The
+  /// row exists so the user sees the charge; every aggregate excludes it.
+  ///
+  /// Always `needsReview`, and the reason is the point: a row the dashboard
+  /// deliberately does not count has to be visible somewhere, or the user's
+  /// spend total is quietly missing a charge they made.
+  private func foreignCurrencyDraft(_ message: MailMessage, text: String) -> TransactionDraft? {
+    guard MailAmount.firstAmount(in: text) == nil,
+      let foreign = MailAmount.foreignAmount(in: text),
+      foreign.minor > 0
+    else { return nil }
+
+    return draft(
+      message,
+      date: MailDate.firstDate(in: text) ?? message.headerDate,
+      narration: MailNarration.narration(in: text, packRegex: nil, subject: message.subject),
+      amountMinor: foreign.minor,
+      direction: MailDirection.direction(in: text + " " + message.subject) ?? .debit,
+      currencyCode: foreign.currencyCode,
+      accountID: nil,
+      needsReview: true,
+      reason: .foreignCurrency,
+      cardFragment: ""
+    )
+  }
+
   private func unparseableDraft(_ message: MailMessage, text: String) -> TransactionDraft {
     draft(
       message,
@@ -216,6 +251,7 @@ public struct MailTransactionExtractor: TransactionExtractor {
     narration: String,
     amountMinor: Int,
     direction: Direction,
+    currencyCode: String = "INR",
     accountID: UUID?,
     needsReview: Bool,
     reason: NeedsReviewReason?,
@@ -234,7 +270,7 @@ public struct MailTransactionExtractor: TransactionExtractor {
       descriptionText: narration,
       amountMinor: amountMinor,
       direction: direction,
-      currencyCode: "INR",
+      currencyCode: currencyCode,
       accountID: accountID,
       source: .email,
       externalID: message.externalID,
@@ -256,9 +292,15 @@ public struct MailTransactionExtractor: TransactionExtractor {
       // thought. A row whose sender may be forged is a row not to trust at all,
       // which outranks "its date was unreadable" - and both flag it either way,
       // so nothing becomes invisible by losing the tie.
+      // A foreign-currency row keeps its reason even when the date was
+      // unreadable: `.unreadableDate` would send the user to fix a date, while
+      // the fact the dashboard is not counting the charge at all is the thing
+      // they actually need told. Authentication still outranks both.
       needsReviewReason: unauthenticated
         ? .unauthenticatedSender
-        : (unreadableDate ? .unreadableDate : reason)
+        : (reason == .foreignCurrency
+          ? .foreignCurrency
+          : (unreadableDate ? .unreadableDate : reason))
     )
   }
 }

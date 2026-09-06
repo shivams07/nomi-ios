@@ -19,6 +19,10 @@ public struct LedgerRow: Sendable, Equatable, Identifiable {
   public let merchantName: String?
   public let descriptionText: String
   public let needsReview: Bool
+  /// U18. A row that is not INR carries an amount in *another* currency's minor
+  /// unit, so adding it to a rupee total is a category error, not a rounding
+  /// one. Defaulted so every existing construction compiles unchanged.
+  public let currencyCode: String
 
   public init(
     id: UUID,
@@ -30,7 +34,8 @@ public struct LedgerRow: Sendable, Equatable, Identifiable {
     normalizedDescription: String,
     merchantName: String?,
     descriptionText: String,
-    needsReview: Bool
+    needsReview: Bool,
+    currencyCode: String = "INR"
   ) {
     self.id = id
     self.date = date
@@ -42,7 +47,11 @@ public struct LedgerRow: Sendable, Equatable, Identifiable {
     self.merchantName = merchantName
     self.descriptionText = descriptionText
     self.needsReview = needsReview
+    self.currencyCode = currencyCode
   }
+
+  /// The only rows that may enter a rupee total.
+  public var isINR: Bool { currencyCode == "INR" }
 
   public var isDebit: Bool { directionRaw == Direction.debit.rawValue }
   public var isCredit: Bool { directionRaw == Direction.credit.rawValue }
@@ -163,21 +172,32 @@ public enum InsightsAggregator {
     priorRows: [LedgerRow]?,
     calendar: Calendar = .current
   ) -> PeriodInsights {
-    let debit = sum(rows.filter(\.isDebit))
-    let credit = sum(rows.filter(\.isCredit))
-    let debits = rows.filter(\.isDebit)
+    // U18. Every money figure is computed over INR rows only. A foreign row's
+    // `amountMinor` is in that currency's minor unit and this app has no rate
+    // source, so including it would add cents to paise and report a total that
+    // is wrong in a way no one can see. `transactionCount` goes with the money:
+    // it labels the totals, and counting a row the totals exclude makes the
+    // average per transaction wrong too.
+    let counted = rows.filter(\.isINR)
+    let debit = sum(counted.filter(\.isDebit))
+    let credit = sum(counted.filter(\.isCredit))
+    let debits = counted.filter(\.isDebit)
 
     return PeriodInsights(
       period: period,
       debitMinor: debit,
       creditMinor: credit,
       netMinor: credit - debit,
-      priorDebitMinor: priorRows.map { sum($0.filter(\.isDebit)) },
-      priorCreditMinor: priorRows.map { sum($0.filter(\.isCredit)) },
-      transactionCount: rows.count,
+      priorDebitMinor: priorRows.map { sum($0.filter { $0.isINR && $0.isDebit }) },
+      priorCreditMinor: priorRows.map { sum($0.filter { $0.isINR && $0.isCredit }) },
+      transactionCount: counted.count,
       byDay: byDay(debits, calendar: calendar),
       byCategory: byCategory(debits, categories: categories, debitTotal: debit),
       topMerchants: topMerchants(debits, limit: 5),
+      // Queue counts, not money counts, so they are over ALL rows. A foreign
+      // row is excluded from every total precisely because it needs a human,
+      // and a row that vanished from both the totals and the review count would
+      // be invisible in the app entirely.
       needsReviewCount: rows.filter(\.needsReview).count,
       uncategorizedCount: rows.filter { $0.categoryID == nil }.count
     )
@@ -294,7 +314,11 @@ public enum InsightsAggregator {
     return accounts
       .filter { includeArchived || !$0.isArchived }
       .map { account in
-        let owned = byAccount[account.id] ?? []
+        // INR only, for the reason the period totals are: a tracked balance is
+        // a rupee figure. Foreign rows reach the extractor with no account, but
+        // a user can bind one from the review queue, so this cannot rely on
+        // them staying unowned.
+        let owned = (byAccount[account.id] ?? []).filter(\.isINR)
         let credit = sum(owned.filter(\.isCredit))
         let debit = sum(owned.filter(\.isDebit))
         return AccountSummary(

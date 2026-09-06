@@ -119,4 +119,118 @@ public enum MailAmount {
     guard !addOverflowed else { return nil }
     return total
   }
+
+  // MARK: - Foreign currency (U18 / M9)
+
+  /// A currency amount that is not INR.
+  ///
+  /// `minor` is in **that currency's** minor unit, not paise. There is no rate
+  /// source in this app and none is guessed, so the number is only ever shown
+  /// beside its code and never added to a rupee total.
+  public struct ForeignAmount: Equatable, Sendable {
+    public let currencyCode: String
+    public let minor: Int
+
+    public init(currencyCode: String, minor: Int) {
+      self.currencyCode = currencyCode
+      self.minor = minor
+    }
+  }
+
+  /// The codes recognised, and how many digits each one's minor unit has.
+  ///
+  /// The exponent is not decoration. JPY and KRW have **no** minor unit: ¥1000
+  /// is 1000 minor units, not 100000. Scaling every currency by 100 would put a
+  /// hundred-fold error on a row the user is being asked to confirm, which is
+  /// exactly the "plausible wrong number" R6 ranks worst. Currencies whose
+  /// exponent is neither 0 nor 2 (KWD, BHD) are deliberately absent rather than
+  /// mis-scaled.
+  static let foreignCurrencies: [String: Int] = [
+    "USD": 2, "EUR": 2, "GBP": 2, "AED": 2, "SGD": 2,
+    "AUD": 2, "CAD": 2, "CHF": 2, "JPY": 0, "KRW": 0,
+  ]
+
+  /// Symbols worth honouring. `$` is ambiguous across a dozen currencies; it is
+  /// read as USD because that is what an Indian card statement means by it, and
+  /// the row is flagged for a human either way.
+  private static let currencySymbols: [String: String] = [
+    "US$": "USD", "$": "USD", "€": "EUR", "£": "GBP",
+  ]
+
+  private static let codeAlternation = foreignCurrencies.keys.sorted().joined(separator: "|")
+
+  private static let numberPattern = #"([0-9][0-9,]*(?:\.[0-9]{1,2})?)(?![0-9])"#
+
+  /// The first non-INR amount in the text, by position.
+  ///
+  /// Deliberately independent of `firstAmount`: a mail carrying both — "₹1,089.00
+  /// (USD 12.99)" on a card statement — is an INR transaction, and the caller
+  /// asks for the rupee amount first. This only answers "was there a foreign
+  /// amount", never "which amount is the transaction".
+  public static func foreignAmount(in text: String) -> ForeignAmount? {
+    foreignAmountsWithRanges(in: text).first?.amount
+  }
+
+  static func foreignAmountsWithRanges(in text: String)
+    -> [(range: Range<String.Index>, amount: ForeignAmount)]
+  {
+    // Three patterns rather than one with optional groups: the capture indices
+    // stay fixed, which is the part of a combined pattern that goes wrong
+    // silently when someone edits it later.
+    let symbolAlternation =
+      currencySymbols.keys
+      .sorted { $0.count > $1.count }  // "US$" before "$", or "$" wins and eats it
+      .map { NSRegularExpression.escapedPattern(for: $0) }
+      .joined(separator: "|")
+
+    let specs: [(pattern: String, codeGroup: Int, digitsGroup: Int, isSymbol: Bool)] = [
+      (#"\b(\#(codeAlternation))\b\s*\#(numberPattern)"#, 1, 2, false),
+      (#"(\#(symbolAlternation))\s*\#(numberPattern)"#, 1, 2, true),
+      (#"\#(numberPattern)\s*\b(\#(codeAlternation))\b"#, 2, 1, false),
+    ]
+
+    var found: [(range: Range<String.Index>, amount: ForeignAmount)] = []
+    for spec in specs {
+      guard
+        let regex = try? NSRegularExpression(pattern: spec.pattern, options: [.caseInsensitive])
+      else { continue }
+      let full = NSRange(text.startIndex..<text.endIndex, in: text)
+      for match in regex.matches(in: text, range: full) {
+        guard let whole = Range(match.range, in: text),
+          let codeRange = Range(match.range(at: spec.codeGroup), in: text),
+          let digitsRange = Range(match.range(at: spec.digitsGroup), in: text)
+        else { continue }
+
+        let token = String(text[codeRange])
+        let code =
+          spec.isSymbol
+          ? currencySymbols[token.uppercased()] : token.uppercased()
+        guard let code, let exponent = foreignCurrencies[code],
+          let minor = minorUnits(fromDigits: String(text[digitsRange]), exponent: exponent)
+        else { continue }
+
+        found.append((whole, ForeignAmount(currencyCode: code, minor: minor)))
+      }
+    }
+    return found.sorted { $0.range.lowerBound < $1.range.lowerBound }
+  }
+
+  /// Digits to minor units for a currency with `exponent` minor digits.
+  ///
+  /// `exponent == 2` is `paise(fromDigits:)`. `exponent == 0` rejects any
+  /// fractional part outright: "JPY 1000.50" is not a yen amount, and rounding
+  /// it would invent a number.
+  static func minorUnits(fromDigits raw: String, exponent: Int) -> Int? {
+    switch exponent {
+    case 2:
+      return paise(fromDigits: raw)
+    case 0:
+      let cleaned = raw.replacingOccurrences(of: ",", with: "")
+        .trimmingCharacters(in: .whitespaces)
+      guard !cleaned.contains("."), !cleaned.isEmpty, let value = Int(cleaned) else { return nil }
+      return value
+    default:
+      return nil
+    }
+  }
 }

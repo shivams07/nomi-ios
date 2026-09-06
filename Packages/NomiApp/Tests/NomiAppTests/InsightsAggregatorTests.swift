@@ -36,7 +36,8 @@ final class InsightsAggregatorTests: XCTestCase {
     normalized: String = "MERCHANT",
     merchant: String? = nil,
     description: String = "raw description",
-    needsReview: Bool = false
+    needsReview: Bool = false,
+    currency: String = "INR"
   ) -> LedgerRow {
     LedgerRow(
       id: UUID(),
@@ -48,8 +49,73 @@ final class InsightsAggregatorTests: XCTestCase {
       normalizedDescription: normalized,
       merchantName: merchant,
       descriptionText: description,
-      needsReview: needsReview
+      needsReview: needsReview,
+      currencyCode: currency
     )
+  }
+
+  // MARK: - Foreign currency (U18)
+
+  /// The done-when. A USD row's `amountMinor` is in cents; adding it to a rupee
+  /// total would report a number that is wrong with nothing to show for it.
+  func testAForeignRowContributesNothingToTheMoneyTotalsOrTheCount() {
+    let day = date(2026, 9, 2)
+    let rows = [
+      row(50000, .debit, on: day),
+      row(1299, .debit, on: day, needsReview: true, currency: "USD"),
+    ]
+
+    let insights = InsightsAggregator.insights(
+      period: .month(date(2026, 9, 1)), rows: rows, categories: [:], priorRows: nil)
+
+    XCTAssertEqual(insights.debitMinor, 50000, "the dollar row is not 1299 paise")
+    XCTAssertEqual(insights.transactionCount, 1)
+    XCTAssertEqual(insights.needsReviewCount, 1, "but it is still visible in the queue")
+  }
+
+  /// The one place it must NOT be excluded. A row dropped from the totals and
+  /// from the review count would be invisible in the app entirely - the user
+  /// would simply never learn the charge happened.
+  func testAForeignRowIsStillCountedAsNeedingReview() {
+    let day = date(2026, 9, 2)
+    let rows = [row(1299, .debit, on: day, needsReview: true, currency: "USD")]
+
+    let insights = InsightsAggregator.insights(
+      period: .month(date(2026, 9, 1)), rows: rows, categories: [:], priorRows: nil)
+
+    XCTAssertEqual(insights.debitMinor, 0)
+    XCTAssertEqual(insights.creditMinor, 0)
+    XCTAssertEqual(insights.transactionCount, 0)
+    XCTAssertEqual(insights.needsReviewCount, 1)
+  }
+
+  /// The daily chart and the category split read the same filtered rows, or the
+  /// chart would total more than the headline figure above it.
+  func testAForeignRowIsAbsentFromTheChartsToo() {
+    let day = date(2026, 9, 2)
+    let rows = [row(1299, .debit, on: day, needsReview: true, currency: "USD")]
+
+    let insights = InsightsAggregator.insights(
+      period: .month(date(2026, 9, 1)), rows: rows, categories: [:], priorRows: nil)
+
+    XCTAssertTrue(insights.byDay.isEmpty)
+    XCTAssertTrue(insights.byCategory.isEmpty)
+    XCTAssertTrue(insights.topMerchants.isEmpty)
+  }
+
+  /// The prior-period comparison is filtered as well, or a foreign charge last
+  /// month makes this month look like a saving.
+  func testThePriorPeriodExcludesForeignRowsToo() {
+    let rows = [row(50000, .debit, on: date(2026, 9, 2))]
+    let prior = [
+      row(50000, .debit, on: date(2026, 8, 2)),
+      row(9999, .debit, on: date(2026, 8, 3), currency: "USD"),
+    ]
+
+    let insights = InsightsAggregator.insights(
+      period: .month(date(2026, 9, 1)), rows: rows, categories: [:], priorRows: prior)
+
+    XCTAssertEqual(insights.priorDebitMinor, 50000)
   }
 
   // MARK: - Period key
