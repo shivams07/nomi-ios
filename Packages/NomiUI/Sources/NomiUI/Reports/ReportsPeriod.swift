@@ -38,13 +38,39 @@ enum ReportsPeriod {
     }
   }
 
-  static func shiftedAnchor(_ anchor: Date, basis: PeriodBasis, by delta: Int, calendar: Calendar = .current) -> Date {
+  /// F6: the toggle had no upper bound and could page into an empty future
+  /// period. Refuses the shift outright — returns `anchor` unchanged — when
+  /// the shifted period would start after `now`, rather than letting the
+  /// screen render a period nothing has happened in yet.
+  static func shiftedAnchor(
+    _ anchor: Date, basis: PeriodBasis, by delta: Int, calendar: Calendar = .current, now: Date = Date()
+  ) -> Date {
+    let shifted = rawShift(anchor, basis: basis, by: delta, calendar: calendar)
+    return startsAfter(now, basis: basis, anchor: shifted, calendar: calendar) ? anchor : shifted
+  }
+
+  /// The toggle's disabled-chevron state — whether a shift *would* be
+  /// allowed, without performing it. Same rule `shiftedAnchor` itself
+  /// enforces.
+  static func canShift(
+    _ anchor: Date, basis: PeriodBasis, by delta: Int, calendar: Calendar = .current, now: Date = Date()
+  ) -> Bool {
+    let shifted = rawShift(anchor, basis: basis, by: delta, calendar: calendar)
+    return !startsAfter(now, basis: basis, anchor: shifted, calendar: calendar)
+  }
+
+  private static func rawShift(_ anchor: Date, basis: PeriodBasis, by delta: Int, calendar: Calendar) -> Date {
     switch basis {
     case .calendarMonth:
       return calendar.date(byAdding: .month, value: delta, to: anchor) ?? anchor
     case .financialYear:
       return calendar.date(byAdding: .year, value: delta, to: anchor) ?? anchor
     }
+  }
+
+  private static func startsAfter(_ now: Date, basis: PeriodBasis, anchor: Date, calendar: Calendar) -> Bool {
+    let candidate = period(basis: basis, anchor: anchor, calendar: calendar)
+    return dateRange(for: candidate, calendar: calendar, now: now).lowerBound > now
   }
 
   static func label(for period: InsightPeriod, calendar: Calendar = .current) -> String {

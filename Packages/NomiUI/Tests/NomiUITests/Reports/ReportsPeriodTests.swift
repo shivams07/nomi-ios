@@ -74,14 +74,62 @@ final class ReportsPeriodTests: XCTestCase {
     XCTAssertNil(ReportsPeriod.priorPeriod(for: .allTime))
   }
 
+  /// `now` is deliberately after the shifted-to month here, so this pins the
+  /// ordinary (non-clamped) case — F6's clamp is exercised separately below.
   func testShiftedAnchorMovesByOneMonthForCalendarBasis() {
-    let shifted = ReportsPeriod.shiftedAnchor(date(2026, 8), basis: .calendarMonth, by: 1, calendar: utc)
+    let shifted = ReportsPeriod.shiftedAnchor(
+      date(2026, 8), basis: .calendarMonth, by: 1, calendar: utc, now: date(2026, 9, 15))
     XCTAssertEqual(utc.component(.month, from: shifted), 9)
   }
 
   func testShiftedAnchorMovesByOneYearForFinancialYearBasis() {
-    let shifted = ReportsPeriod.shiftedAnchor(date(2026, 8), basis: .financialYear, by: -1, calendar: utc)
+    let shifted = ReportsPeriod.shiftedAnchor(
+      date(2026, 8), basis: .financialYear, by: -1, calendar: utc, now: date(2026, 8, 15))
     XCTAssertEqual(utc.component(.year, from: shifted), 2025)
+  }
+
+  /// F6: no upper bound on the toggle used to mean paging forward from the
+  /// current month landed on an empty future period. This FAILS on `main`,
+  /// where `shiftedAnchor` had no `now` to clamp against at all.
+  func testShiftedAnchorFromTheCurrentMonthDoesNotAdvanceIntoTheFuture() {
+    let now = date(2026, 9, 15)
+    let shifted = ReportsPeriod.shiftedAnchor(now, basis: .calendarMonth, by: 1, calendar: utc, now: now)
+    XCTAssertEqual(shifted, now, "the anchor is unchanged — October has not started")
+  }
+
+  func testShiftedAnchorFromLastMonthAdvancesToTheCurrentMonth() {
+    let now = date(2026, 9, 15)
+    let shifted = ReportsPeriod.shiftedAnchor(date(2026, 8), basis: .calendarMonth, by: 1, calendar: utc, now: now)
+    XCTAssertEqual(utc.component(.month, from: shifted), 9)
+  }
+
+  func testShiftedAnchorFromTheCurrentFinancialYearDoesNotAdvanceIntoTheFuture() {
+    let now = date(2026, 9, 15)
+    let shifted = ReportsPeriod.shiftedAnchor(now, basis: .financialYear, by: 1, calendar: utc, now: now)
+    XCTAssertEqual(shifted, now, "the anchor is unchanged — FY 2027-28 has not started")
+  }
+
+  func testShiftedAnchorFromLastFinancialYearAdvancesToTheCurrentOne() {
+    let now = date(2026, 9, 15)
+    let shifted = ReportsPeriod.shiftedAnchor(date(2025, 9), basis: .financialYear, by: 1, calendar: utc, now: now)
+    XCTAssertEqual(
+      ReportsPeriod.period(basis: .financialYear, anchor: shifted, calendar: utc),
+      .financialYear(startingYear: 2026))
+  }
+
+  func testCanShiftIsFalseForwardFromTheCurrentMonth() {
+    let now = date(2026, 9, 15)
+    XCTAssertFalse(ReportsPeriod.canShift(now, basis: .calendarMonth, by: 1, calendar: utc, now: now))
+  }
+
+  func testCanShiftIsTrueForwardFromLastMonth() {
+    let now = date(2026, 9, 15)
+    XCTAssertTrue(ReportsPeriod.canShift(date(2026, 8), basis: .calendarMonth, by: 1, calendar: utc, now: now))
+  }
+
+  func testCanShiftIsAlwaysTrueGoingBackward() {
+    let now = date(2026, 9, 15)
+    XCTAssertTrue(ReportsPeriod.canShift(now, basis: .calendarMonth, by: -1, calendar: utc, now: now))
   }
 
   func testFinancialYearLabelSpansTwoCalendarYears() {
