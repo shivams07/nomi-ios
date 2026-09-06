@@ -16,24 +16,35 @@ public struct AccountsScreen: View {
   @State private var isArchivedExpanded = false
   @State private var isCreatingAccount = false
   @State private var refreshToken = 0
+  @State private var writeError = false
 
   public init(accountStore: AccountStore, insightsStore: InsightsStore) {
     self.accountStore = accountStore
     self.insightsStore = insightsStore
   }
 
-  private var summaries: [AccountSummary] {
+  /// `nil` means the fetch threw — distinct from a legitimate empty account
+  /// list, which is `[]` and renders the "No accounts yet" empty state.
+  private var summaries: [AccountSummary]? {
     _ = refreshToken
-    return (try? insightsStore.accountSummaries(includeArchived: true)) ?? []
+    do {
+      return try insightsStore.accountSummaries(includeArchived: true)
+    } catch {
+      return nil
+    }
   }
 
-  private var active: [AccountSummary] { AccountSectioning.active(summaries) }
-  private var archived: [AccountSummary] { AccountSectioning.archived(summaries) }
+  private var active: [AccountSummary] { AccountSectioning.active(summaries ?? []) }
+  private var archived: [AccountSummary] { AccountSectioning.archived(summaries ?? []) }
 
   public var body: some View {
     List {
       Section {
-        if active.isEmpty {
+        if summaries == nil {
+          Text("Couldn't load accounts")
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.textTertiary)
+        } else if active.isEmpty {
           VStack(alignment: .leading, spacing: NomiSpacing.xs) {
             Text("No accounts yet")
               .nomiTextStyle(.caption)
@@ -97,8 +108,12 @@ public struct AccountsScreen: View {
       presenting: archivingAccount,
       actions: { account in
         Button("Archive") {
-          try? accountStore.setArchived(account.id, true)
-          refreshToken += 1
+          do {
+            try accountStore.setArchived(account.id, true)
+            refreshToken += 1
+          } catch {
+            writeError = true
+          }
         }
         Button("Cancel", role: .cancel) {}
       },
@@ -106,6 +121,9 @@ public struct AccountsScreen: View {
         Text("Transactions are kept. You can unarchive this account anytime.")
       }
     )
+    .alert("Couldn't update account", isPresented: $writeError) {
+      Button("OK", role: .cancel) {}
+    }
   }
 
   private func row(for account: AccountSummary, deemphasized: Bool) -> some View {
@@ -146,8 +164,12 @@ public struct AccountsScreen: View {
       Button("Rename") { renamingAccount = account }
       if account.isArchived {
         Button("Unarchive") {
-          try? accountStore.setArchived(account.id, false)
-          refreshToken += 1
+          do {
+            try accountStore.setArchived(account.id, false)
+            refreshToken += 1
+          } catch {
+            writeError = true
+          }
         }
       } else {
         Button("Archive") { archivingAccount = account }
@@ -191,6 +213,29 @@ private enum AccountsScreenFixtures {
     AccountsScreen(
       accountStore: FakeAccountStore(accounts: []),
       insightsStore: FakeInsightsStore(transactions: [], accounts: [])
+    )
+  }
+  .preferredColorScheme(.dark)
+}
+
+private struct AccountsScreenLoadFailure: Error {}
+
+/// Only `accountSummaries` throws — this screen never calls the other
+/// `InsightsStore` methods, so they can return empty rather than also throw.
+@MainActor
+private final class FailingAccountSummariesStore: InsightsStore {
+  func insights(for period: InsightPeriod) throws -> PeriodInsights { throw AccountsScreenLoadFailure() }
+  func trend(months: Int) throws -> [MonthBucket] { [] }
+  func accountSummaries(includeArchived: Bool) throws -> [AccountSummary] { throw AccountsScreenLoadFailure() }
+  func budgetProgress(year: Int, month: Int) throws -> [BudgetProgress] { [] }
+  func transactions(in period: InsightPeriod) throws -> [NomiCore.Transaction] { [] }
+}
+
+#Preview("Accounts — failed to load, dark") {
+  NavigationStack {
+    AccountsScreen(
+      accountStore: FakeAccountStore(accounts: []),
+      insightsStore: FailingAccountSummariesStore()
     )
   }
   .preferredColorScheme(.dark)

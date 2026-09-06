@@ -44,6 +44,7 @@ public struct BackfillScreen: View {
   @State private var isCancelled = false
   @State private var completionSummary: SyncSummary?
   @State private var backfillTask: Task<Void, Never>?
+  @State private var taskError = false
 
   public init(mailConnectionService: MailConnectionService, months: Int = 6) {
     self.mailConnectionService = mailConnectionService
@@ -80,7 +81,11 @@ public struct BackfillScreen: View {
       for await update in mailConnectionService.backfillProgress {
         progress = update
         if BackfillMath.isComplete(update) {
-          completionSummary = try? await mailConnectionService.syncNow()
+          do {
+            completionSummary = try await mailConnectionService.syncNow()
+          } catch {
+            taskError = true
+          }
         }
       }
     }
@@ -88,6 +93,9 @@ public struct BackfillScreen: View {
       if BackfillLifecycle.shouldStartOnAppear(phase: currentPhase) {
         start()
       }
+    }
+    .alert("Something went wrong", isPresented: $taskError) {
+      Button("OK", role: .cancel) {}
     }
   }
 
@@ -144,7 +152,11 @@ public struct BackfillScreen: View {
   private func start() {
     isCancelled = false
     backfillTask = Task {
-      try? await mailConnectionService.startBackfill(months: months)
+      do {
+        try await mailConnectionService.startBackfill(months: months)
+      } catch {
+        taskError = true
+      }
     }
   }
 
@@ -170,4 +182,31 @@ public struct BackfillScreen: View {
     progress: BackfillProgress(scanned: 1200, total: 1200, created: 91)
   ))
   .preferredColorScheme(.dark)
+}
+
+private struct BackfillStartFailure: Error {}
+
+/// `startBackfill` always throws, so `.onAppear`'s `start()` surfaces the
+/// `taskError` alert this unit added as soon as the canvas renders — no tap
+/// needed to reach the failed state.
+private actor AlwaysFailingMailConnectionService: MailConnectionService {
+  nonisolated let state: AsyncStream<MailConnectionState>
+  nonisolated let backfillProgress: AsyncStream<BackfillProgress>
+
+  init() {
+    state = AsyncStream { continuation in
+      continuation.yield(.connected(address: "shivam@example.com", lastSync: Date()))
+    }
+    backfillProgress = AsyncStream { _ in }
+  }
+
+  func connect(_ credentials: IMAPCredentials) async throws {}
+  func disconnect() async throws {}
+  @discardableResult func syncNow() async throws -> SyncSummary { throw BackfillStartFailure() }
+  func startBackfill(months: Int) async throws { throw BackfillStartFailure() }
+}
+
+#Preview("Backfill — failed to start, dark") {
+  BackfillScreen(mailConnectionService: AlwaysFailingMailConnectionService())
+    .preferredColorScheme(.dark)
 }

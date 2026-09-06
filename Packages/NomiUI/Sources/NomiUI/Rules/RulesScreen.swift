@@ -14,6 +14,7 @@ public struct RulesScreen: View {
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
   @State private var editingRule: NomiCore.Rule?
   @State private var isCreating = false
+  @State private var actionError = false
 
   public init(ruleStore: RuleStore, categoryStore: CategoryStore) {
     self.ruleStore = ruleStore
@@ -53,6 +54,9 @@ public struct RulesScreen: View {
     .sheet(item: $editingRule) { rule in
       RuleEditorSheet(ruleStore: ruleStore, categories: categories, rule: rule)
     }
+    .alert("Couldn't update rules", isPresented: $actionError) {
+      Button("OK", role: .cancel) {}
+    }
   }
 
   private func row(for rule: NomiCore.Rule) -> some View {
@@ -75,13 +79,21 @@ public struct RulesScreen: View {
 
   private func delete(at offsets: IndexSet) {
     for index in offsets {
-      try? ruleStore.delete(rules[index].id)
+      do {
+        try ruleStore.delete(rules[index].id)
+      } catch {
+        actionError = true
+      }
     }
   }
 
   private func move(from source: IndexSet, to destination: Int) {
     let orderedIDs = RulesReorder.orderedIDs(current: rules.map(\.id), from: source, to: destination)
-    try? ruleStore.reorder(orderedIDs)
+    do {
+      try ruleStore.reorder(orderedIDs)
+    } catch {
+      actionError = true
+    }
   }
 }
 
@@ -98,5 +110,34 @@ public struct RulesScreen: View {
     RulesScreen(ruleStore: FakeRuleStore(rules: []), categoryStore: FakeCategoryStore())
   }
   .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer())
+  .preferredColorScheme(.dark)
+}
+
+private struct RulesScreenActionFailure: Error {}
+
+/// Delete and reorder always throw, so swiping to delete or dragging a row
+/// in the canvas exercises the `actionError` alert this unit added.
+@MainActor
+private final class AlwaysFailingRuleStore: RuleStore {
+  @discardableResult
+  func create(pattern: String, categoryID: UUID) throws -> RuleApplyResult {
+    RuleApplyResult(matched: 0, recategorized: 0)
+  }
+
+  @discardableResult
+  func update(_ id: UUID, pattern: String, categoryID: UUID) throws -> RuleApplyResult {
+    RuleApplyResult(matched: 0, recategorized: 0)
+  }
+
+  func delete(_ id: UUID) throws { throw RulesScreenActionFailure() }
+  func reorder(_ orderedIDs: [UUID]) throws { throw RulesScreenActionFailure() }
+  func preview(pattern: String) throws -> Int { 0 }
+}
+
+#Preview("Rules — delete or reorder fails, dark") {
+  NavigationStack {
+    RulesScreen(ruleStore: AlwaysFailingRuleStore(), categoryStore: FakeCategoryStore())
+  }
+  .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
   .preferredColorScheme(.dark)
 }

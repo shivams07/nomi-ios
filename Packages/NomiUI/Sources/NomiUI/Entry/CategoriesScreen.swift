@@ -105,7 +105,11 @@ public struct CategoriesScreen: View {
         deleteErrorMessage = "\(category.name) is a system category and can't be deleted."
         continue
       }
-      try? categoryStore.delete(category.id)
+      do {
+        try categoryStore.delete(category.id)
+      } catch {
+        deleteErrorMessage = "Couldn't delete \(category.name)."
+      }
     }
   }
 }
@@ -124,5 +128,28 @@ public struct CategoriesScreen: View {
   }
   .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer())
   .environment(\.dynamicTypeSize, .accessibility3)
+  .preferredColorScheme(.dark)
+}
+
+private struct CategoriesScreenDeleteFailure: Error {}
+
+/// Delete always throws, so swiping to delete a non-system category in the
+/// canvas exercises the `deleteErrorMessage` alert this unit added — the
+/// UI-side `CategoryDeletion.isDeletable` gate only covers the system-category
+/// case, not a genuine store failure like this one.
+@MainActor
+private final class AlwaysFailingCategoryStore: CategoryStore {
+  func create(name: String, symbolName: String, paletteSlot: Int) throws -> NomiCore.Category {
+    NomiCore.Category(name: name, symbolName: symbolName, paletteSlot: paletteSlot)
+  }
+  func rename(_ id: UUID, to name: String) throws {}
+  func delete(_ id: UUID) throws { throw CategoriesScreenDeleteFailure() }
+}
+
+#Preview("Categories — delete fails, dark") {
+  NavigationStack {
+    CategoriesScreen(categoryStore: AlwaysFailingCategoryStore())
+  }
+  .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer())
   .preferredColorScheme(.dark)
 }
