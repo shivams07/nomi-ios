@@ -199,21 +199,26 @@ final class LedgerWindowTests: XCTestCase {
 /// U16: `LedgerFilterPredicate.make` builds a `Predicate<NomiCore.Transaction>`
 /// — a `#Predicate<Transaction>` literal, which nominally names the `@Model`
 /// type as its generic parameter but never constructs one just by being
-/// built. Calling `make` here is therefore safe. Calling `.evaluate(_:)` on
-/// the result is not: per `NomiCore/Support/InMemoryModelContainer.swift`
-/// and the fix confirmed in U13 (Reports), constructing a `Transaction`
-/// anywhere `swift test` actually executes — not just `#Preview` bodies —
-/// crashes this package's runner outright, regardless of
-/// `isStoredInMemoryOnly`. So rather than the `try predicate.evaluate(_:)`
-/// this unit's spec describes, this exercises the exact `String` API the
-/// predicate's search branch calls (`localizedStandardContains`) against
-/// plain strings standing in for `descriptionText`/`merchantName`/
+/// built. Calling `make` here is therefore safe.
+///
+/// The category/search matching itself now lives in
+/// `LedgerFilterPredicate.matches`, a plain function rather than a
+/// `#Predicate` (two straight CI failures — a type-check timeout, then
+/// "Predicate body may only contain one expression" — ruled out folding it
+/// into the query). `matches` takes a real `Transaction`, though, so it hits
+/// the same wall `.evaluate(_:)` would have: per
+/// `NomiCore/Support/InMemoryModelContainer.swift` and the fix confirmed in
+/// U13 (Reports), constructing a `Transaction` anywhere `swift test`
+/// actually executes — not just `#Preview` bodies — crashes this package's
+/// runner outright, regardless of `isStoredInMemoryOnly`. So this still
+/// can't exercise `matches` directly; it instead checks the exact `String`
+/// API its search branch calls (`localizedStandardContains`) against plain
+/// strings standing in for `descriptionText`/`merchantName`/
 /// `counterpartyVPA` — the same fallback shape as `StubRow` elsewhere in
 /// this file, applied to a predicate instead of a `LedgerRow`.
 final class LedgerFilterPredicateTests: XCTestCase {
   func testConstructingThePredicateDoesNotRequireAModelInstance() {
-    let filter = TransactionFilter(searchText: "swiggy")
-    _ = LedgerFilterPredicate.make(filter, since: date("2026-08-01"))
+    _ = LedgerFilterPredicate.make(since: date("2026-08-01"))
   }
 
   func testSearchTextMatchesMerchantNameCaseInsensitively() {

@@ -114,37 +114,36 @@ enum LedgerWindow {
   }
 }
 
-/// U16: builds the ledger's `@Query` filter directly from a
-/// `TransactionFilter`, so the chip selection and the search box narrow the
-/// fetch itself — same F1 reasoning as `since` — rather than the 90-day
-/// window arriving whole to be filtered in Swift. `TransactionFilter`'s
-/// first reader; its fields are consumed as-is, not reshaped for this call
-/// site.
+/// U16: the ledger's `@Query` filter, plus the chip/search matching applied
+/// to whatever it fetches.
+///
+/// Two straight CI failures ruled out folding category and search into the
+/// `#Predicate` itself: build 34008249071 hit "the compiler is unable to
+/// type-check this expression in reasonable time" on the combined date +
+/// category + search boolean tree in one expression; splitting that into
+/// named `let` sub-expressions (looked like the compiler's own suggested
+/// fix) then failed build 34009202915 with "Predicate body may only contain
+/// one expression" — a `#Predicate` closure is exactly one expression,
+/// always, no multi-statement rewrite is legal syntax for it. Rather than
+/// guess a third shape blind (no Swift toolchain on this machine to check
+/// before pushing), `make` now only pushes the proven-safe `since` bound
+/// into the `@Query`; `matches` is a plain Swift function — no expression-
+/// count ceiling — that `LedgerTransactionList` applies to the fetched rows,
+/// same shape as the `LedgerFiltering.apply` pass this replaced.
 enum LedgerFilterPredicate {
-  // CI (build 34008249071): the single-expression version of this predicate
-  // failed with "the compiler is unable to type-check this expression in
-  // reasonable time" — `#Predicate`'s macro expansion couldn't solve the
-  // combined date/category/search boolean tree in one shot. Named `let`
-  // bindings inside the closure, one leaf condition per line, are the
-  // compiler's own suggested fix ("try breaking up the expression into
-  // distinct sub-expressions"): each is now a small expression the checker
-  // solves independently, and the `return` is a flat `&&` of already-typed
-  // `Bool`s rather than one deeply nested expression.
-  static func make(_ filter: TransactionFilter, since: Date) -> Predicate<NomiCore.Transaction> {
-    let categoryIDs = filter.categoryIDs
-    let hasCategoryFilter = !categoryIDs.isEmpty
-    let uncategorizedOnly = filter.uncategorizedOnly
-    let searchText = filter.searchText
-    let hasSearchText = !searchText.isEmpty
-    return #Predicate<NomiCore.Transaction> { transaction in
-      let isWithinWindow = transaction.date >= since
-      let matchesUncategorized = !uncategorizedOnly || transaction.categoryID == nil
-      let matchesCategory = !hasCategoryFilter || categoryIDs.contains(where: { $0 == transaction.categoryID })
-      let matchesDescription = transaction.descriptionText.localizedStandardContains(searchText)
-      let matchesMerchant = (transaction.merchantName ?? "").localizedStandardContains(searchText)
-      let matchesVPA = (transaction.counterpartyVPA ?? "").localizedStandardContains(searchText)
-      let matchesSearch = !hasSearchText || matchesDescription || matchesMerchant || matchesVPA
-      return isWithinWindow && matchesUncategorized && matchesCategory && matchesSearch
+  static func make(since: Date) -> Predicate<NomiCore.Transaction> {
+    #Predicate<NomiCore.Transaction> { $0.date >= since }
+  }
+
+  static func matches(_ transaction: NomiCore.Transaction, filter: TransactionFilter) -> Bool {
+    if filter.uncategorizedOnly {
+      guard transaction.categoryID == nil else { return false }
+    } else if !filter.categoryIDs.isEmpty {
+      guard let categoryID = transaction.categoryID, filter.categoryIDs.contains(categoryID) else { return false }
     }
+    guard !filter.searchText.isEmpty else { return true }
+    return transaction.descriptionText.localizedStandardContains(filter.searchText)
+      || (transaction.merchantName ?? "").localizedStandardContains(filter.searchText)
+      || (transaction.counterpartyVPA ?? "").localizedStandardContains(filter.searchText)
   }
 }
