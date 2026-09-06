@@ -155,11 +155,16 @@ final class DefaultRuleSeedTests: XCTestCase {
       ("NEFT/SALARY/ACME TECHNOLOGIES", 13),
     ]
 
-    let rules = specs.map {
-      RuleSnapshot(
-        id: $0.id, pattern: $0.pattern, categoryID: $0.categoryID, priority: $0.priority,
-        isEnabled: true, createdAt: Date(timeIntervalSince1970: 0))
-    }
+    // `precedenceOrdered` because `firstMatch` no longer sorts for its caller
+    // (U10). `specs` happens to be declared in priority order, so this changes
+    // nothing today - and that is exactly why it is worth being explicit
+    // about, rather than depending on a declaration order nobody is watching.
+    let rules = RuleEngine.precedenceOrdered(
+      specs.map {
+        RuleSnapshot(
+          id: $0.id, pattern: $0.pattern, categoryID: $0.categoryID, priority: $0.priority,
+          isEnabled: true, createdAt: Date(timeIntervalSince1970: 0))
+      })
 
     for (narration, ordinal) in cases {
       let match = RuleEngine.firstMatch(
@@ -173,11 +178,16 @@ final class DefaultRuleSeedTests: XCTestCase {
   /// The control. Without it, "the seed categorises things" would be satisfied
   /// by a seed containing `*`, which would categorise everything wrongly.
   func testANarrationTheSeedKnowsNothingAboutMatchesNothing() {
-    let rules = specs.map {
-      RuleSnapshot(
-        id: $0.id, pattern: $0.pattern, categoryID: $0.categoryID, priority: $0.priority,
-        isEnabled: true, createdAt: Date(timeIntervalSince1970: 0))
-    }
+    // `precedenceOrdered` because `firstMatch` no longer sorts for its caller
+    // (U10). `specs` happens to be declared in priority order, so this changes
+    // nothing today - and that is exactly why it is worth being explicit
+    // about, rather than depending on a declaration order nobody is watching.
+    let rules = RuleEngine.precedenceOrdered(
+      specs.map {
+        RuleSnapshot(
+          id: $0.id, pattern: $0.pattern, categoryID: $0.categoryID, priority: $0.priority,
+          isEnabled: true, createdAt: Date(timeIntervalSince1970: 0))
+      })
 
     let match = RuleEngine.firstMatch(
       normalizedDescription: normalizeDescription("IMPS/P2A/BHARAT XYZ"), in: rules)

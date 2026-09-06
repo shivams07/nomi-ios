@@ -131,24 +131,47 @@ public final class SwiftDataRuleStore: RuleStore {
   /// silently excludes their manually-categorised rows would read as the
   /// pattern being wrong.
   ///
-  /// One full scan per keystroke on a large ledger is the cost, and it is real.
-  /// It stays because `globMatches` cannot be expressed as a `#Predicate` — it
-  /// is a glob, not a `contains` — so there is no version of this that SQLite
-  /// can answer.
+  /// `globMatches` is a glob and cannot itself be a `#Predicate`, so SQLite
+  /// cannot answer this question - but it can answer a *narrower* one. A
+  /// pattern with a literal prefix (`UPI/PM*`) can only match rows whose
+  /// description contains that prefix, so the fetch is filtered on it and only
+  /// candidate rows are materialised. `globMatches` still decides.
+  ///
+  /// `contains` rather than a starts-with: it is a strict superset of the rows
+  /// a prefix match could return, so it cannot lose a match, and it does not
+  /// depend on which `String` operations SwiftData can translate to SQL. A
+  /// pattern beginning with `*` has no literal prefix and still costs a full
+  /// scan - unavoidable, and the case a preview is least likely to be run on
+  /// mid-typing.
+  ///
+  /// The pattern is uppercased first: `normalizedDescription` is uppercase, so
+  /// a lowercase pattern previewed as zero and then matched nothing forever.
   public func preview(pattern: String) throws -> Int {
-    try context.fetch(FetchDescriptor<Transaction>())
-      .filter { globMatches(pattern: pattern, value: $0.normalizedDescription) }
+    let uppercased = pattern.uppercased()
+    return try candidateRows(matching: uppercased, includeManual: true)
+      .filter { globMatches(pattern: uppercased, value: $0.normalizedDescription) }
       .count
   }
 
   // MARK: -
 
+  /// Every rule edit re-ran this, and it began by materialising every
+  /// non-manual row in the ledger as a `@Model` instance - synchronously, on
+  /// the main actor, with the user's finger still on the Save button.
+  ///
+  /// Now: the rule set is ordered once rather than once per row, and the fetch
+  /// is narrowed to rows that could match *some* enabled rule, one fetch per
+  /// distinct literal prefix, unioned by id. A rule whose pattern starts with
+  /// `*` has no prefix and forces the full scan for the whole pass, which is
+  /// correct rather than clever - if one rule can match anywhere, every row is
+  /// a candidate.
+  ///
+  /// Narrowing is safe because a row matching no rule is left untouched today:
+  /// the loop's first `guard` skips it. Rows excluded by the fetch are exactly
+  /// rows that guard would have skipped.
   private func reapply() throws -> RuleApplyResult {
-    let rules = try ruleSnapshots()
-    let manual = CategorySource.manual.rawValue
-    let rows = try context.fetch(
-      FetchDescriptor<Transaction>(predicate: #Predicate<Transaction> { $0.categorySourceRaw != manual })
-    )
+    let rules = RuleEngine.precedenceOrdered(try ruleSnapshots())
+    let rows = try candidateRows(forAnyOf: rules)
     let timestamp = now()
 
     var matched = 0
@@ -176,6 +199,57 @@ public final class SwiftDataRuleStore: RuleStore {
     try context.save()
     coordinator.didWrite(affectedCategoryIDs: affected)
     return RuleApplyResult(matched: matched, recategorized: recategorized)
+  }
+
+  /// Rows that could match `pattern`, materialising as few as possible.
+  private func candidateRows(matching pattern: String, includeManual: Bool) throws -> [Transaction] {
+    let prefix = RuleEngine.literalPrefix(of: pattern)
+    let manual = CategorySource.manual.rawValue
+
+    if prefix.isEmpty {
+      guard !includeManual else { return try context.fetch(FetchDescriptor<Transaction>()) }
+      return try context.fetch(
+        FetchDescriptor<Transaction>(
+          predicate: #Predicate<Transaction> { $0.categorySourceRaw != manual }))
+    }
+
+    if includeManual {
+      return try context.fetch(
+        FetchDescriptor<Transaction>(
+          predicate: #Predicate<Transaction> { $0.normalizedDescription.contains(prefix) }))
+    }
+    return try context.fetch(
+      FetchDescriptor<Transaction>(
+        predicate: #Predicate<Transaction> {
+          $0.categorySourceRaw != manual && $0.normalizedDescription.contains(prefix)
+        }))
+  }
+
+  /// The union of `candidateRows(matching:)` over every enabled rule, keyed by
+  /// id so a row matching two prefixes is materialised once.
+  private func candidateRows(forAnyOf rules: [RuleSnapshot]) throws -> [Transaction] {
+    let prefixes = Set(rules.filter(\.isEnabled).map { RuleEngine.literalPrefix(of: $0.pattern) })
+    let manual = CategorySource.manual.rawValue
+
+    guard !prefixes.isEmpty else { return [] }
+    guard !prefixes.contains("") else {
+      return try context.fetch(
+        FetchDescriptor<Transaction>(
+          predicate: #Predicate<Transaction> { $0.categorySourceRaw != manual }))
+    }
+
+    var byID: [UUID: Transaction] = [:]
+    for prefix in prefixes {
+      for row in try context.fetch(
+        FetchDescriptor<Transaction>(
+          predicate: #Predicate<Transaction> {
+            $0.categorySourceRaw != manual && $0.normalizedDescription.contains(prefix)
+          }))
+      {
+        byID[row.id] = row
+      }
+    }
+    return Array(byID.values)
   }
 
   private func rule(id: UUID) throws -> Rule? {
