@@ -4,10 +4,11 @@ import XCTest
 @testable import NomiUI
 
 /// Exercises the ledger's pure grouping/filter/magnitude math against plain
-/// stubs, never a real `Transaction` — this package's CI runner cannot
-/// construct `@Model` instances headlessly (see `InMemoryModelContainer`'s
-/// note in NomiCore). `LedgerRow` exists precisely so this can be verified
-/// without one, same pattern as `RecentTransactionsSortTests`' `StubRow`.
+/// stubs, never a real `Transaction`. Not because one cannot be built: a
+/// container constructs fine under XCTest and only swift-testing traps (see
+/// `InMemoryModelContainer`'s measured note in NomiCore). `LedgerRow` exists so
+/// this can be verified with no container, no schema and no store, same pattern
+/// as `RecentTransactionsSortTests`' `StubRow`.
 private struct StubRow: LedgerRow, Equatable {
   let label: String
   let date: Date
