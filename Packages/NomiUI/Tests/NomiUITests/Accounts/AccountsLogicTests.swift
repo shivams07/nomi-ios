@@ -107,4 +107,24 @@ final class AccountSectioningTests: XCTestCase {
     XCTAssertEqual(AccountSectioning.archived(summaries).count, 1)
     XCTAssertTrue(AccountSectioning.archived(summaries)[0].isArchived)
   }
+
+  // MARK: - U15: the picker's choices come from the model
+
+  /// A hand-written list here is a list that silently disagrees with what the
+  /// store will accept — which surfaces as a picker offering a kind that
+  /// throws on Save.
+  func testTheKindOptionsAreDerivedFromAccountKind() {
+    XCTAssertEqual(AccountKindOptions.all, AccountKind.allCases.map(\.rawValue))
+    XCTAssertEqual(AccountKindOptions.all, ["bank", "card", "wallet"])
+    XCTAssertEqual(AccountKindOptions.defaultKind, AccountKind.bank.rawValue)
+    XCTAssertTrue(AccountKindOptions.all.contains(AccountKindOptions.defaultKind))
+  }
+
+  /// Every option the picker can offer is one the store accepts. This is the
+  /// assertion that would have caught the two lists drifting.
+  func testEveryOfferedKindIsARecognisedAccountKind() {
+    for option in AccountKindOptions.all {
+      XCTAssertNotNil(AccountKind(rawValue: option), option)
+    }
+  }
 }

@@ -51,9 +51,12 @@ enum AccountSectioning {
 /// not an enum — introducing `AccountKind` in `NomiCore` would put
 /// `Contracts/Types.swift` in this unit for no gain, so the choices live
 /// here, the way `PaletteSlotOptions` does for categories.
+/// The picker's choices, derived from the model rather than retyped beside it.
+/// A hand-written list here is a list that silently disagrees with what
+/// `SwiftDataAccountStore.create` will now accept.
 enum AccountKindOptions {
-  static let all: [String] = ["bank", "card", "wallet"]
-  static let defaultKind = "bank"
+  static let all: [String] = AccountKind.allCases.map(\.rawValue)
+  static let defaultKind = AccountKind.bank.rawValue
 }
 
 /// Gates account creation: `displayName` is required and non-blank, same

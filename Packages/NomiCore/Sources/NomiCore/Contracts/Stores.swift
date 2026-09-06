@@ -68,17 +68,26 @@ public protocol BudgetStore: AnyObject {
 
 @MainActor
 public protocol AccountStore: AnyObject {
-  /// Creates and persists an `Account`.
+  /// Creates and persists an `Account`, or throws `AccountStoreError`.
   ///
-  /// Both string constraints are the caller's to hold, not this contract's:
-  /// `displayName` is required and non-blank, and `lastFour` is exactly four
-  /// digits or empty — never partial. The UI gates on both before it gets
-  /// here (`AccountCreateFormGate`), and a store that re-validated would have
-  /// to invent an error case for a state the only caller cannot produce.
+  /// **The store is the authority on these three values; the form gate is a
+  /// convenience.** This doc used to say the opposite - that the constraints
+  /// were the caller's to hold, because a store that re-validated "would have
+  /// to invent an error case for a state the only caller cannot produce". That
+  /// was true of one SwiftUI form and stopped being true the moment anything
+  /// else could call this. `AccountCreateFormGate` still runs, so the user
+  /// sees a disabled Save rather than an alert; it is now the fast path in
+  /// front of the rule rather than the only place the rule exists.
   ///
-  /// `kindRaw` is a `String` because `Account.kindRaw` is one; there is no
-  /// `AccountKind` enum and this is not the unit that introduces it. The fixed
-  /// choices live in `NomiUI`, the way `PaletteSlotOptions` does for categories.
+  /// - `displayName` trimmed must be non-empty, else `.blankName`.
+  /// - `lastFour` must be four ASCII digits or empty, else `.malformedLastFour`.
+  ///   Never partial: it is the `cardFragment` half of the `AccountBinding`
+  ///   key, so a partial value silently stops mail auto-resolution matching.
+  /// - `kindRaw` must be an `AccountKind` raw value, else `.unknownKind`.
+  ///
+  /// `kindRaw` stays a `String` in this signature on purpose: `Account.kindRaw`
+  /// is one, and widening the parameter to `AccountKind` would push the
+  /// unknown-string case out to every caller instead of resolving it here.
   @discardableResult
   func create(
     displayName: String,
