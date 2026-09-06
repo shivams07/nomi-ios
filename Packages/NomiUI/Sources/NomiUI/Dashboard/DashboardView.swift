@@ -78,6 +78,19 @@ enum DashboardWiring {
     }
   }
 
+  /// U17b. Unlike `accounts`/`recentTransactions`, there is no third "no
+  /// store at all" case to represent here — that lives one level up, in
+  /// `DashboardView.recurringSeries`, as the `nil` around this `Load` rather
+  /// than a case inside it. This only ever runs once a store exists.
+  @MainActor
+  static func recurringSeries(from store: RecurringInsightsStore) -> Load<[RecurringSeries]> {
+    do {
+      return .loaded(try store.recurringSeries())
+    } catch {
+      return .failed
+    }
+  }
+
   /// `month == nil` (FY basis) passes straight through as `nil` — a third
   /// state, distinct from both cases of `Load`, since the FY basis has no
   /// budget concept at all rather than a successful empty answer or a
@@ -101,6 +114,11 @@ public struct DashboardView: View {
   public let insightsStore: InsightsStore
   public let mailConnectionService: MailConnectionService?
 
+  /// U17b. `nil` — the default, so every existing preview/test call site
+  /// keeps compiling — means the card is absent, same rule as the budget
+  /// module's zero-items case: never constructed, not hidden.
+  public let recurringStore: RecurringInsightsStore?
+
   /// Never read. `InsightsCache` lives in `NomiApp`, which `NomiUI` cannot
   /// depend on, so the composition root republishes its generation as this
   /// plain `Int` and passes a new value in on every write. SwiftUI
@@ -122,12 +140,14 @@ public struct DashboardView: View {
   public init(
     insightsStore: InsightsStore,
     mailConnectionService: MailConnectionService? = nil,
+    recurringStore: RecurringInsightsStore? = nil,
     refreshToken: Int = 0,
     basis: PeriodBasis = .calendarMonth,
     anchor: Date = Date()
   ) {
     self.insightsStore = insightsStore
     self.mailConnectionService = mailConnectionService
+    self.recurringStore = recurringStore
     self.refreshToken = refreshToken
     _basis = State(initialValue: basis)
     _anchor = State(initialValue: anchor)
@@ -156,6 +176,15 @@ public struct DashboardView: View {
     DashboardWiring.recentTransactions(from: insightsStore)
   }
 
+  /// `nil` when there is no `recurringStore` at all — distinct from
+  /// `DashboardWiring.Load`'s own two cases, same shape `budgetProgress`
+  /// already uses for its own third, store-independent "nothing to show"
+  /// state.
+  private var recurringSeries: DashboardWiring.Load<[RecurringSeries]>? {
+    guard let recurringStore else { return nil }
+    return DashboardWiring.recurringSeries(from: recurringStore)
+  }
+
   public var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: NomiSpacing.cardToCard) {
@@ -173,6 +202,7 @@ public struct DashboardView: View {
         case .failed:
           FailedLoadCaption { retryToken += 1 }
         }
+        upcomingModule
         accountsModule
       }
       .padding(.horizontal, NomiSpacing.screenGutter)
@@ -211,6 +241,20 @@ public struct DashboardView: View {
       RecentTransactionsCard(transactions: transactions)
     case .failed:
       FailedLoadCaption { retryToken += 1 }
+    }
+  }
+
+  /// `nil` renders `EmptyView()` — the card is absent, not hidden — the same
+  /// three-way shape `budgetModule` already handles for its own `nil` case.
+  @ViewBuilder
+  private var upcomingModule: some View {
+    switch recurringSeries {
+    case .loaded(let series):
+      UpcomingCard(series: series)
+    case .failed:
+      FailedLoadCaption { retryToken += 1 }
+    case nil:
+      EmptyView()
     }
   }
 
@@ -272,6 +316,7 @@ extension DashboardView: Equatable {
   public static func == (lhs: DashboardView, rhs: DashboardView) -> Bool {
     lhs.insightsStore === rhs.insightsStore
       && lhs.mailConnectionService === rhs.mailConnectionService
+      && lhs.recurringStore === rhs.recurringStore
       && lhs.refreshToken == rhs.refreshToken
   }
 }
@@ -323,6 +368,30 @@ extension DashboardView: Equatable {
     DashboardView(
       insightsStore: FailingInsightsStorePreviewFixture(), mailConnectionService: FakeMailConnectionService()
     )
+  }
+  .preferredColorScheme(.dark)
+}
+
+/// U17b done-when: a `recurringStore` renders the Upcoming card — proves the
+/// wiring, not just `UpcomingCard`'s own previews, which never touch
+/// `DashboardView.recurringSeries` or `upcomingModule` at all.
+#Preview("Dashboard — upcoming card populated, dark") {
+  NomiTabShell {
+    DashboardView(
+      insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService(),
+      recurringStore: FakeRecurringStore()
+    )
+  }
+  .preferredColorScheme(.dark)
+}
+
+/// U17b done-when: `recurringStore: nil` (the default every other preview in
+/// this file already uses) renders no Upcoming card at all — an absent view,
+/// same rule as the zero-budgets preview above, named explicitly rather than
+/// left as an unlabelled side effect of every other preview's default.
+#Preview("Dashboard — no recurring store, upcoming card absent, dark") {
+  NomiTabShell {
+    DashboardView(insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService())
   }
   .preferredColorScheme(.dark)
 }
