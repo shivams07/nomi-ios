@@ -1,5 +1,6 @@
 import Foundation
 import NomiCore
+import SwiftData
 
 /// Anything with the fields a ledger day-group needs to sum and sort — kept
 /// separate from `Transaction` so grouping/total math is testable without
@@ -110,5 +111,30 @@ enum LedgerWindow {
   static func since(for stepsBack: Int, now: Date, calendar: Calendar = .current) -> Date {
     let days = (stepsBack + 1) * 90
     return calendar.date(byAdding: .day, value: -days, to: now) ?? now
+  }
+}
+
+/// U16: builds the ledger's `@Query` filter directly from a
+/// `TransactionFilter`, so the chip selection and the search box narrow the
+/// fetch itself — same F1 reasoning as `since` — rather than the 90-day
+/// window arriving whole to be filtered in Swift. `TransactionFilter`'s
+/// first reader; its fields are consumed as-is, not reshaped for this call
+/// site.
+enum LedgerFilterPredicate {
+  static func make(_ filter: TransactionFilter, since: Date) -> Predicate<NomiCore.Transaction> {
+    let categoryIDs = filter.categoryIDs
+    let hasCategoryFilter = !categoryIDs.isEmpty
+    let uncategorizedOnly = filter.uncategorizedOnly
+    let searchText = filter.searchText
+    let hasSearchText = !searchText.isEmpty
+    return #Predicate<NomiCore.Transaction> { transaction in
+      transaction.date >= since
+        && (!uncategorizedOnly || transaction.categoryID == nil)
+        && (!hasCategoryFilter || categoryIDs.contains(where: { $0 == transaction.categoryID }))
+        && (!hasSearchText
+          || transaction.descriptionText.localizedStandardContains(searchText)
+          || (transaction.merchantName ?? "").localizedStandardContains(searchText)
+          || (transaction.counterpartyVPA ?? "").localizedStandardContains(searchText))
+    }
   }
 }

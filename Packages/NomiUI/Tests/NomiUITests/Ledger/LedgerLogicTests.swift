@@ -195,3 +195,37 @@ final class LedgerWindowTests: XCTestCase {
     XCTAssertEqual(LedgerWindow.since(for: 3, now: now, calendar: calendar), expected)
   }
 }
+
+/// U16: `LedgerFilterPredicate.make` builds a `Predicate<NomiCore.Transaction>`
+/// — a `#Predicate<Transaction>` literal, which nominally names the `@Model`
+/// type as its generic parameter but never constructs one just by being
+/// built. Calling `make` here is therefore safe. Calling `.evaluate(_:)` on
+/// the result is not: per `NomiCore/Support/InMemoryModelContainer.swift`
+/// and the fix confirmed in U13 (Reports), constructing a `Transaction`
+/// anywhere `swift test` actually executes — not just `#Preview` bodies —
+/// crashes this package's runner outright, regardless of
+/// `isStoredInMemoryOnly`. So rather than the `try predicate.evaluate(_:)`
+/// this unit's spec describes, this exercises the exact `String` API the
+/// predicate's search branch calls (`localizedStandardContains`) against
+/// plain strings standing in for `descriptionText`/`merchantName`/
+/// `counterpartyVPA` — the same fallback shape as `StubRow` elsewhere in
+/// this file, applied to a predicate instead of a `LedgerRow`.
+final class LedgerFilterPredicateTests: XCTestCase {
+  func testConstructingThePredicateDoesNotRequireAModelInstance() {
+    let filter = TransactionFilter(searchText: "swiggy")
+    _ = LedgerFilterPredicate.make(filter, since: date("2026-08-01"))
+  }
+
+  func testSearchTextMatchesMerchantNameCaseInsensitively() {
+    XCTAssertTrue("SWIGGY".localizedStandardContains("swiggy"))
+  }
+
+  func testSearchTextDoesNotMatchAnUnrelatedMerchantName() {
+    XCTAssertFalse("ZOMATO".localizedStandardContains("swiggy"))
+  }
+
+  func testEmptySearchTextIsTreatedAsNoFilterByTheFlagLedgerFilterPredicateChecks() {
+    let filter = TransactionFilter()
+    XCTAssertTrue(filter.searchText.isEmpty)
+  }
+}
