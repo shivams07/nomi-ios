@@ -37,30 +37,36 @@ public func makeDedupeKey(
 /// Glob matcher for `Rule.pattern`, e.g. `UPI-*AMAZON*`. `*` matches any run of
 /// characters (including none); matching is case-sensitive against the caller's
 /// already-normalized input.
+///
+/// **The prefix and the suffix are matched against disjoint spans (B4).**
+/// Checking `hasPrefix` and `hasSuffix` independently let a single run of
+/// characters satisfy both, so `*` could span a *negative* number of them:
+/// `A*A` matched `A`, and `AB*BC` matched `ABC`. A rule asking for two
+/// occurrences of something was satisfied by one, and silently categorised
+/// rows it was written to exclude.
 public func globMatches(pattern: String, value: String) -> Bool {
   let parts = pattern.components(separatedBy: "*")
   if parts.count == 1 {
     return value == pattern
   }
 
-  var searchStart = value.startIndex
+  let prefix = parts[0]
+  let suffix = parts[parts.count - 1]
 
-  if let first = parts.first, !first.isEmpty {
-    guard value.hasPrefix(first) else { return false }
-    searchStart = value.index(value.startIndex, offsetBy: first.count)
-  }
+  // The length check is the fix. Everything below it was already correct given
+  // that the two ends do not overlap.
+  guard value.count >= prefix.count + suffix.count else { return false }
+  guard prefix.isEmpty || value.hasPrefix(prefix) else { return false }
+  guard suffix.isEmpty || value.hasSuffix(suffix) else { return false }
 
-  if let last = parts.last, !last.isEmpty {
-    guard value.hasSuffix(last) else { return false }
-  }
+  // What is left for the middle parts to be found in: strictly between the two
+  // ends, so a middle part cannot reach back into the prefix or forward into
+  // the suffix either.
+  let lower = value.index(value.startIndex, offsetBy: prefix.count)
+  let upper = value.index(value.endIndex, offsetBy: -suffix.count)
+  var remaining = value[lower..<upper]
 
-  let middleParts = parts.dropFirst().dropLast()
-  var remaining = value[searchStart...]
-  if let last = parts.last, !last.isEmpty {
-    remaining = remaining.dropLast(last.count)
-  }
-
-  for part in middleParts where !part.isEmpty {
+  for part in parts.dropFirst().dropLast() where !part.isEmpty {
     guard let range = remaining.range(of: part) else { return false }
     remaining = remaining[range.upperBound...]
   }

@@ -33,6 +33,43 @@ struct DedupeTests {
     #expect(key1 == key2)
   }
 
+  // MARK: - B4: the prefix and the suffix must not overlap
+
+  /// `globMatches` checked `hasPrefix` and `hasSuffix` independently, so one
+  /// run of characters could satisfy both and the `*` was allowed to span a
+  /// negative number of them. Both of these are true on `main`.
+  @Test func aStarCannotSpanBackwardsOverTheSuffix() {
+    #expect(!globMatches(pattern: "A*A", value: "A"))
+    #expect(!globMatches(pattern: "AB*BC", value: "ABC"))
+  }
+
+  /// The same patterns against the shortest value that really does contain
+  /// both parts, which is where the boundary is.
+  @Test func aStarMayStillSpanNothingAtAll() {
+    #expect(globMatches(pattern: "A*A", value: "AA"))
+    #expect(globMatches(pattern: "AB*BC", value: "ABBC"))
+  }
+
+  /// What the bug looks like in a rule the user would actually type. A pattern
+  /// asking for two occurrences must not be satisfied by one.
+  @Test func aPatternRequiringTwoOccurrencesIsNotSatisfiedByOne() {
+    #expect(!globMatches(pattern: "POS*POS", value: "POS BIG BAZAAR"))
+    #expect(globMatches(pattern: "POS*POS", value: "POS BIG BAZAAR POS"))
+    #expect(!globMatches(pattern: "UPI/*/UPI/", value: "UPI/"))
+  }
+
+  /// Pinned: the ordinary patterns must not move. Digits are stripped by
+  /// `normalizeDescription` before matching, which is why the value has none.
+  @Test func ordinaryPatternsAreUnaffectedByTheOverlapRule() {
+    #expect(globMatches(pattern: "*SWIGGY*", value: "UPI/PM//SWIGGY/HDFC"))
+    #expect(globMatches(pattern: "UPI/PM*", value: "UPI/PM//SWIGGY/HDFC"))
+    #expect(globMatches(pattern: "*HDFC", value: "UPI/PM//SWIGGY/HDFC"))
+    #expect(globMatches(pattern: "*", value: ""))
+    #expect(globMatches(pattern: "*", value: "ANYTHING"))
+    #expect(globMatches(pattern: "A*", value: "A"))
+    #expect(globMatches(pattern: "*A", value: "A"))
+  }
+
   @Test func normalizeDescriptionStripsDigitsAndCollapsesWhitespace() {
     #expect(normalizeDescription("upi/p2m/412345/Swiggy  Order   99") == "UPI/PM//SWIGGY ORDER")
   }
