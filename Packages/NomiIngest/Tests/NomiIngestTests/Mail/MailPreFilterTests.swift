@@ -326,4 +326,57 @@ final class MailPreFilterTests: XCTestCase {
     }
     XCTAssertEqual(Set(domains).count, domains.count, "duplicate in candidateDomains")
   }
+  // MARK: - B7: tokens match domain labels, not substrings
+
+  /// **Fails before this unit.** Ring 3 is `domain.contains(token)`, so `alerts`
+  /// admitted every mailing list that sends from an `alerts.` host and `card`
+  /// admitted every gift-card and loyalty promotion. Neither is a bank, and both
+  /// then had to be argued back out at the verb and promotional gates.
+  func testATokenInsideALabelDoesNotAdmitANonBankDomain() {
+    let filter = MailPreFilter()
+
+    XCTAssertFalse(filter.isCandidateDomain("alerts.linkedin.com"))
+    XCTAssertFalse(filter.isCandidateDomain("mailer.giftcard-deals.com"))
+  }
+
+  /// The same two through the whole gate rather than the domain ring alone: both
+  /// bodies carry an amount and a transaction verb, so the domain is the only
+  /// thing that can reject them - and the REASON has to say so, because
+  /// `unmatchedSenders` counts near-misses off it.
+  func testThoseDomainsAreRejectedAsUnknownDomainAndNotOnTheVerb() {
+    let filter = MailPreFilter()
+
+    for domain in ["alerts.linkedin.com", "mailer.giftcard-deals.com"] {
+      let message = MailMessage(
+        uid: 1, uidValidity: 900_100,
+        fromRaw: "Notifications <news@" + domain + ">",
+        subject: "Your weekly update",
+        headerDate: Date(timeIntervalSince1970: 1_777_000_000),
+        htmlBody: nil,
+        textBody: "Rs. 500.00 has been credited to your rewards balance.")
+
+      XCTAssertEqual(filter.verdict(for: message), .rejected(.unknownDomain), domain)
+    }
+  }
+
+  /// The other half, and the one that makes the change safe: every domain the
+  /// token ring exists for is still admitted, by a label that ENDS with a token
+  /// or by an outer ring.
+  func testTheDomainsTheTokenRingIsForAreStillAdmitted() {
+    let filter = MailPreFilter()
+
+    XCTAssertTrue(filter.isCandidateDomain("alerts.hdfcbank.net"))      // label "hdfcbank"
+    XCTAssertTrue(filter.isCandidateDomain("hdfcbank.net"))             // pack entry
+    XCTAssertTrue(filter.isCandidateDomain("netbanking.sbi.co.in"))     // label "netbanking"
+    XCTAssertTrue(filter.isCandidateDomain("bandhanbank.in"))           // label "bandhanbank"
+    XCTAssertTrue(filter.isCandidateDomain("alerts.sbi.co.in"))         // candidateDomains
+    XCTAssertTrue(filter.isCandidateDomain("sbicard.com"))              // candidateDomains
+    XCTAssertTrue(filter.isCandidateDomain("onecard.in"))               // candidateDomains
+    // `jupiter.money` was admitted only because "jupiter" CONTAINS "upi", which
+    // is exactly the accident this unit removes - the label ends in "iter". It
+    // is a real neobank sending real receipts, so it moves onto
+    // `candidateDomains` rather than dropping out of the gate unnoticed.
+    XCTAssertTrue(filter.isCandidateDomain("jupiter.money"))
+  }
+
 }

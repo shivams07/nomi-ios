@@ -1,0 +1,21 @@
+Authentication-Results: mx.google.com;
+	dkim=fail header.i=@hdfcbank.net header.s=s1 reason="signature verification failed";
+	spf=softfail (google.com: domain of transitioning alerts@hdfcbank.net does not
+	designate 203.0.113.9 as permitted sender) smtp.mailfrom=alerts@hdfcbank.net
+Received: from mail.example.invalid (203.0.113.9) by mx.google.com with ESMTPS
+	id s12si4029847pfd.71.2026.09.02.11.04.12 for <user@example.com>
+From: HDFC Bank InstaAlerts <alerts@hdfcbank.net>
+To: <user@example.com>
+Subject: Debit transaction alert
+Date: Wed, 2 Sep 2026 11:04:12 +0530
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Dear Customer,
+
+Rs. 8,750.00 has been debited from account no. XX4471 on 02-09-2026 to VPA quickpay@okhdfcbank.
+
+Avl Bal: Rs. 2,310.00
+
+HDFC Bank Ltd
