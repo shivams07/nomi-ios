@@ -31,8 +31,10 @@ public actor FakeMailConnectionService: MailConnectionService {
     SyncSummary(scanned: 12, created: 3, merged: 1, flagged: 1, packMatched: 3, heuristicMatched: 1, unmatchedSenders: [])
   }
 
-  public func startBackfill(months: Int) async throws {
+  @discardableResult
+  public func startBackfill(months: Int) async throws -> SyncSummary {
     let total = months * 30
     backfillContinuation?.yield(BackfillProgress(scanned: total, total: total, created: 0))
+    return SyncSummary(scanned: total, created: 0, merged: 0, flagged: 0, packMatched: 0, heuristicMatched: 0, unmatchedSenders: [])
   }
 }

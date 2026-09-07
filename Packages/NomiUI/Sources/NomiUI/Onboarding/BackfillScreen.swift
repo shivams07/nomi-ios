@@ -24,6 +24,21 @@ enum BackfillLifecycle {
   }
 }
 
+/// The scan, pulled out so it is spy-testable in the same shape as
+/// `SettingsActions.rescan`: it must call `startBackfill(months:)` and nothing
+/// else — specifically never `syncNow()`. The screen used to end its progress
+/// loop with a full second sync purely to obtain a `SyncSummary` to render,
+/// which re-fetched and re-ingested everything the backfill had just done. The
+/// backfill's own return value is that summary, so the completion card now
+/// reports the work that was actually watched rather than a second opinion
+/// about it.
+enum BackfillActions {
+  @discardableResult
+  static func scan(using service: MailConnectionService, months: Int) async throws -> SyncSummary {
+    try await service.startBackfill(months: months)
+  }
+}
+
 /// The app's first impression (U7 notes: "the hero screen"). Determinate bar,
 /// live scanned/found counts, rows animating in as they land — never a
 /// spinner. `BackfillProgress` carries aggregate counts only, no per-
@@ -78,15 +93,11 @@ public struct BackfillScreen: View {
     }
     .background(NomiColor.surfaceCanvas)
     .task {
+      // Display only. Completion is whatever `startBackfill` returned, not a
+      // guess made from the last tick: the stream is a progress bar, and the
+      // scan itself is the thing that knows when it finished and what it found.
       for await update in mailConnectionService.backfillProgress {
         progress = update
-        if BackfillMath.isComplete(update) {
-          do {
-            completionSummary = try await mailConnectionService.syncNow()
-          } catch {
-            taskError = true
-          }
-        }
       }
     }
     .onAppear {
@@ -153,7 +164,8 @@ public struct BackfillScreen: View {
     isCancelled = false
     backfillTask = Task {
       do {
-        try await mailConnectionService.startBackfill(months: months)
+        completionSummary = try await BackfillActions.scan(
+          using: mailConnectionService, months: months)
       } catch {
         taskError = true
       }
@@ -203,7 +215,9 @@ private actor AlwaysFailingMailConnectionService: MailConnectionService {
   func connect(_ credentials: IMAPCredentials) async throws {}
   func disconnect() async throws {}
   @discardableResult func syncNow() async throws -> SyncSummary { throw BackfillStartFailure() }
-  func startBackfill(months: Int) async throws { throw BackfillStartFailure() }
+  @discardableResult func startBackfill(months: Int) async throws -> SyncSummary {
+    throw BackfillStartFailure()
+  }
 }
 
 #Preview("Backfill — failed to start, dark") {

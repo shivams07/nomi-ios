@@ -23,7 +23,9 @@ actor ConnectedFakeMailConnectionService: MailConnectionService {
   @discardableResult func syncNow() async throws -> SyncSummary {
     SyncSummary(scanned: 12, created: 3, merged: 1, flagged: 1, packMatched: 3, heuristicMatched: 1, unmatchedSenders: [])
   }
-  func startBackfill(months: Int) async throws {}
+  @discardableResult func startBackfill(months: Int) async throws -> SyncSummary {
+    SyncSummary(scanned: 12, created: 3, merged: 1, flagged: 1, packMatched: 3, heuristicMatched: 1, unmatchedSenders: [])
+  }
 }
 
 actor FailedFakeMailConnectionService: MailConnectionService {
@@ -42,7 +44,9 @@ actor FailedFakeMailConnectionService: MailConnectionService {
   @discardableResult func syncNow() async throws -> SyncSummary {
     SyncSummary(scanned: 0, created: 0, merged: 0, flagged: 0, packMatched: 0, heuristicMatched: 0, unmatchedSenders: [])
   }
-  func startBackfill(months: Int) async throws {}
+  @discardableResult func startBackfill(months: Int) async throws -> SyncSummary {
+    SyncSummary(scanned: 0, created: 0, merged: 0, flagged: 0, packMatched: 0, heuristicMatched: 0, unmatchedSenders: [])
+  }
 }
 
 actor ConnectingFakeMailConnectionService: MailConnectionService {
@@ -61,7 +65,9 @@ actor ConnectingFakeMailConnectionService: MailConnectionService {
   @discardableResult func syncNow() async throws -> SyncSummary {
     SyncSummary(scanned: 0, created: 0, merged: 0, flagged: 0, packMatched: 0, heuristicMatched: 0, unmatchedSenders: [])
   }
-  func startBackfill(months: Int) async throws {}
+  @discardableResult func startBackfill(months: Int) async throws -> SyncSummary {
+    SyncSummary(scanned: 0, created: 0, merged: 0, flagged: 0, packMatched: 0, heuristicMatched: 0, unmatchedSenders: [])
+  }
 }
 
 /// A `BackfillProgress` stream fixed at a single point, for the hero screen's
@@ -84,5 +90,7 @@ actor FixedBackfillFakeMailConnectionService: MailConnectionService {
   @discardableResult func syncNow() async throws -> SyncSummary {
     SyncSummary(scanned: 1200, created: 58, merged: 4, flagged: 6, packMatched: 44, heuristicMatched: 14, unmatchedSenders: [])
   }
-  func startBackfill(months: Int) async throws {}
+  @discardableResult func startBackfill(months: Int) async throws -> SyncSummary {
+    SyncSummary(scanned: 1200, created: 58, merged: 4, flagged: 6, packMatched: 44, heuristicMatched: 14, unmatchedSenders: [])
+  }
 }

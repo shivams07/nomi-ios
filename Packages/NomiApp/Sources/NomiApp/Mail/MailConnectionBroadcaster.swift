@@ -148,7 +148,8 @@ public final class BroadcastingMailConnectionService: MailConnectionService, @un
     try await upstream.syncNow()
   }
 
-  public func startBackfill(months: Int) async throws {
+  @discardableResult
+  public func startBackfill(months: Int) async throws -> SyncSummary {
     try await upstream.startBackfill(months: months)
   }
 }
