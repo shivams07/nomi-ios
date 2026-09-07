@@ -345,6 +345,42 @@ final class MailExtractionFixtureTests: XCTestCase {
     XCTAssertEqual(draft.needsReviewReason, .unauthenticatedSender)
   }
 
+  // MARK: - Foreign currency (U18)
+
+  /// A card charged in dollars. Deliberately NOT in `expectations`: that loop
+  /// asserts `currencyCode == "INR"` on every structural fixture, which is the
+  /// invariant this one exists to be the exception to.
+  ///
+  /// The amount is 1299 **cents**, not paise. Nothing in this app converts it -
+  /// there is no rate source - so the row carries its code and every aggregate
+  /// leaves it out.
+  func testACardChargedInDollarsCarriesTheCodeAndIsFlagged() throws {
+    let extractor = MailTransactionExtractor()
+    let message = try MailFixtures.message("hdfc_debit_usd_card.eml")
+
+    let outcome = extractor.outcome(for: message)
+    let draft = try XCTUnwrap(outcome.draft)
+
+    XCTAssertEqual(draft.currencyCode, "USD")
+    XCTAssertEqual(draft.amountMinor, 1299)
+    XCTAssertEqual(draft.direction, .debit)
+    XCTAssertEqual(draft.needsReviewReason, .foreignCurrency)
+    XCTAssertTrue(draft.needsReview)
+    XCTAssertFalse(
+      outcome.wasUnparseableCandidate,
+      "a readable foreign amount is not an unparseable mail - before U18 this fixture "
+        + "was rejected by the pre-filter and produced no row at all")
+  }
+
+  /// The pre-filter gates on there being a currency amount. Reading only the
+  /// rupee forms rejected this mail as `.noCurrencyAmount`, so the charge
+  /// vanished rather than arriving flagged.
+  func testAForeignOnlyMailIsAdmittedByThePreFilter() throws {
+    let message = try MailFixtures.message("hdfc_debit_usd_card.eml")
+
+    XCTAssertTrue(MailPreFilter().isCandidate(message))
+  }
+
 }
 
 // MARK: - Test doubles

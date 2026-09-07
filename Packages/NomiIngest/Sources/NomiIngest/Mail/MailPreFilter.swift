@@ -65,7 +65,13 @@ public struct MailPreFilter: Sendable {
     let text = message.extractableText()
     let haystack = text + " " + message.subject
 
-    guard MailAmount.firstAmount(in: haystack) != nil else { return .rejected(.noCurrencyAmount) }
+    // A foreign amount counts as a currency amount (U18). Gating on the rupee
+    // forms alone rejected every card statement billed in USD as
+    // `.noCurrencyAmount`, so the row never reached the extractor and the
+    // transaction vanished rather than arriving flagged.
+    guard MailAmount.firstAmount(in: haystack) != nil
+      || MailAmount.foreignAmount(in: haystack) != nil
+    else { return .rejected(.noCurrencyAmount) }
     guard MailDirection.containsTransactionVerb(haystack) else {
       return .rejected(.noTransactionVerb)
     }

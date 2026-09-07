@@ -192,7 +192,8 @@ extension LedgerRow {
       normalizedDescription: transaction.normalizedDescription,
       merchantName: transaction.merchantName,
       descriptionText: transaction.descriptionText,
-      needsReview: transaction.needsReview
+      needsReview: transaction.needsReview,
+      currencyCode: transaction.currencyCode
     )
   }
 }

@@ -1,0 +1,9 @@
+From: HDFC Bank InstaAlerts <alerts@hdfcbank.net>
+To: <user@example.com>
+Subject: Transaction alert on your HDFC Bank Card
+Date: Wed, 02 Sep 2026 18:41:00 +0530
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><body><table width="100%"><tr><td><p>Dear Customer,</p><p>Your HDFC Bank Card ending <b>4471</b> has been debited for <b>USD 12.99</b> at <b>ACME CLOUD SERVICES</b> on <b>02-09-2026</b>.</p><p>This is an international transaction. The rupee amount will appear on your statement after conversion.</p></td></tr></table></body></html>
