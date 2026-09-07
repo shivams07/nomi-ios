@@ -4,7 +4,7 @@ import Foundation
 /// grouping separator — a CSV is opened in a spreadsheet, not displayed in the
 /// app. Dates export as ISO-8601. Header row always present, even for zero rows.
 public enum TransactionCSVExporter {
-  static let header = "date,description,merchant,amount,currency,direction,category,account,source,needs_review,merged_count,upi_kind,counterparty_vpa"
+  static let header = "date,description,merchant,amount,currency,direction,category,account,source,needs_review,merged_count,upi_kind,counterparty_vpa,note"
 
   public static func export(_ rows: [Transaction], names: CSVNameMaps) -> String {
     let csvRows = rows.map {
@@ -21,7 +21,8 @@ public enum TransactionCSVExporter {
         needsReview: $0.needsReview,
         mergedCount: $0.mergedCount,
         upiKindRaw: $0.upiKindRaw,
-        counterpartyVPA: $0.counterpartyVPA
+        counterpartyVPA: $0.counterpartyVPA,
+        note: $0.note
       )
     }
     return ([header] + csvRows).joined(separator: "\n")
@@ -49,7 +50,8 @@ public enum TransactionCSVExporter {
     needsReview: Bool,
     mergedCount: Int,
     upiKindRaw: String?,
-    counterpartyVPA: String?
+    counterpartyVPA: String?,
+    note: String?
   ) -> String {
     let iso = ISO8601DateFormatter()
     iso.formatOptions = [.withInternetDateTime]
@@ -69,7 +71,8 @@ public enum TransactionCSVExporter {
     let mergedCountField = csvField(String(mergedCount))
     let upiKind = csvField(upiKindRaw ?? "")
     let vpa = csvField(counterpartyVPA ?? "")
-    return "\(isoDate),\(description),\(merchant),\(amount),\(currency),\(direction),\(category),\(account),\(source),\(needsReviewField),\(mergedCountField),\(upiKind),\(vpa)"
+    let noteField = csvField(note ?? "")
+    return "\(isoDate),\(description),\(merchant),\(amount),\(currency),\(direction),\(category),\(account),\(source),\(needsReviewField),\(mergedCountField),\(upiKind),\(vpa),\(noteField)"
   }
 
   private static func plainDecimal(_ amountMinor: Int) -> String {

@@ -18,7 +18,8 @@ struct TransactionCSVExporterTests {
     needsReview: Bool = false,
     mergedCount: Int = 1,
     upiKindRaw: String? = nil,
-    counterpartyVPA: String? = nil
+    counterpartyVPA: String? = nil,
+    note: String? = nil
   ) -> String {
     TransactionCSVExporter.row(
       date: Date(timeIntervalSince1970: 1_700_000_000),
@@ -33,7 +34,8 @@ struct TransactionCSVExporterTests {
       needsReview: needsReview,
       mergedCount: mergedCount,
       upiKindRaw: upiKindRaw,
-      counterpartyVPA: counterpartyVPA
+      counterpartyVPA: counterpartyVPA,
+      note: note
     )
   }
 
@@ -51,8 +53,8 @@ struct TransactionCSVExporterTests {
     #expect(lines[0] == TransactionCSVExporter.header)
   }
 
-  @Test func headerIsExactlyTheThirteenColumns() {
-    #expect(TransactionCSVExporter.header == "date,description,merchant,amount,currency,direction,category,account,source,needs_review,merged_count,upi_kind,counterparty_vpa")
+  @Test func headerIsExactlyTheFourteenColumns() {
+    #expect(TransactionCSVExporter.header == "date,description,merchant,amount,currency,direction,category,account,source,needs_review,merged_count,upi_kind,counterparty_vpa,note")
   }
 
   @Test func rowAmountsRoundTripAsParseableDecimals() {
@@ -84,7 +86,7 @@ struct TransactionCSVExporterTests {
 
   @Test func counterpartyVPAStartingWithAtIsPrefixed() {
     let csvRow = row(counterpartyVPA: "@upi")
-    #expect(csvRow.hasSuffix(",'@upi"))
+    #expect(csvRow.hasSuffix(",'@upi,"))
   }
 
   @Test func ordinaryCommaContainingDescriptionIsQuotedButNotPrefixed() {
@@ -103,5 +105,20 @@ struct TransactionCSVExporterTests {
   @Test func rowCarriesResolvedCategoryAndAccountNames() {
     let csvRow = row(categoryName: "Food & Dining", accountName: "HDFC Savings")
     #expect(csvRow.contains(",Food & Dining,HDFC Savings,"))
+  }
+
+  @Test func rowCarriesNoteAsTheLastColumn() {
+    let csvRow = row(note: "Split with roommate")
+    #expect(csvRow.hasSuffix(",Split with roommate"))
+  }
+
+  @Test func rowWithNoNoteHasAnEmptyLastColumn() {
+    let csvRow = row(note: nil)
+    #expect(csvRow.hasSuffix(","))
+  }
+
+  @Test func noteContainingACommaIsQuoted() {
+    let csvRow = row(note: "Great, thanks")
+    #expect(csvRow.hasSuffix("\"Great, thanks\""))
   }
 }
