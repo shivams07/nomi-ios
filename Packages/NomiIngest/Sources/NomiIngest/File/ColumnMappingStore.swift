@@ -2,10 +2,10 @@ import Foundation
 import NomiCore
 
 /// Learned CSV/XLSX layout, keyed by `FormatSignature`. Decoupled from
-/// `ColumnMappingRecord` (a SwiftData `@Model`) so it can be exercised under
-/// `swift test`, which cannot construct `@Model` instances headlessly — see
-/// `InMemoryModelContainer`'s note. A `@Model`-backed conformance is the
-/// app-wiring layer's job, outside this unit.
+/// `ColumnMappingRecord` (a SwiftData `@Model`) so it can be exercised with no
+/// container — not, as this once said, because `swift test` cannot build one.
+/// It can, under XCTest; see `InMemoryModelContainer`'s measured note. A
+/// `@Model`-backed conformance is the app-wiring layer's job, outside this unit.
 public protocol ColumnMappingStore: Sendable {
   func mapping(forSignature signature: String) -> SavedColumnMapping?
   func save(_ mapping: ColumnMapping, signature: String, bankLabel: String)

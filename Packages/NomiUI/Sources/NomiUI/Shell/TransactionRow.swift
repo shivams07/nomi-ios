@@ -55,9 +55,9 @@ public struct TransactionRow: View {
     Self.upiKindCapsuleText(for: transaction.upiKindRaw)
   }
 
-  /// Pure — no `@Model` access — so it is directly unit-testable. `swift test`
-  /// on this package's CI runner cannot construct `@Model` instances
-  /// headlessly (see `InMemoryModelContainer`'s note in NomiCore), so display
+  /// Pure — no `@Model` access — so it is directly unit-testable with no
+  /// container. Not because none can be built; one can, under XCTest (see
+  /// `InMemoryModelContainer`'s measured note in NomiCore). Display
   /// logic that needs coverage lives here rather than on the `Transaction`-typed properties above.
   /// `vpa` becomes the subtitle's third segment when present — M6.
   static func subtitle(categoryName: String?, accountName: String?, vpa: String? = nil) -> String {

@@ -2,11 +2,11 @@ import Foundation
 import NomiCore
 
 /// Pure logic behind `TransactionDetailScreen`, built from plain values rather
-/// than `NomiCore.Transaction` (a `@Model` class) — this package's `swift test`
-/// runner cannot construct a `ModelContainer` headlessly (see
-/// `InMemoryModelContainer`'s note in NomiCore), so anything this suite needs
-/// to exercise has to work without one, same reasoning as `TransactionRow`'s
-/// pure helpers.
+/// than `NomiCore.Transaction` (a `@Model` class), so this suite needs no
+/// container to exercise it. Not that one cannot be built — it can, under
+/// XCTest (see `InMemoryModelContainer`'s measured note in NomiCore) — the
+/// values are simply cheaper. Same reasoning as `TransactionRow`'s pure
+/// helpers.
 public enum TransactionDetailAction: Hashable, Sendable {
   case category, account, edit, source, markReviewed, delete
 }

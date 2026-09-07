@@ -6,11 +6,12 @@ import SwiftData
 /// leaves its actor and no `@Model` instance crosses a concurrency boundary —
 /// only `TransactionSnapshot` values do.
 ///
-/// **This type is compile-verified only.** `swift test` cannot construct a
-/// `ModelContainer` in this CI (`NomiCore/Support/InMemoryModelContainer.swift`
-/// explains why), so nothing below this line is executed by any test on this
-/// project. Everything that decides anything lives above `PipelineStore` and is
-/// covered there. Keep it that way: logic added here is logic nobody can test.
+/// **This type is driven by `SwiftDataPipelineStoreTests`**, which builds a real
+/// container under XCTest. It used to claim no test could reach it, because
+/// `swift test` could not construct a `ModelContainer` at all; that was measured
+/// wrong (`NomiCore/Support/InMemoryModelContainer.swift` has the numbers).
+/// Everything that decides anything still lives above `PipelineStore`, where a
+/// test needs no container — keep it that way.
 @ModelActor
 public actor SwiftDataPipelineStore: PipelineStore {
 

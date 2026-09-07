@@ -4,10 +4,10 @@ import NomiCore
 /// A value-typed view of a `Rule`.
 ///
 /// The pipeline's decision logic is written entirely against snapshots rather
-/// than `@Model` types. That is not gold-plating: `swift test` cannot construct
-/// a SwiftData `@Model` in this CI at all (see
-/// `NomiCore/Support/InMemoryModelContainer.swift`), so logic that touches the
-/// model types directly is logic no test on this project can execute.
+/// than `@Model` types. Not because a `@Model` is out of a test's reach — it is
+/// reachable, under XCTest (see
+/// `NomiCore/Support/InMemoryModelContainer.swift`) — but because a value needs
+/// no container, no actor and no schema to assert anything about.
 public struct RuleSnapshot: Sendable, Equatable, Identifiable {
   public let id: UUID
   public let pattern: String

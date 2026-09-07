@@ -3,10 +3,10 @@ import NomiCore
 import SwiftData
 
 /// Anything with the fields a ledger day-group needs to sum and sort — kept
-/// separate from `Transaction` so grouping/total math is testable without
-/// constructing an `@Model` instance (this package's `swift test` runner
-/// cannot do that headlessly; see `InMemoryModelContainer`'s note in
-/// NomiCore). `Transaction`'s conformance costs nothing extra; it only reads
+/// separate from `Transaction` so grouping/total math is testable with no
+/// container, rather than because none can be built; one can, under XCTest
+/// (see `InMemoryModelContainer`'s measured note in NomiCore).
+/// `Transaction`'s conformance costs nothing extra; it only reads
 /// existing properties, same pattern as `DatedRow` in
 /// `Dashboard/RecentTransactionsCard.swift`.
 protocol LedgerRow {

@@ -3,9 +3,11 @@ import XCTest
 @testable import NomiUI
 
 /// Exercises `RecentRows.mostRecent` against a plain stub, never a real
-/// `Transaction` — this package's CI runner cannot construct `@Model`
-/// instances headlessly (see `InMemoryModelContainer`'s note in NomiCore).
-/// `DatedRow` exists precisely so this algorithm can be verified without one.
+/// `Transaction`. Not because one cannot be built: a container constructs fine
+/// under XCTest and only swift-testing traps (see `InMemoryModelContainer`'s
+/// measured note in NomiCore). `DatedRow` exists so this algorithm can be
+/// verified with no container, no schema and no store — which is a better test
+/// of a sort than one needing all three.
 private struct StubRow: DatedRow, Equatable {
   let label: String
   let date: Date

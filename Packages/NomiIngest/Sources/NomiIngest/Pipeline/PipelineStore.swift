@@ -4,13 +4,12 @@ import NomiCore
 /// The pipeline's persistence seam. `SwiftDataPipelineStore` is the real one;
 /// tests supply an in-memory conformer.
 ///
-/// This exists because the SwiftData `@Model` types cannot be constructed under
-/// `swift test` on this project's CI at all — the CoreData-backed store traps
-/// resolving a bundle name in a headless test binary
-/// (`NomiCore/Support/InMemoryModelContainer.swift`). Every dedupe, merge and
-/// rule decision therefore lives above this protocol, where it can be executed
-/// by a test, and everything below it is compile-verified only. That trade is
-/// stated in this unit's PR.
+/// This exists so every dedupe, merge and rule decision lives above the
+/// protocol, over values, where a test needs no container to run it. The reason
+/// first given — that `@Model` types could not be constructed under `swift
+/// test` at all — was measured wrong: the trap is swift-testing's, and XCTest
+/// builds a container fine (`NomiCore/Support/InMemoryModelContainer.swift`).
+/// `SwiftDataPipelineStoreTests` is the worked example below this line.
 public protocol PipelineStore: Sendable {
   /// Enabled rules. Ordering is the pipeline's business, not the store's.
   func rules() async throws -> [RuleSnapshot]

@@ -2,11 +2,11 @@ import NomiCore
 import XCTest
 @testable import NomiUI
 
-/// Exercises `TransactionRow`'s pure display-logic helpers only. This package's
-/// CI runner cannot construct `@Model` instances headlessly (SwiftData's
-/// bundle-name resolution fails outside an app bundle — see
-/// `InMemoryModelContainer`'s note in NomiCore), so these tests never build a
-/// `Transaction`.
+/// Exercises `TransactionRow`'s pure display-logic helpers only. These tests
+/// never build a `Transaction` — not because they cannot, since a container
+/// constructs fine under XCTest and only swift-testing traps (see
+/// `InMemoryModelContainer`'s measured note in NomiCore), but because a
+/// subtitle string needs no store to assert anything about.
 final class TransactionRowTests: XCTestCase {
   func testNilAccountRendersUnassigned() {
     let subtitle = TransactionRow.subtitle(categoryName: "Food", accountName: nil)

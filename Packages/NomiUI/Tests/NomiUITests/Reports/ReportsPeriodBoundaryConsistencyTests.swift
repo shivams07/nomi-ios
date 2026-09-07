@@ -14,10 +14,10 @@ import XCTest
 /// straddling the edge, and proves a per-category grouped sum agrees with
 /// the ungrouped period total in both calendar-month and financial-year
 /// bases. It uses a plain, non-`@Model` stub row rather than a real
-/// `Transaction`: this package's tests cannot construct `@Model` instances
-/// (see `InMemoryModelContainer.swift`'s documented SwiftData bundle-name
-/// crash — `RecentTransactionsSortTests`' `StubRow` already works around the
-/// same constraint). The real `InsightsStore` implementation is out of this
+/// `Transaction` — not because one cannot be constructed, but because the
+/// boundary arithmetic under test needs no store to exercise. A container does
+/// build under XCTest; only swift-testing traps (see
+/// `InMemoryModelContainer.swift`'s measured note). The real `InsightsStore` implementation is out of this
 /// unit's file boundary; what this unit owns and can regress-guard is that
 /// its own screen code always derives both the breakdown and the transaction
 /// list from one shared `InsightPeriod` value, never two separately-computed

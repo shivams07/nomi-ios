@@ -51,12 +51,23 @@ import SwiftData
 /// why the constraint looked universal from inside this file, and why NomiApp,
 /// NomiUI and NomiIngest could have been testing their `@Model` code all along.
 ///
-/// Several other files still describe themselves as compile-verified only and
-/// cite the old claim — `SwiftDataPipelineStore`, `SwiftDataColumnMappingStore`,
-/// `SwiftDataInsightsStore`, `DefaultCategorySeed`, `PipelineTypes`,
-/// `InsightsAggregator`. Those are stale as written and are deliberately left
-/// alone here: what to do about them is a repo-wide test-strategy call, not
-/// this file's.
+/// The files that cited the old claim were corrected to point here instead
+/// (U13). Rather than assert that none are left — a claim that rots the next
+/// time someone writes the sentence again — the check is a command:
+///
+///     git grep -l -i -e headlessly -e compile-verified \n///       -e 'cannot construct' -- Packages
+///
+/// Every file it lists should be one where the statement is **true**:
+/// `KeychainCredentialStore` (no access group, so every call returns
+/// `errSecMissingEntitlement`), `NWIMAPFetcher` (nothing in CI opens a TLS
+/// connection to an IMAP host) and `SwiftDataPipelineStoreTests` (which cites
+/// the old claim as history, deliberately). Anything else on that list is a
+/// file that needs this note and has not read it.
+///
+/// Grep the whole of `Packages`, not `Packages/*/Sources` — that pathspec
+/// matches nothing — and match files with `-l`, because the phrase wraps
+/// across comment lines and a line-level grep steps straight over it. Both
+/// mistakes were made here, and both reported a clean sweep that was not.
 public enum InMemoryModelContainer {
   public static let shared: ModelContainer = {
     let schema = Schema([
