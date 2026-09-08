@@ -40,10 +40,13 @@ final class TransactionRowTests: XCTestCase {
     XCTAssertEqual(subtitle, "Food · HDFC")
   }
 
-  func testAmountTextAppendsNonINRCurrencyCode() {
+  // MARK: - U18: currency symbol carries the code, not a trailing suffix
+
+  func testAmountTextForAUSDRowCarriesNoRupeeSymbolAndNoTrailingCode() {
     let text = TransactionRow.amountText(minor: 1299, direction: .debit, currencyCode: "USD")
-    XCTAssertTrue(text.hasSuffix(" USD"))
-    XCTAssertTrue(text.contains(NomiFormatters.amountString(minor: 1299)))
+    XCTAssertFalse(text.contains("₹"))
+    XCTAssertFalse(text.hasSuffix(" USD"))
+    XCTAssertEqual(text, NomiFormatters.amountString(minor: 1299, currencyCode: "USD"))
   }
 
   func testAmountTextOmitsSuffixForINR() {
@@ -67,5 +70,27 @@ final class TransactionRowTests: XCTestCase {
 
   func testUPIKindCapsuleTextIsNilForNonUPIRow() {
     XCTAssertNil(TransactionRow.upiKindCapsuleText(for: nil))
+  }
+
+  // MARK: - M4: title fallback
+
+  func testTitlePrefersMerchantName() {
+    let title = TransactionRow.title(merchantName: "Swiggy", descriptionText: "DINE OUT/SWIGGY", categoryName: "Food")
+    XCTAssertEqual(title, "Swiggy")
+  }
+
+  func testTitleFallsBackToDescriptionWhenMerchantIsNil() {
+    let title = TransactionRow.title(merchantName: nil, descriptionText: "UPI/P2A/RAHUL", categoryName: "Food")
+    XCTAssertEqual(title, "UPI/P2A/RAHUL")
+  }
+
+  func testTitleFallsBackToCategoryNameForBlankDescription() {
+    let title = TransactionRow.title(merchantName: nil, descriptionText: "   ", categoryName: "Food & Dining")
+    XCTAssertEqual(title, "Food & Dining")
+  }
+
+  func testTitleFallsBackToManualEntryWhenEverythingIsBlank() {
+    let title = TransactionRow.title(merchantName: nil, descriptionText: "", categoryName: nil)
+    XCTAssertEqual(title, "Manual entry")
   }
 }

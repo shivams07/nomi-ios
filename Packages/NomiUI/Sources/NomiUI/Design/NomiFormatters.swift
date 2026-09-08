@@ -21,6 +21,30 @@ public enum NomiFormatters {
     return currency.string(from: NSNumber(value: major)) ?? "₹0.00"
   }
 
+  /// Formats a minor-unit amount for a foreign-currency row (U18). INR takes
+  /// the unchanged path above; anything else goes through a fresh formatter
+  /// with `currencyCode` set — locale `en_IN` still picks the symbol and
+  /// fraction digits (JPY renders with none), since it's the user's own
+  /// locale that decides how a foreign amount reads to them, not the
+  /// currency's home locale.
+  ///
+  /// The symbol en_IN's ICU data actually renders for a non-INR code is
+  /// plain ("$", not the "US$" a first guess might expect) with a space
+  /// before the amount — verified against real `NumberFormatter` output
+  /// (CI, twice, across two different construction approaches that
+  /// produced byte-identical results) rather than assumed. Do not "fix"
+  /// this back toward a hand-rolled "US$" without re-verifying on a real
+  /// run; it is not a bug in this function.
+  public static func amountString(minor: Int, currencyCode: String) -> String {
+    guard currencyCode != "INR" else { return amountString(minor: minor) }
+    let major = Double(abs(minor)) / 100
+    let formatter = NumberFormatter()
+    formatter.locale = Locale(identifier: "en_IN")
+    formatter.numberStyle = .currency
+    formatter.currencyCode = currencyCode
+    return formatter.string(from: NSNumber(value: major)) ?? "\(currencyCode) \(major)"
+  }
+
   /// The widest realistic amount, used to size the ledger's amount column.
   public static let widestRealisticAmount = "₹99,99,999.00"
 

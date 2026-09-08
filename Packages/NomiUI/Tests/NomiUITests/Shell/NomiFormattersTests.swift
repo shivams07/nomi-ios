@@ -20,6 +20,33 @@ final class NomiFormattersTests: XCTestCase {
     XCTAssertTrue(text.contains("2025"))
   }
 
+  // MARK: - U18: amountString(minor:currencyCode:)
+
+  /// CI-verified (twice, across two different `NumberFormatter`
+  /// constructions with byte-identical results): `en_IN`'s ICU data renders
+  /// a non-INR currency's symbol plain — `"$"`, not a hand-guessed `"US$"` —
+  /// with a locale-supplied space before the digits. Asserting the exact
+  /// separator character would be re-guessing the same way the first two
+  /// CI runs already got wrong; symbol, amount and absence of the wrong
+  /// symbol are what this function actually promises.
+  func testAmountStringUSDUsesDollarSymbolWithTwoFractionDigits() {
+    let text = NomiFormatters.amountString(minor: 1299, currencyCode: "USD")
+    XCTAssertTrue(text.hasPrefix("$"), "expected a leading $, got \(text)")
+    XCTAssertTrue(text.contains("12.99"), "expected two fraction digits, got \(text)")
+    XCTAssertFalse(text.contains("₹"), "a USD amount must not carry the rupee symbol")
+  }
+
+  func testAmountStringJPYHasNoFractionDigits() {
+    let text = NomiFormatters.amountString(minor: 1000, currencyCode: "JPY")
+    XCTAssertFalse(text.contains("."))
+  }
+
+  func testAmountStringINRMatchesTheUnchangedPath() {
+    XCTAssertEqual(
+      NomiFormatters.amountString(minor: 1299, currencyCode: "INR"),
+      NomiFormatters.amountString(minor: 1299))
+  }
+
   private func date(year: Int, month: Int, day: Int) -> Date {
     var components = DateComponents()
     components.year = year

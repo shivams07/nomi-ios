@@ -12,9 +12,11 @@ public typealias NomiPlatformFont = NSFont
 /// Montserrat is Nomi's primary face (Estate-Ease's Tailwind `sans` default,
 /// same geometric-sans genre as Gilroy, OFL-licensed so embedding is
 /// unambiguous). Inter is the secondary face for captions and small text.
-/// Font files ship in `Resources/Fonts/**`; `App/Info.plist` declares
-/// `UIAppFonts` with these exact filenames (U0, frozen) — this type must not
-/// invent a different filename.
+/// Font files ship in `Resources/Fonts/**` as package resources, not app
+/// resources — `UIAppFonts` only covers fonts in the *app* bundle, so
+/// `App/Info.plist` does not declare them (U18); `registerIfNeeded` below is
+/// the only thing that puts these on the process font table. These exact
+/// filenames are frozen (U0) — this type must not invent a different one.
 ///
 /// This file targets iOS at runtime but also compiles under plain macOS
 /// (`swift test` on the CI runner has no iOS simulator attached) — the
@@ -25,8 +27,8 @@ public enum NomiFont {
   public static let montserratBold = "Montserrat-Bold"
   public static let interRegular = "Inter-Regular"
 
-  /// One-time registration for the four bundled font files, in case the
-  /// hosting app has not already registered them via `UIAppFonts`.
+  /// One-time registration for the four bundled font files — see the type
+  /// doc above for why nothing else registers them.
   public static func registerIfNeeded() {
     let names = [
       "Montserrat-Medium.otf",
@@ -38,7 +40,13 @@ public enum NomiFont {
       guard let url = Bundle.module.url(forResource: name, withExtension: nil) else { continue }
       var registrationError: Unmanaged<CFError>?
       let didRegister = CTFontManagerRegisterFontsForURL(url as CFURL, .process, &registrationError)
-      assert(didRegister, "Failed to register \(name): \(String(describing: registrationError))")
+      guard !didRegister else { continue }
+      // A second call in the same process re-registers nothing already
+      // registered — `didRegister` is false, but the font resolves by name
+      // just fine, so that's a repeat call, not a failure.
+      let postScriptName = name.hasSuffix(".otf") ? String(name.dropLast(4)) : name
+      let alreadyResolves = NomiPlatformFont(name: postScriptName, size: 12) != nil
+      assert(alreadyResolves, "Failed to register \(name): \(String(describing: registrationError))")
     }
   }
 }

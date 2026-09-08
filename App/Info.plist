@@ -44,13 +44,5 @@
     <string>com.shivams07.nomi.refresh</string>
     <string>com.shivams07.nomi.backfill</string>
   </array>
-
-  <key>UIAppFonts</key>
-  <array>
-    <string>Montserrat-Medium.otf</string>
-    <string>Montserrat-SemiBold.otf</string>
-    <string>Montserrat-Bold.otf</string>
-    <string>Inter-Regular.otf</string>
-  </array>
 </dict>
 </plist>
