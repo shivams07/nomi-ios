@@ -14,6 +14,7 @@ protocol LedgerRow {
   var amountMinor: Int { get }
   var direction: Direction { get }
   var categoryID: UUID? { get }
+  var currencyCode: String { get }
 }
 
 extension NomiCore.Transaction: LedgerRow {}
@@ -29,9 +30,13 @@ struct LedgerDayGroup<Row: LedgerRow>: Identifiable {
   var id: Date { day }
 
   /// The sticky header's "day's total" — credits add, debits subtract, so
-  /// this is the day's net change, not a sum of magnitudes.
+  /// this is the day's net change, not a sum of magnitudes. INR rows only:
+  /// a foreign row's `amountMinor` is in that currency's minor unit, and
+  /// adding it to a rupee total would add cents to paise (M-C — same reason
+  /// `InsightsAggregator`'s period totals are INR-only).
   var totalMinor: Int {
-    rows.reduce(0) { $0 + ($1.direction == .credit ? $1.amountMinor : -$1.amountMinor) }
+    rows.filter { $0.currencyCode == "INR" }
+      .reduce(0) { $0 + ($1.direction == .credit ? $1.amountMinor : -$1.amountMinor) }
   }
 }
 
@@ -67,13 +72,15 @@ enum LedgerDayTotalText {
   }
 }
 
-/// Which chip is active. Single-select, not a set — "All", one category, or
-/// "Uncategorized" are mutually exclusive views of the same ledger, not
-/// independent toggles to combine.
-enum LedgerChipSelection: Equatable {
+/// Which chip is active. Single-select, not a set — "All", one category,
+/// "Uncategorized", or "Needs review" are mutually exclusive views of the
+/// same ledger, not independent toggles to combine. Public so `LedgerScreen`'s
+/// `initialChip:` can be set from outside the package.
+public enum LedgerChipSelection: Equatable {
   case all
   case category(UUID)
   case uncategorized
+  case needsReview
 }
 
 enum LedgerFiltering {
@@ -85,6 +92,13 @@ enum LedgerFiltering {
       return rows.filter { $0.categoryID == id }
     case .uncategorized:
       return rows.filter { $0.categoryID == nil }
+    case .needsReview:
+      // `LedgerRow` carries no needs-review flag — this pure filtering path
+      // is superseded in production by `LedgerFilterPredicate.matches`
+      // (`TransactionFilter.needsReviewOnly`, on the real `Transaction`);
+      // it stays only for `LedgerFiltering`'s existing tests, so there is
+      // nothing meaningful to filter by here.
+      return rows
     }
   }
 }
@@ -136,6 +150,9 @@ enum LedgerFilterPredicate {
   }
 
   static func matches(_ transaction: NomiCore.Transaction, filter: TransactionFilter) -> Bool {
+    if filter.needsReviewOnly {
+      guard transaction.needsReview else { return false }
+    }
     if filter.uncategorizedOnly {
       guard transaction.categoryID == nil else { return false }
     } else if !filter.categoryIDs.isEmpty {
@@ -145,5 +162,6 @@ enum LedgerFilterPredicate {
     return transaction.descriptionText.localizedStandardContains(filter.searchText)
       || (transaction.merchantName ?? "").localizedStandardContains(filter.searchText)
       || (transaction.counterpartyVPA ?? "").localizedStandardContains(filter.searchText)
+      || (transaction.note ?? "").localizedStandardContains(filter.searchText)
   }
 }

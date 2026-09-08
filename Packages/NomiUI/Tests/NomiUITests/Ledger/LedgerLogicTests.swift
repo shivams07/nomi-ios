@@ -15,6 +15,7 @@ private struct StubRow: LedgerRow, Equatable {
   let amountMinor: Int
   let direction: Direction
   let categoryID: UUID?
+  var currencyCode: String = "INR"
 }
 
 /// Fixed calendar/timezone throughout — CI runs UTC and Shivam does not, so
@@ -84,6 +85,23 @@ final class LedgerGroupingTests: XCTestCase {
       StubRow(label: "credit", date: date("2026-08-20"), amountMinor: 500, direction: .credit, categoryID: nil),
     ]
     XCTAssertEqual(LedgerGrouping.byDay(rows, calendar: calendar).first?.totalMinor, 500)
+  }
+
+  /// M-C: a foreign row's `amountMinor` is in that currency's minor unit, so
+  /// folding it into a rupee total would add cents to paise. The $5 USD debit
+  /// here must not move the total at all.
+  func testDayTotalSumsINRRowsOnly() {
+    let rows = [
+      StubRow(
+        label: "inr-debit", date: date("2026-08-20"), amountMinor: 100_00, direction: .debit, categoryID: nil,
+        currencyCode: "INR"
+      ),
+      StubRow(
+        label: "usd-debit", date: date("2026-08-20"), amountMinor: 500, direction: .debit, categoryID: nil,
+        currencyCode: "USD"
+      ),
+    ]
+    XCTAssertEqual(LedgerGrouping.byDay(rows, calendar: calendar).first?.totalMinor, -100_00)
   }
 }
 
