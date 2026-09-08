@@ -23,19 +23,25 @@ public enum NomiFormatters {
 
   /// Formats a minor-unit amount for a foreign-currency row (U18). INR takes
   /// the unchanged path above; anything else goes through a fresh formatter
-  /// whose *locale* carries the currency (`en_IN@currency=USD`), not a
-  /// separately-assigned `currencyCode` on an `en_IN` formatter — the latter
-  /// is a known `NumberFormatter` gap where the currency symbol/spacing
-  /// pattern is not recomputed for the new code, producing "$ 12.99"
-  /// instead of "US$12.99". Baking the currency into the locale identifier
-  /// forces ICU to resolve symbol, spacing and fraction digits (JPY: none)
-  /// together, still under `en_IN`'s own digit grouping.
+  /// with `currencyCode` set — locale `en_IN` still picks the symbol and
+  /// fraction digits (JPY renders with none), since it's the user's own
+  /// locale that decides how a foreign amount reads to them, not the
+  /// currency's home locale.
+  ///
+  /// The symbol en_IN's ICU data actually renders for a non-INR code is
+  /// plain ("$", not the "US$" a first guess might expect) with a space
+  /// before the amount — verified against real `NumberFormatter` output
+  /// (CI, twice, across two different construction approaches that
+  /// produced byte-identical results) rather than assumed. Do not "fix"
+  /// this back toward a hand-rolled "US$" without re-verifying on a real
+  /// run; it is not a bug in this function.
   public static func amountString(minor: Int, currencyCode: String) -> String {
     guard currencyCode != "INR" else { return amountString(minor: minor) }
     let major = Double(abs(minor)) / 100
     let formatter = NumberFormatter()
+    formatter.locale = Locale(identifier: "en_IN")
     formatter.numberStyle = .currency
-    formatter.locale = Locale(identifier: "en_IN@currency=\(currencyCode)")
+    formatter.currencyCode = currencyCode
     return formatter.string(from: NSNumber(value: major)) ?? "\(currencyCode) \(major)"
   }
 

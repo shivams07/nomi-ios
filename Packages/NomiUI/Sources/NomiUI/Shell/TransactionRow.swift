@@ -68,7 +68,7 @@ public struct TransactionRow: View {
 
   /// Pure — see `subtitle(categoryName:accountName:vpa:)`. U18: the amount
   /// goes through `NomiFormatters.amountString(minor:currencyCode:)`, whose
-  /// currency symbol already carries the code — a USD row reads "US$12.99",
+  /// currency symbol already carries the code — a USD row reads "$12.99",
   /// never "₹12.99 USD".
   static func amountText(minor: Int, direction: Direction, currencyCode: String = "INR") -> String {
     let sign = direction == .credit ? "+" : ""
