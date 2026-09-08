@@ -1,6 +1,18 @@
 import Foundation
 import NomiCore
 
+/// What this fake throws for a system rule.
+///
+/// `RuleStore.delete`'s contract is that it throws, not *which* error it
+/// throws: the real case is `RuleStoreError.systemRuleCannotBeDeleted` in
+/// `NomiApp`, and `NomiPreview` sits below `NomiApp` in the package graph and
+/// cannot name it. Two types, one contract — which is fine only because no
+/// caller branches on the case. If one ever needs to, the error belongs in
+/// `NomiCore` next to the protocol and both conformers should throw it.
+public enum FakeRuleStoreError: Error, Sendable, Equatable {
+  case systemRuleCannotBeDeleted
+}
+
 @MainActor
 public final class FakeRuleStore: RuleStore {
   public var rules: [Rule]
@@ -42,7 +54,25 @@ public final class FakeRuleStore: RuleStore {
     return RuleApplyResult(matched: matched, recategorized: matched)
   }
 
+  /// Mirrors `SwiftDataRuleStore.setEnabled`: flips the flag and stops there.
+  ///
+  /// No recount of `matchPool`, because the real store does not re-apply
+  /// either — disabling changes what the *next* pass does and leaves rows that
+  /// are already categorised alone. A fake that returned a fresh count here
+  /// would have every preview demonstrate a behaviour production does not have.
+  public func setEnabled(_ id: UUID, _ enabled: Bool) throws {
+    guard let rule = rules.first(where: { $0.id == id }) else { return }
+    rule.isEnabled = enabled
+  }
+
+  /// Refuses a system rule, like the real store.
+  ///
+  /// A fake that quietly deleted one would let `RulesScreen`'s previews show a
+  /// swipe-to-delete that production rejects — the failure mode the front-
+  /// insertion note above already describes, in a second place.
   public func delete(_ id: UUID) throws {
+    guard let rule = rules.first(where: { $0.id == id }) else { return }
+    guard !rule.isSystem else { throw FakeRuleStoreError.systemRuleCannotBeDeleted }
     rules.removeAll { $0.id == id }
   }
 

@@ -266,4 +266,128 @@ final class RulePriorityTests: XCTestCase {
   private func priorities(in context: ModelContext) -> [Int] {
     ((try? context.fetch(FetchDescriptor<Rule>())) ?? []).map(\.priority)
   }
+
+  // MARK: - System rules, and turning a rule off (M2)
+
+  /// A seeded rule refuses to be deleted, and is still there afterwards.
+  ///
+  /// The second half is the half worth asserting. A `delete` that threw *after*
+  /// removing the row, or that removed it and threw on `save`, would satisfy
+  /// "it throws" and still lose the rule.
+  func testASystemRuleRefusesToBeDeletedAndSurvivesTheAttempt() throws {
+    let (store, context) = try makeStore()
+    let rule = Rule(pattern: "*BLINKIT*", categoryID: UUID(), priority: 0, isSystem: true)
+    context.insert(rule)
+    try context.save()
+
+    XCTAssertThrowsError(try store.delete(rule.id)) { error in
+      XCTAssertEqual(error as? RuleStoreError, .systemRuleCannotBeDeleted)
+    }
+
+    let survivors = try context.fetch(FetchDescriptor<Rule>())
+    XCTAssertEqual(survivors.map(\.id), [rule.id], "the row must still be there")
+  }
+
+  /// The control. Without it, a `delete` that threw for *every* rule would pass
+  /// the test above.
+  func testARuleTheUserWroteStillDeletes() throws {
+    let (store, context) = try makeStore()
+    let rule = Rule(pattern: "*MYOWNRULE*", categoryID: UUID(), priority: 0)
+    context.insert(rule)
+    try context.save()
+
+    try store.delete(rule.id)
+
+    XCTAssertTrue(try context.fetch(FetchDescriptor<Rule>()).isEmpty)
+  }
+
+  /// Disabling stops the rule firing on the *next* entry, and re-enabling puts
+  /// it back — through the real manual-add path, not through the engine
+  /// directly, because `SwiftDataTransactionStore.add` is where a user's entry
+  /// actually meets the rule set.
+  ///
+  /// The first `add` is not scene-setting. Without it a pattern that never
+  /// matched anything would produce the same "not categorised" result and the
+  /// test would pass while proving nothing.
+  func testADisabledRuleStopsCategorisingNewEntriesAndReEnablingRestoresIt() throws {
+    let (store, context) = try makeStore()
+    let groceries = UUID()
+    let rule = Rule(pattern: "*BLINKIT*", categoryID: groceries, priority: 0)
+    context.insert(rule)
+    try context.save()
+    let transactions = SwiftDataTransactionStore(
+      context: context, coordinator: WriteCoordinator(cache: InsightsCache()))
+
+    let whileOn = try transactions.add(
+      ManualTransactionDraft(amountMinor: 100, descriptionText: "BLINKIT ORDER"))
+    XCTAssertEqual(whileOn.categoryID, groceries, "the rule must match before disabling proves anything")
+    XCTAssertEqual(whileOn.appliedRuleID, rule.id)
+
+    try store.setEnabled(rule.id, false)
+
+    let whileOff = try transactions.add(
+      ManualTransactionDraft(amountMinor: 200, descriptionText: "BLINKIT ORDER"))
+    XCTAssertNil(whileOff.categoryID, "a disabled rule must not categorise a new entry")
+    XCTAssertNil(whileOff.appliedRuleID)
+
+    try store.setEnabled(rule.id, true)
+
+    let backOn = try transactions.add(
+      ManualTransactionDraft(amountMinor: 300, descriptionText: "BLINKIT ORDER"))
+    XCTAssertEqual(backOn.categoryID, groceries, "re-enabling must restore it")
+    XCTAssertEqual(backOn.appliedRuleID, rule.id)
+  }
+
+  /// **Disabling is not a retroactive undo.** The row the rule already
+  /// categorised keeps its category, exactly as it does when the rule is
+  /// deleted — spend must not move between categories as a side effect of a
+  /// toggle.
+  func testDisablingARuleLeavesRowsItAlreadyCategorisedAlone() throws {
+    let (store, context) = try makeStore()
+    let groceries = UUID()
+    let rule = Rule(pattern: "*BLINKIT*", categoryID: groceries, priority: 0)
+    context.insert(rule)
+    try context.save()
+    let transactions = SwiftDataTransactionStore(
+      context: context, coordinator: WriteCoordinator(cache: InsightsCache()))
+
+    let row = try transactions.add(
+      ManualTransactionDraft(amountMinor: 100, descriptionText: "BLINKIT ORDER"))
+    XCTAssertEqual(row.categoryID, groceries)
+
+    try store.setEnabled(rule.id, false)
+
+    XCTAssertEqual(row.categoryID, groceries, "an existing categorisation must survive the toggle")
+    XCTAssertEqual(row.appliedRuleID, rule.id, "and so must its provenance")
+  }
+
+  /// The fake refuses a system rule too. Same reasoning as the front-insertion
+  /// agreement above: a preview stack that deletes what production rejects
+  /// demonstrates behaviour the app does not have.
+  ///
+  /// The two stores throw *different* error types — `NomiPreview` sits below
+  /// `NomiApp` and cannot name `RuleStoreError` — so what is asserted is the
+  /// shared half of the contract: it throws, and the rule is still there.
+  func testFakeRuleStoreRefusesToDeleteASystemRuleTheSameWay() throws {
+    let system = Rule(pattern: "*BLINKIT*", categoryID: UUID(), priority: 0, isSystem: true)
+    let mine = Rule(pattern: "*MYOWNRULE*", categoryID: UUID(), priority: 1)
+    let fake = FakeRuleStore(rules: [system, mine], matchPool: [])
+
+    XCTAssertThrowsError(try fake.delete(system.id))
+    XCTAssertEqual(fake.rules.map(\.id), [system.id, mine.id])
+
+    try fake.delete(mine.id)
+    XCTAssertEqual(fake.rules.map(\.id), [system.id])
+  }
+
+  func testFakeRuleStoreSetEnabledFlipsTheFlag() throws {
+    let rule = Rule(pattern: "*BLINKIT*", categoryID: UUID(), priority: 0)
+    let fake = FakeRuleStore(rules: [rule], matchPool: [])
+
+    try fake.setEnabled(rule.id, false)
+    XCTAssertFalse(try XCTUnwrap(fake.rules.first).isEnabled)
+
+    try fake.setEnabled(rule.id, true)
+    XCTAssertTrue(try XCTUnwrap(fake.rules.first).isEnabled)
+  }
 }

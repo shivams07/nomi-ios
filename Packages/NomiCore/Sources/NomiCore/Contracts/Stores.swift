@@ -22,6 +22,28 @@ public protocol CategoryStore: AnyObject {
 public protocol RuleStore: AnyObject {
   @discardableResult func create(pattern: String, categoryID: UUID) throws -> RuleApplyResult
   @discardableResult func update(_ id: UUID, pattern: String, categoryID: UUID) throws -> RuleApplyResult
+
+  /// Turn a rule off without deleting it, and back on again.
+  ///
+  /// Deliberately not `update`: `update` re-applies across the ledger and
+  /// returns the counts, and disabling is the opposite request — it changes
+  /// what happens on the *next* pass and leaves existing categorisations
+  /// alone, the same policy `delete` holds to. There is nothing to report, so
+  /// there is nothing to return.
+  func setEnabled(_ id: UUID, _ enabled: Bool) throws
+
+  /// Throws when `id` names a system rule — one `DefaultRuleSeed` owns.
+  ///
+  /// The thrown value is the conformer's own. `NomiCore` cannot name a type
+  /// declared in `NomiApp`, so what this contract fixes is *that* it throws,
+  /// not which case: callers surface the message, and none of them branch on
+  /// it.
+  ///
+  /// Deletion is refused rather than allowed-and-reseeded because a deleted id
+  /// is indistinguishable from one that was never seeded — `apply` would
+  /// insert it again on the next launch and the rule would reappear with
+  /// nothing to explain why. `setEnabled(_:false)` is the affordance that
+  /// persists.
   func delete(_ id: UUID) throws
   func reorder(_ orderedIDs: [UUID]) throws
   func preview(pattern: String) throws -> Int
