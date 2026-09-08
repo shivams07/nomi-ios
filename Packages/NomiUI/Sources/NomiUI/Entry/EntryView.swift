@@ -149,7 +149,10 @@ public struct EntryView: View {
   }
 
   private var noteField: some View {
-    TextField("Note (optional)", text: $note)
+    // L4: this field writes `descriptionText`, not `Transaction.note` — the
+    // detail screen's separate annotation — so its label says what it
+    // actually captures rather than implying it's the note.
+    TextField("What was it for? (optional)", text: $note)
       .nomiTextStyle(.body)
       .foregroundStyle(NomiColor.textPrimary)
       .padding(NomiSpacing.sm)

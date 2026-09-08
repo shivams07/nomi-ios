@@ -20,6 +20,23 @@ final class NomiFormattersTests: XCTestCase {
     XCTAssertTrue(text.contains("2025"))
   }
 
+  // MARK: - U18: amountString(minor:currencyCode:)
+
+  func testAmountStringUSDUsesDollarSymbolWithTwoFractionDigits() {
+    XCTAssertEqual(NomiFormatters.amountString(minor: 1299, currencyCode: "USD"), "US$12.99")
+  }
+
+  func testAmountStringJPYHasNoFractionDigits() {
+    let text = NomiFormatters.amountString(minor: 1000, currencyCode: "JPY")
+    XCTAssertFalse(text.contains("."))
+  }
+
+  func testAmountStringINRMatchesTheUnchangedPath() {
+    XCTAssertEqual(
+      NomiFormatters.amountString(minor: 1299, currencyCode: "INR"),
+      NomiFormatters.amountString(minor: 1299))
+  }
+
   private func date(year: Int, month: Int, day: Int) -> Date {
     var components = DateComponents()
     components.year = year

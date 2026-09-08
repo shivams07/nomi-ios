@@ -66,16 +66,24 @@ public struct TransactionRow: View {
     return segments.joined(separator: " · ")
   }
 
-  /// Pure — see `subtitle(categoryName:accountName:vpa:)`. `currencyCode`
-  /// trails the amount when it is not `"INR"` — pre-positioned for U18
-  /// (foreign-currency flagging); every row is INR on `main` today, so
-  /// nothing visible changes yet. `NomiFormatters.amountString` always
-  /// renders `₹` regardless of code — that mismatch is U18's to fix, not
-  /// this unit's.
+  /// Pure — see `subtitle(categoryName:accountName:vpa:)`. U18: the amount
+  /// goes through `NomiFormatters.amountString(minor:currencyCode:)`, whose
+  /// currency symbol already carries the code — a USD row reads "US$12.99",
+  /// never "₹12.99 USD".
   static func amountText(minor: Int, direction: Direction, currencyCode: String = "INR") -> String {
     let sign = direction == .credit ? "+" : ""
-    let amount = sign + NomiFormatters.amountString(minor: minor)
-    return currencyCode == "INR" ? amount : "\(amount) \(currencyCode)"
+    return sign + NomiFormatters.amountString(minor: minor, currencyCode: currencyCode)
+  }
+
+  /// Pure — see `subtitle(categoryName:accountName:vpa:)`. Fallback order for
+  /// a row's title: merchant, then a non-blank description, then the
+  /// category name, then "Manual entry" — the same fallback order W1-13
+  /// (parallel unit) gives `topMerchants`'s label for a blank description.
+  static func title(merchantName: String?, descriptionText: String, categoryName: String?) -> String {
+    if let merchantName, !merchantName.isEmpty { return merchantName }
+    if !descriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return descriptionText }
+    if let categoryName, !categoryName.isEmpty { return categoryName }
+    return "Manual entry"
   }
 
   public var body: some View {
@@ -109,7 +117,9 @@ public struct TransactionRow: View {
   private var header: some View {
     VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
       HStack(spacing: NomiSpacing.xxs) {
-        Text(transaction.merchantName ?? transaction.descriptionText)
+        Text(
+          Self.title(merchantName: transaction.merchantName, descriptionText: transaction.descriptionText, categoryName: categoryName)
+        )
           .nomiTextStyle(.body)
           .foregroundStyle(NomiColor.textPrimary)
           .fixedSize(horizontal: false, vertical: true)
@@ -263,6 +273,73 @@ private enum TransactionRowUPIFixtures {
     transaction: TransactionRowUPIFixtures.p2p,
     categoryName: nil,
     accountName: "HDFC •• 4471"
+  )
+  .padding()
+  .background(NomiColor.surfaceRow)
+  .preferredColorScheme(.dark)
+}
+
+/// U18/M4 fixtures — a non-INR row for the currency formatter and a blank
+/// merchant/description/category row for the title fallback's terminal case.
+/// Neither exists in `PreviewData.transactions`, same convention as
+/// `TransactionRowUPIFixtures` above.
+private enum TransactionRowCurrencyFixtures {
+  static let usd: NomiCore.Transaction = {
+    let date = Date(timeIntervalSinceNow: -4 * 86400)
+    let description = "AMAZON.COM AMZN.COM/BILL WA"
+    let normalized = normalizeDescription(description)
+    return NomiCore.Transaction(
+      id: UUID(uuidString: "00000000-0000-0000-0000-000000000801")!,
+      date: date,
+      descriptionText: description,
+      merchantName: "Amazon",
+      normalizedDescription: normalized,
+      amountMinor: 1299,
+      currencyCode: "USD",
+      directionRaw: Direction.debit.rawValue,
+      sourceRaw: IngestSource.email.rawValue,
+      dedupeKey: makeDedupeKey(
+        date: date, amountMinor: 1299, directionRaw: Direction.debit.rawValue, normalizedDescription: normalized
+      ),
+      createdAt: date,
+      updatedAt: date
+    )
+  }()
+
+  static let blankTitleManual: NomiCore.Transaction = {
+    let date = Date(timeIntervalSinceNow: -5 * 86400)
+    return NomiCore.Transaction(
+      id: UUID(uuidString: "00000000-0000-0000-0000-000000000802")!,
+      date: date,
+      descriptionText: "",
+      amountMinor: 500_00,
+      directionRaw: Direction.debit.rawValue,
+      sourceRaw: IngestSource.manual.rawValue,
+      dedupeKey: "manual-blank-title-preview",
+      createdAt: date,
+      updatedAt: date
+    )
+  }()
+}
+
+#Preview("USD row, dark") {
+  TransactionRow(
+    transaction: TransactionRowCurrencyFixtures.usd,
+    categoryName: "Shopping",
+    accountName: "HDFC •• 4471",
+    categorySymbolName: "cart",
+    categoryPaletteSlot: 1
+  )
+  .padding()
+  .background(NomiColor.surfaceRow)
+  .preferredColorScheme(.dark)
+}
+
+#Preview("Blank-title manual row, dark") {
+  TransactionRow(
+    transaction: TransactionRowCurrencyFixtures.blankTitleManual,
+    categoryName: nil,
+    accountName: nil
   )
   .padding()
   .background(NomiColor.surfaceRow)

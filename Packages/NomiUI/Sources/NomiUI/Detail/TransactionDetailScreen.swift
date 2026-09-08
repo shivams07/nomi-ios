@@ -1,3 +1,4 @@
+import Foundation
 import NomiCore
 import NomiPreview
 import SwiftData
@@ -69,6 +70,20 @@ public struct TransactionDetailScreen: View {
 
   private var editedAmountMinor: Int { EntryAmount.minorUnits(from: amountText) }
   private var canSaveEdit: Bool { EntrySaveGate.isEnabled(amountMinor: editedAmountMinor) }
+
+  /// U18: the edit field's leading glyph is the row's own currency symbol,
+  /// not a hardcoded "₹" — a USD row edits in `$`, not rupees. `en_IN` stays
+  /// the locale (same reasoning as `NomiFormatters.amountString`); only the
+  /// symbol is read off the formatter, the amount text field carries the
+  /// digits.
+  private var currencySymbol: String {
+    guard let currencyCode = transaction?.currencyCode, currencyCode != "INR" else { return "₹" }
+    let formatter = NumberFormatter()
+    formatter.locale = Locale(identifier: "en_IN")
+    formatter.numberStyle = .currency
+    formatter.currencyCode = currencyCode
+    return formatter.currencySymbol
+  }
 
   public var body: some View {
     Group {
@@ -216,7 +231,7 @@ public struct TransactionDetailScreen: View {
   private var editSection: some View {
     Section("Edit") {
       HStack(spacing: NomiSpacing.xxs) {
-        Text("₹").foregroundStyle(NomiColor.textPrimary)
+        Text(currencySymbol).foregroundStyle(NomiColor.textPrimary)
         TextField("0", text: $amountText)
           #if os(iOS)
           .keyboardType(.decimalPad)
@@ -421,6 +436,49 @@ private enum TransactionDetailPreviewFixtures {
       note: "Split with Riya"
     )
   }()
+}
+
+extension TransactionDetailPreviewFixtures {
+  /// U18: a foreign-currency row, for the "detail with a USD edit field"
+  /// done-when — `PreviewData.transactions` has no non-INR fixture.
+  static let usd: NomiCore.Transaction = {
+    let date = Date(timeIntervalSinceNow: -2 * 86400)
+    let description = "AMAZON.COM AMZN.COM/BILL WA"
+    let normalized = normalizeDescription(description)
+    return NomiCore.Transaction(
+      id: UUID(uuidString: "00000000-0000-0000-0000-000000000603")!,
+      date: date,
+      descriptionText: description,
+      merchantName: "Amazon",
+      normalizedDescription: normalized,
+      amountMinor: 1299,
+      currencyCode: "USD",
+      directionRaw: Direction.debit.rawValue,
+      accountID: PreviewData.accounts[0].id,
+      sourceRaw: IngestSource.email.rawValue,
+      sourceRefs: [SourceRef(source: .email, externalID: UUID().uuidString, capturedAt: date)],
+      dedupeKey: makeDedupeKey(
+        date: date, amountMinor: 1299, directionRaw: Direction.debit.rawValue, normalizedDescription: normalized
+      ),
+      createdAt: date,
+      updatedAt: date
+    )
+  }()
+}
+
+#Preview("Transaction detail — USD edit field, dark") {
+  let transactions = PreviewData.transactions + [TransactionDetailPreviewFixtures.usd]
+  NavigationStack {
+    TransactionDetailScreen(
+      transactionID: TransactionDetailPreviewFixtures.usd.id,
+      transactionStore: FakeTransactionStore(transactions: transactions),
+      editor: FakeTransactionEditor(transactions: transactions),
+      categoryStore: FakeCategoryStore(),
+      accountStore: FakeAccountStore()
+    )
+  }
+  .modelContainer(LedgerPreviewSupport.makeContainer(transactions: transactions))
+  .preferredColorScheme(.dark)
 }
 
 #Preview("Transaction detail — flagged email row, dark") {

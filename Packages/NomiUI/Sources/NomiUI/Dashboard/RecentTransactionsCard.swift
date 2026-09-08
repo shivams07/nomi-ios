@@ -67,14 +67,16 @@ public struct RecentTransactionsCard: View {
           .foregroundStyle(NomiColor.textTertiary)
       }
       Spacer(minLength: NomiSpacing.xs)
-      Text(Self.amountText(minor: transaction.amountMinor, direction: transaction.direction))
+      Text(
+        Self.amountText(minor: transaction.amountMinor, direction: transaction.direction, currencyCode: transaction.currencyCode)
+      )
         .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 14))
         .foregroundStyle(transaction.direction == .credit ? NomiColor.creditText : NomiColor.debitText)
     }
   }
 
-  static func amountText(minor: Int, direction: Direction) -> String {
-    (direction == .credit ? "+" : "") + NomiFormatters.amountString(minor: minor)
+  static func amountText(minor: Int, direction: Direction, currencyCode: String = "INR") -> String {
+    (direction == .credit ? "+" : "") + NomiFormatters.amountString(minor: minor, currencyCode: currencyCode)
   }
 }
 
