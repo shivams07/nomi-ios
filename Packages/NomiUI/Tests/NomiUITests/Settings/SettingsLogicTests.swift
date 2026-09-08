@@ -8,6 +8,7 @@ private actor SpyMailConnectionService: MailConnectionService {
   nonisolated let backfillProgress: AsyncStream<BackfillProgress>
 
   private(set) var calledMethods: [String] = []
+  private(set) var backfillMonths: [Int] = []
 
   init() {
     state = AsyncStream { _ in }
@@ -31,10 +32,12 @@ private actor SpyMailConnectionService: MailConnectionService {
   @discardableResult
   func startBackfill(months: Int) async throws -> SyncSummary {
     calledMethods.append("startBackfill")
+    backfillMonths.append(months)
     return SyncSummary(scanned: 180, created: 12, merged: 0, flagged: 2, packMatched: 10, heuristicMatched: 2, unmatchedSenders: [])
   }
 
   func recordedMethods() -> [String] { calledMethods }
+  func recordedBackfillMonths() -> [Int] { backfillMonths }
 }
 
 final class SettingsLogicTests: XCTestCase {
@@ -74,6 +77,29 @@ final class SettingsLogicTests: XCTestCase {
     let spy = SpyMailConnectionService()
     let summary = try await SettingsActions.rescan(using: spy)
     XCTAssertEqual(summary.scanned, 5)
+  }
+
+  // MARK: - M7: "Scan last 6 months"
+
+  func testScanRecentCallsStartBackfillWithSixMonthsOnly() async throws {
+    let spy = SpyMailConnectionService()
+    _ = try await SettingsActions.scanRecent(using: spy)
+    let calls = await spy.recordedMethods()
+    XCTAssertEqual(calls, ["startBackfill"])
+  }
+
+  func testScanRecentPassesSixMonths() async throws {
+    let spy = SpyMailConnectionService()
+    _ = try await SettingsActions.scanRecent(using: spy)
+    let months = await spy.recordedBackfillMonths()
+    XCTAssertEqual(months, [6])
+  }
+
+  func testScanRecentReturnsTheBackfillSummaryRatherThanDiscardingIt() async throws {
+    let spy = SpyMailConnectionService()
+    let summary = try await SettingsActions.scanRecent(using: spy)
+    XCTAssertEqual(summary.scanned, 180)
+    XCTAssertEqual(summary.created, 12)
   }
 
   func testUnmatchedSenderRowsNamesDomainAndCount() {

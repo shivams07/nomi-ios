@@ -84,6 +84,14 @@ enum SettingsActions {
   static func rescan(using service: MailConnectionService) async throws -> SyncSummary {
     try await service.syncNow()
   }
+
+  /// M7: "Scan last 6 months" — a manual backfill trigger, distinct from
+  /// Force Re-scan's incremental `syncNow()`. Six months is fixed, not user
+  /// configurable, the same window `BackfillScreen`'s onboarding scan offers.
+  @discardableResult
+  static func scanRecent(using service: MailConnectionService) async throws -> SyncSummary {
+    try await service.startBackfill(months: 6)
+  }
 }
 
 /// The unmatched-sender rows shown after a manual re-scan (§2.5.1,
