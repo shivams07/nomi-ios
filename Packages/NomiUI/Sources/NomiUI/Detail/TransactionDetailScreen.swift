@@ -72,16 +72,16 @@ public struct TransactionDetailScreen: View {
   private var canSaveEdit: Bool { EntrySaveGate.isEnabled(amountMinor: editedAmountMinor) }
 
   /// U18: the edit field's leading glyph is the row's own currency symbol,
-  /// not a hardcoded "₹" — a USD row edits in `$`, not rupees. `en_IN` stays
-  /// the locale (same reasoning as `NomiFormatters.amountString`); only the
-  /// symbol is read off the formatter, the amount text field carries the
-  /// digits.
+  /// not a hardcoded "₹" — a USD row edits in `$`, not rupees. Locale
+  /// carries the currency (`en_IN@currency=USD`), same reasoning and same
+  /// fix as `NomiFormatters.amountString(minor:currencyCode:)` — a
+  /// separately-assigned `currencyCode` on an `en_IN` formatter doesn't
+  /// reliably recompute the symbol.
   private var currencySymbol: String {
     guard let currencyCode = transaction?.currencyCode, currencyCode != "INR" else { return "₹" }
     let formatter = NumberFormatter()
-    formatter.locale = Locale(identifier: "en_IN")
     formatter.numberStyle = .currency
-    formatter.currencyCode = currencyCode
+    formatter.locale = Locale(identifier: "en_IN@currency=\(currencyCode)")
     return formatter.currencySymbol
   }
 
