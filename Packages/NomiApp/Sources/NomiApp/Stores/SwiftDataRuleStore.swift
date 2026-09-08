@@ -3,26 +3,40 @@ import NomiCore
 import NomiIngest
 import SwiftData
 
+/// The error `delete` throws for a rule the seed owns.
+///
+/// Deliberately not a case on `AppStoreError`: that type is declared in
+/// `SwiftDataCategoryStore.swift`, a file this unit does not own, and the two
+/// stores have no reason to share an error namespace beyond the coincidence
+/// that each has a system row. The *shape* is copied on purpose —
+/// `AppStoreError.systemCategoryCannotBeDeleted` is the precedent, down to the
+/// backstop-rather-than-the-path role.
+public enum RuleStoreError: Error, Sendable, Equatable {
+  /// A seeded rule. `RulesScreen` disables deletion for a system row and says
+  /// so in its own copy, so reaching this throw means something bypassed the
+  /// list — it is the store-side backstop, not the user-facing path.
+  case systemRuleCannotBeDeleted
+}
+
 /// The real `RuleStore`.
 ///
 /// `create` and `update` are retroactive — the design's "on create or edit,
 /// re-apply across the whole ledger where `categorySource != .manual`", which is
 /// what makes a new rule tidy up history without a re-import — and they must
-/// return the counts synchronously, because `RuleEditorSheet` shows them.
-/// `IngestPipeline.reapplyRules()` does exactly this pass and is `async`, so it
-/// cannot be reached from a `@MainActor` protocol method that returns a value.
+/// return the counts synchronously, because `RuleEditorSheet` shows them. A
+/// `@MainActor` protocol method that returns a value cannot await, so the pass
+/// is driven here rather than handed to the ingest pipeline.
 ///
-/// **The pass is therefore driven here, but the semantics are not
-/// reimplemented.** Every decision goes through `RuleEngine` — the same public
-/// type, the same `firstMatch` / `apply` calls, in the same order the pipeline
-/// makes them. What is duplicated is the loop; what would have been dangerous to
-/// duplicate, precedence and provenance, is shared.
+/// **The pass is driven here, but the semantics are not reimplemented.** Every
+/// decision goes through `RuleEngine` — the same public type, the same
+/// `firstMatch` / `apply` calls, in the same order the ingest pass makes them.
+/// What is duplicated is the loop; what would have been dangerous to duplicate,
+/// precedence and provenance, is shared.
 ///
 /// The residual is a race, not a divergence: a mail sync committing through the
 /// pipeline's context while this pass runs on the main context can have one row
-/// written twice, last writer winning. The next rule edit or `reapplyRules()`
-/// corrects it, and neither ordering produces a wrong *category* — only a
-/// briefly stale one.
+/// written twice, last writer winning. The next rule edit corrects it, and
+/// neither ordering produces a wrong *category* — only a briefly stale one.
 @MainActor
 public final class SwiftDataRuleStore: RuleStore {
   private let context: ModelContext
@@ -84,16 +98,25 @@ public final class SwiftDataRuleStore: RuleStore {
     return try reapply()
   }
 
-  /// Deleting a rule re-evaluates nothing — `IngestPipeline.ruleDeleted`'s rule,
-  /// held to here. `appliedRuleID` is cleared where it pointed at this rule;
-  /// `categoryID` and `categorySource` are left exactly as they are.
+  /// Deleting a rule re-evaluates nothing. `appliedRuleID` is cleared where it
+  /// pointed at this rule; `categoryID` and `categorySource` are left exactly
+  /// as they are.
   ///
   /// That looks like an omission and is the opposite: a row categorised by a
   /// rule the user has now deleted should keep its category. Re-running the
   /// remaining rules over it would silently move spend between categories as a
   /// side effect of tidying a rule list.
+  ///
+  /// **A seeded rule cannot be deleted at all.** `DefaultRuleSeed.apply` runs
+  /// on every launch and is idempotent by id, so a deleted seed row is
+  /// indistinguishable from one that was never seeded and comes straight back
+  /// — the delete would appear to work, survive one relaunch, and undo itself.
+  /// Refusing is honest where succeeding is not. `setEnabled(_:false)` is the
+  /// affordance that actually persists, and it is what the list offers instead.
   public func delete(_ id: UUID) throws {
     guard let rule = try rule(id: id) else { return }
+    guard !rule.isSystem else { throw RuleStoreError.systemRuleCannotBeDeleted }
+
     let target: UUID? = id
     let timestamp = now()
 
@@ -105,6 +128,31 @@ public final class SwiftDataRuleStore: RuleStore {
     }
 
     context.delete(rule)
+    try context.save()
+    coordinator.didWrite()
+  }
+
+  /// Turn a rule off, or back on. No reapply, deliberately.
+  ///
+  /// `RuleEngine.firstMatch` skips a rule whose `isEnabled` is false, and
+  /// `ruleSnapshots()` does not even fetch one, so disabling takes effect on
+  /// the next pass — the next import, the next manual entry, the next rule
+  /// edit. What it does *not* do is revisit rows this rule already categorised.
+  ///
+  /// That is the same policy `delete` holds to, and for the same reason: a row
+  /// filed under Groceries should not silently move because the user switched
+  /// a rule off to stop it firing on *future* rows. Re-running the remaining
+  /// rules would move spend between categories as a side effect of a toggle,
+  /// which is the behaviour `delete`'s note above calls out by name.
+  ///
+  /// It still `didWrite()`s. Nothing about the ledger changed, but the rule
+  /// list did, and `RulesScreen` renders `isEnabled` — without it the toggle
+  /// would not visibly move on a store the screen observes through the
+  /// coordinator.
+  public func setEnabled(_ id: UUID, _ enabled: Bool) throws {
+    guard let rule = try rule(id: id) else { return }
+
+    rule.isEnabled = enabled
     try context.save()
     coordinator.didWrite()
   }

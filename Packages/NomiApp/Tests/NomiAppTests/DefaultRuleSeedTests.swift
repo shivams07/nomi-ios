@@ -1,6 +1,7 @@
 import Foundation
 import NomiCore
 import NomiIngest
+import SwiftData
 import XCTest
 
 @testable import NomiApp
@@ -192,5 +193,85 @@ final class DefaultRuleSeedTests: XCTestCase {
     let match = RuleEngine.firstMatch(
       normalizedDescription: normalizeDescription("IMPS/P2A/BHARAT XYZ"), in: rules)
     XCTAssertNil(match, "a narration nothing describes must stay uncategorised")
+  }
+
+  // MARK: - The seed owns its rules (M2)
+
+  /// Every row `apply` inserts is a system row. The specs themselves carry no
+  /// `isSystem` — the flag is not content, it is a statement about where the
+  /// row came from — so this has to be asserted against what actually landed in
+  /// the store rather than against `specs`.
+  @MainActor
+  func testEveryRuleTheSeedInsertsIsMarkedSystem() throws {
+    let context = try makeContext()
+
+    try DefaultRuleSeed.apply(in: context)
+
+    let rules = try context.fetch(FetchDescriptor<Rule>())
+    XCTAssertEqual(rules.count, specs.count, "the seed is the fixture here")
+    XCTAssertTrue(rules.allSatisfy(\.isSystem), "a seeded rule the user can delete comes straight back")
+  }
+
+  /// The backfill, which is the case on Shivam's device and on any install that
+  /// ran a build between the seed shipping and the flag shipping: the rows are
+  /// already there, with the seed's ids, and `isSystem` defaulted to `false`.
+  ///
+  /// Both halves matter. It must flip the existing row — otherwise that install
+  /// keeps a deletable seed rule forever — and it must not insert a second row
+  /// for an id it already holds, which is the bug the whole id-stability note
+  /// on `DefaultRuleSeed` exists to prevent.
+  @MainActor
+  func testApplyFlipsASeedRowThatPredatesTheFlagWithoutInsertingItTwice() throws {
+    let context = try makeContext()
+    let spec = try XCTUnwrap(specs.first)
+    context.insert(
+      Rule(
+        id: spec.id, pattern: spec.pattern, categoryID: spec.categoryID, priority: spec.priority))
+    try context.save()
+
+    try DefaultRuleSeed.apply(in: context)
+
+    let rules = try context.fetch(FetchDescriptor<Rule>())
+    XCTAssertEqual(rules.count, specs.count, "the pre-existing row must be flipped, not duplicated")
+    XCTAssertEqual(rules.filter { $0.id == spec.id }.count, 1)
+    XCTAssertTrue(try XCTUnwrap(rules.first { $0.id == spec.id }).isSystem)
+  }
+
+  /// The backfill is keyed on the seed's ids, so a rule the user wrote is not
+  /// swept up by it. Without this, "set `isSystem` on existing rows" could be
+  /// implemented as "set it on all of them" and every test above would pass
+  /// while the user lost the ability to delete their own rules.
+  @MainActor
+  func testTheBackfillDoesNotClaimARuleTheUserWrote() throws {
+    let context = try makeContext()
+    let mine = Rule(pattern: "*MYOWNRULE*", categoryID: UUID(), priority: -1)
+    context.insert(mine)
+    try context.save()
+
+    try DefaultRuleSeed.apply(in: context)
+
+    XCTAssertFalse(
+      try XCTUnwrap(context.fetch(FetchDescriptor<Rule>()).first { $0.id == mine.id }).isSystem,
+      "only ids the seed owns are claimed")
+  }
+
+  /// A fresh in-memory container per test. Same reasoning as
+  /// `RulePriorityTests.makeStore`: these assert on what a *particular* starting
+  /// store produces, so one test's rows leaking into the next would make them
+  /// meaningless. XCTest rather than swift-testing for the same reason too — a
+  /// `ModelContainer` under `swift test` is fine here and traps there, see
+  /// `InMemoryModelContainer`.
+  @MainActor
+  private func makeContext() throws -> ModelContext {
+    let schema = Schema([
+      Transaction.self, NomiCore.Category.self, Budget.self, BudgetAlertLog.self,
+      Rule.self, Account.self, AccountBinding.self, ColumnMappingRecord.self,
+    ])
+    let container = try ModelContainer(
+      for: schema,
+      configurations: [
+        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+      ])
+    return container.mainContext
   }
 }

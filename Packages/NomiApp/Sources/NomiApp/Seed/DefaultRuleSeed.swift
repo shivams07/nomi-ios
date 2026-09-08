@@ -85,17 +85,22 @@ public enum DefaultRuleSeed {
     UUID(uuidString: String(format: "00000000-0000-0000-0000-0000000020%02d", ordinal))!
   }
 
-  /// Seeded rules sit far above anything a hand-ordered rule list produces —
-  /// `reorder` writes priorities as array indices, so a user's list occupies
-  /// 0..<n.
+  /// A high base, so that on a fresh install the seed occupies a band of its
+  /// own rather than interleaving with whatever the user writes next.
   ///
-  /// **This does not yet achieve what it is for.** `SwiftDataRuleStore.create`
-  /// gives a new rule `(every existing priority).max() + 1`, which with these
-  /// present is `priorityBase + specs.count`, so a user's first rule lands
-  /// *below* the whole seed and loses to it. No value here fixes that — it is computed
-  /// relative to whatever the seed is, and `Int.max` would make `max + 1`
-  /// overflow. The fix is one line in `create`, in a file this unit does not
-  /// own; escalated with the PR.
+  /// **It is not what keeps a user's own rules on top, and the note that used
+  /// to sit here claimed it was.** `SwiftDataRuleStore.create` front-inserts at
+  /// `(every existing priority).min() - 1`, so the first rule a user writes
+  /// lands at 999_999 and each one after that goes lower still — ahead of all
+  /// of these whatever this constant happens to be. That is the guarantee, and
+  /// it is the one that survives `reorder`, which rewrites `priority` to the
+  /// array index across *every* rule, seeded rows included, flattening this
+  /// band to 0..<n the first time anyone drags a row in the list.
+  ///
+  /// So the base buys ordering on a fresh install and nothing after the first
+  /// reorder. It is kept because "the seed starts below the user's own rules"
+  /// is still the right starting state, and changing the number now would
+  /// renumber the rules on every existing install to no behavioural end.
   public static let priorityBase = 1_000_000
 
   /// Merchant names. Narrow, unambiguous, and first.
@@ -192,15 +197,26 @@ extension DefaultRuleSeed {
   /// Inserts whatever is missing. Safe to call on every launch, and it is called
   /// on every launch — idempotent by id, exactly like the category seed.
   ///
-  /// It does **not** rewrite existing rows, and that matters more here than it
-  /// does for categories: a user who edited a seeded rule's pattern, retargeted
-  /// it at another category, disabled it, or dragged it up their list keeps all
-  /// of that. Re-seeding over them would undo the user's own work on every
-  /// launch.
+  /// It does **not** rewrite an existing row's content, and that matters more
+  /// here than it does for categories: a user who edited a seeded rule's
+  /// pattern, retargeted it at another category, disabled it, or dragged it up
+  /// their list keeps all of that. Re-seeding over them would undo the user's
+  /// own work on every launch.
+  ///
+  /// **The one exception is `isSystem`, and it is a backfill rather than a
+  /// rewrite.** The flag shipped after the seed did, so every rule seeded by a
+  /// build before it reads back as `false` — which would leave a seeded rule
+  /// deletable on exactly the installs that already have one, and `apply` would
+  /// then resurrect it on the next launch. `isSystem` is not a field the user
+  /// can edit, so setting it cannot overwrite a decision anyone made; the loop
+  /// below only ever raises `false` to `true`, only for ids the seed owns, and
+  /// is a no-op on the second launch.
   ///
   /// A rule the user *deleted* comes back, because a deleted id is
   /// indistinguishable from one that was never seeded. Tracking deletions would
-  /// need a tombstone this schema does not have; noted rather than hidden.
+  /// need a tombstone this schema does not have; noted rather than hidden — and
+  /// it is the reason `SwiftDataRuleStore.delete` now refuses outright for a
+  /// system rule instead of letting the delete undo itself a launch later.
   @MainActor
   static func apply(in context: ModelContext) throws {
     let existing = try context.fetch(FetchDescriptor<Rule>())
@@ -212,9 +228,15 @@ extension DefaultRuleSeed {
           id: spec.id,
           pattern: spec.pattern,
           categoryID: spec.categoryID,
-          priority: spec.priority
+          priority: spec.priority,
+          isSystem: true
         )
       )
+    }
+
+    let seedIDs = Set(specs.map(\.id))
+    for rule in existing where seedIDs.contains(rule.id) && !rule.isSystem {
+      rule.isSystem = true
     }
 
     if context.hasChanges {

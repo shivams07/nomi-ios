@@ -131,6 +131,7 @@ private final class AlwaysFailingPreviewRuleStore: RuleStore {
     RuleApplyResult(matched: 0, recategorized: 0)
   }
 
+  func setEnabled(_ id: UUID, _ enabled: Bool) throws {}
   func delete(_ id: UUID) throws {}
   func reorder(_ orderedIDs: [UUID]) throws {}
   func preview(pattern: String) throws -> Int { throw RuleEditorMatchCountFailure() }

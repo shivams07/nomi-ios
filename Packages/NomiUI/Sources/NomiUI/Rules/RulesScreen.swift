@@ -129,6 +129,7 @@ private final class AlwaysFailingRuleStore: RuleStore {
     RuleApplyResult(matched: 0, recategorized: 0)
   }
 
+  func setEnabled(_ id: UUID, _ enabled: Bool) throws { throw RulesScreenActionFailure() }
   func delete(_ id: UUID) throws { throw RulesScreenActionFailure() }
   func reorder(_ orderedIDs: [UUID]) throws { throw RulesScreenActionFailure() }
   func preview(pattern: String) throws -> Int { 0 }
