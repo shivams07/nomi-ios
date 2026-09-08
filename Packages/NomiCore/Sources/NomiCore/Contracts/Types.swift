@@ -6,19 +6,22 @@ public struct TransactionFilter: Sendable, Equatable {
   public var dateRange: ClosedRange<Date>?
   public var uncategorizedOnly: Bool = false
   public var searchText: String = ""
+  public var needsReviewOnly: Bool = false
 
   public init(
     categoryIDs: Set<UUID> = [],
     accountIDs: Set<UUID> = [],
     dateRange: ClosedRange<Date>? = nil,
     uncategorizedOnly: Bool = false,
-    searchText: String = ""
+    searchText: String = "",
+    needsReviewOnly: Bool = false
   ) {
     self.categoryIDs = categoryIDs
     self.accountIDs = accountIDs
     self.dateRange = dateRange
     self.uncategorizedOnly = uncategorizedOnly
     self.searchText = searchText
+    self.needsReviewOnly = needsReviewOnly
   }
 }
 

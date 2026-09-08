@@ -55,12 +55,14 @@ public struct LedgerScreen: View {
     transactionStore: TransactionStore,
     categoryStore: CategoryStore,
     accountStore: AccountStore,
-    editor: TransactionEditing
+    editor: TransactionEditing,
+    initialChip: LedgerChipSelection = .all
   ) {
     self.transactionStore = transactionStore
     self.categoryStore = categoryStore
     self.accountStore = accountStore
     self.editor = editor
+    self._selection = State(initialValue: initialChip)
   }
 
   private var since: Date {
@@ -79,6 +81,8 @@ public struct LedgerScreen: View {
       return TransactionFilter(categoryIDs: [id], searchText: searchText)
     case .uncategorized:
       return TransactionFilter(uncategorizedOnly: true, searchText: searchText)
+    case .needsReview:
+      return TransactionFilter(searchText: searchText, needsReviewOnly: true)
     }
   }
 
@@ -172,6 +176,12 @@ public struct LedgerScreen: View {
       HStack(spacing: NomiSpacing.xs) {
         chip(label: "All", systemImage: nil, tint: nil, isSelected: selection == .all) {
           selection = .all
+        }
+        chip(
+          label: "Needs review", systemImage: "exclamationmark.circle", tint: NomiColor.debitText,
+          isSelected: selection == .needsReview
+        ) {
+          selection = .needsReview
         }
         ForEach(categories) { category in
           chip(
@@ -507,6 +517,34 @@ private struct LedgerTransactionList: View {
       Text("Could not delete this transaction.")
     }
     .preferredColorScheme(.dark)
+}
+
+/// W1-6: `PreviewData.transactions` includes at least one `needsReview: true`
+/// row, so this chip has something to show without a bespoke fixture.
+#Preview("Ledger — needs review chip selected, dark") {
+  NomiTabShell {
+    NavigationStack {
+      LedgerScreen(
+        transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore(),
+        accountStore: FakeAccountStore(), editor: FakeTransactionEditor(), initialChip: .needsReview
+      )
+    }
+  }
+  .modelContainer(LedgerPreviewSupport.makeContainer())
+  .preferredColorScheme(.dark)
+}
+
+#Preview("Ledger — needs review chip, empty state, dark") {
+  NomiTabShell {
+    NavigationStack {
+      LedgerScreen(
+        transactionStore: FakeTransactionStore(transactions: []), categoryStore: FakeCategoryStore(),
+        accountStore: FakeAccountStore(), editor: FakeTransactionEditor(transactions: []), initialChip: .needsReview
+      )
+    }
+  }
+  .modelContainer(LedgerPreviewSupport.makeContainer(transactions: []))
+  .preferredColorScheme(.dark)
 }
 
 #Preview("Ledger — accessibility 3, dark") {

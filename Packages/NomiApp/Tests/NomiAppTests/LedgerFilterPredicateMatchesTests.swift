@@ -65,6 +65,28 @@ final class LedgerFilterPredicateMatchesTests: XCTestCase {
     XCTAssertFalse(LedgerFilterPredicate.matches(unrelated, filter: filter))
   }
 
+  func testNeedsReviewOnlyAdmitsOnlyFlaggedRows() throws {
+    let context = try makeContext()
+    let flagged = insert(Transaction(needsReview: true), into: context)
+    let notFlagged = insert(Transaction(needsReview: false), into: context)
+    let filter = TransactionFilter(needsReviewOnly: true)
+
+    XCTAssertTrue(LedgerFilterPredicate.matches(flagged, filter: filter))
+    XCTAssertFalse(LedgerFilterPredicate.matches(notFlagged, filter: filter))
+  }
+
+  func testSearchTextMatchesNoteEvenWhenDescriptionDoesNot() throws {
+    let context = try makeContext()
+    let matchesByNote = insert(
+      Transaction(descriptionText: "POS purchase", note: "Split with Riya"), into: context)
+    let unrelated = insert(
+      Transaction(descriptionText: "POS purchase", note: "Groceries"), into: context)
+    let filter = TransactionFilter(searchText: "Riya")
+
+    XCTAssertTrue(LedgerFilterPredicate.matches(matchesByNote, filter: filter))
+    XCTAssertFalse(LedgerFilterPredicate.matches(unrelated, filter: filter))
+  }
+
   func testCategoryAndSearchBothApplyWhenBothAreSet() throws {
     let context = try makeContext()
     let categoryID = UUID()
