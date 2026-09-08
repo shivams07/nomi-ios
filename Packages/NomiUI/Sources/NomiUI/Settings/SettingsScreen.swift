@@ -22,9 +22,12 @@ public struct SettingsScreen: View {
   @State private var connectionState: MailConnectionState = .disconnected
   @State private var permissionDenied = false
   @State private var isRescanning = false
+  @State private var isScanningRecent = false
   @State private var lastSyncSummary: SyncSummary?
   @State private var rescanError: String?
   private let forcedPermissionDenied: Bool?
+
+  @Environment(\.scenePhase) private var scenePhase
 
   /// `storageMode` defaults to `.cloudKit` so every existing call site and
   /// preview compiles unchanged; `RootView` passes the real value.
@@ -116,12 +119,18 @@ public struct SettingsScreen: View {
       }
     }
     .task {
-      if let forcedPermissionDenied {
-        permissionDenied = forcedPermissionDenied
-        return
-      }
-      let settings = await UNUserNotificationCenter.current().notificationSettings()
-      permissionDenied = settings.authorizationStatus == .denied
+      await refreshPermissionStatus()
+    }
+    // L8: permission can change outside the app (iOS Settings) while Nomi is
+    // backgrounded, and this screen's own toggle write is not the only way
+    // authorization changes — re-read it whenever either might have moved,
+    // rather than only once on first appearance.
+    .onChange(of: notificationSettings.budgetAlertsEnabled) { _, _ in
+      Task { await refreshPermissionStatus() }
+    }
+    .onChange(of: scenePhase) { _, newPhase in
+      guard newPhase == .active else { return }
+      Task { await refreshPermissionStatus() }
     }
   }
 
@@ -142,6 +151,15 @@ public struct SettingsScreen: View {
             ProgressView()
           } else {
             Text("Force Re-scan")
+          }
+        }
+        Button {
+          scanRecent()
+        } label: {
+          if isScanningRecent {
+            ProgressView()
+          } else {
+            Text("Scan last 6 months")
           }
         }
         NavigationLink("Manage Connection") {
@@ -229,6 +247,50 @@ public struct SettingsScreen: View {
       }
     }
   }
+
+  /// M7: same shape as `rescan()` — its own loading flag so the two buttons
+  /// don't share a spinner, but the same `lastSyncSummary`/`rescanError`,
+  /// since both feed the same "Not Matched" list and the same failure alert.
+  private func scanRecent() {
+    isScanningRecent = true
+    rescanError = nil
+    Task {
+      defer { isScanningRecent = false }
+      do {
+        lastSyncSummary = try await SettingsActions.scanRecent(using: mailConnectionService)
+      } catch {
+        rescanError = error.localizedDescription
+      }
+    }
+  }
+
+  private func refreshPermissionStatus() async {
+    if let forcedPermissionDenied {
+      permissionDenied = forcedPermissionDenied
+      return
+    }
+    let settings = await UNUserNotificationCenter.current().notificationSettings()
+    permissionDenied = settings.authorizationStatus == .denied
+  }
+}
+
+/// M7 done-when: "mail section with both buttons" — `FakeMailConnectionService`
+/// only reaches `.connected` live, via `connect()`, which a static preview
+/// never calls. `ConnectedFakeMailConnectionService` already exists for
+/// exactly this (`Onboarding/OnboardingPreviewSupport.swift`, internal to
+/// this module, not edited here) and starts already connected.
+#Preview("Settings — mail connected, both scan buttons, dark") {
+  NavigationStack {
+    SettingsScreen(
+      mailConnectionService: ConnectedFakeMailConnectionService(),
+      fileImportService: FakeFileImportService(),
+      categoryStore: FakeCategoryStore(),
+      ruleStore: FakeRuleStore(),
+      notificationSettings: .constant(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9))
+    )
+  }
+  .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
+  .preferredColorScheme(.dark)
 }
 
 #Preview("Settings — alerts on, dark") {
