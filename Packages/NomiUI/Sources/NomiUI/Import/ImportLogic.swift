@@ -1,5 +1,6 @@
 import Foundation
 import NomiCore
+import UniformTypeIdentifiers
 
 /// Named copy for every `ImportError` case — the U7 acceptance criteria asks
 /// for named errors, not a single generic failure message.
@@ -51,6 +52,22 @@ enum SavedMappingKey {
   static func make(from preview: ImportPreview) -> (signature: String, bankLabel: String) {
     (preview.formatSignature, preview.detectedBankLabel ?? preview.formatSignature)
   }
+}
+
+/// M5: the file picker's allow-list. The sniffer decides what the bytes
+/// actually are — a `.csv`-named file full of tab-separated rows still
+/// parses — this only stops the picker from greying out files R7's sniffer
+/// was already written to handle (xls, html) but the picker never offered.
+enum ImportFileTypes {
+  static let allowed: [UTType] = [
+    .commaSeparatedText,
+    .tabSeparatedText,
+    .plainText,
+    .spreadsheet,
+    UTType(filenameExtension: "xlsx") ?? .data,
+    UTType(filenameExtension: "xls") ?? .data,
+    .html,
+  ]
 }
 
 /// Formats the import preview's row-count line, and is the single place that

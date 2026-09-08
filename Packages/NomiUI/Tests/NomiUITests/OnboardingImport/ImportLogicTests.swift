@@ -1,5 +1,6 @@
 import Foundation
 import NomiCore
+import UniformTypeIdentifiers
 import XCTest
 @testable import NomiUI
 
@@ -112,5 +113,17 @@ final class ImportLogicTests: XCTestCase {
       suggestedMapping: nil, headers: [], sampleRows: [], parseableRowCount: 1
     )
     XCTAssertEqual(SavedMappingKey.make(from: preview).bankLabel, "col-sig-3f9a")
+  }
+
+  // MARK: - M5: the picker's allow-list
+
+  func testAllowedFileTypesConformXLSByExtension() {
+    let xls = UTType(filenameExtension: "xls")!
+    XCTAssertTrue(ImportFileTypes.allowed.contains { xls.conforms(to: $0) })
+  }
+
+  func testAllowedFileTypesConformHTMLByExtension() {
+    let html = UTType(filenameExtension: "html")!
+    XCTAssertTrue(ImportFileTypes.allowed.contains { html.conforms(to: $0) })
   }
 }

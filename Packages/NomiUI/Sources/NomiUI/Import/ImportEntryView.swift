@@ -2,7 +2,6 @@ import NomiCore
 import NomiPreview
 import SwiftData
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// State machine for the CSV/XLSX import flow: pick a file, inspect it,
 /// review/adjust the detected column mapping, commit. Reached from Settings'
@@ -46,7 +45,7 @@ public struct ImportEntryView: View {
       .navigationTitle("Import from File")
       .fileImporter(
         isPresented: $isPickerPresented,
-        allowedContentTypes: [.commaSeparatedText, UTType(filenameExtension: "xlsx") ?? .data]
+        allowedContentTypes: ImportFileTypes.allowed
       ) { result in
         switch result {
         case .success(let url):
