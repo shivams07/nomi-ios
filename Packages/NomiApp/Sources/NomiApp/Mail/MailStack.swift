@@ -200,13 +200,15 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   /// U4, so the cost is bandwidth rather than duplicate rows, but it is a
   /// behaviour change and telling the two apart needs a contract this unit does
   /// not have.
-  func startBackfill(months: Int) async throws {
+  @discardableResult
+  func startBackfill(months: Int) async throws -> SyncSummary {
     let wasUnfinished = backfillIsUnfinished
     setUnfinishedBackfill(true)
     do {
-      try await upstream.startBackfill(months: months)
+      let summary = try await upstream.startBackfill(months: months)
       await persistCursor()
       setUnfinishedBackfill(false)
+      return summary
     } catch IMAPTransportError.notConnected {
       // Nothing started, so nothing new to resume — the marker goes back to
       // whatever it was rather than to `false`. Clearing it outright was right

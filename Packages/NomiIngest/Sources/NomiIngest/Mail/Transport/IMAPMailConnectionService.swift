@@ -141,17 +141,19 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
   /// finished its windowed search and knows how many messages there are.
   /// `BackfillBanner` reads a zero total as an empty bar rather than dividing by
   /// it, which is the honest rendering of "still looking".
-  public func startBackfill(months: Int) async throws {
+  @discardableResult
+  public func startBackfill(months: Int) async throws -> SyncSummary {
     let address = try requireConnectedAddress()
     progressContinuation.yield(BackfillProgress(scanned: 0, total: 0, created: 0))
 
     do {
       let continuation = progressContinuation
-      _ = try await engine.backfill(months: months) { tick in
+      let summary = try await engine.backfill(months: months) { tick in
         continuation.yield(tick)
       }
       recordSync(at: now())
       stateContinuation.yield(.connected(address: address, lastSync: currentLastSync()))
+      return summary
     } catch {
       stateContinuation.yield(.failed(mailError(from: error)))
       throw error

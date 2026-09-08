@@ -58,19 +58,16 @@ struct OnboardingFlow: View {
 
   /// "Skip" before anything has happened; "Done" once a backfill is running.
   ///
-  /// **"Done" does not yet mean the work continues.** `BackfillScreen` cancels
-  /// its own task in `.onDisappear`, so tapping this stops the scan the moment
-  /// the screen goes away — the word promises something the app does not do.
-  /// Removing that `onDisappear` is unit C (finding 7) and is not this unit's
-  /// file; the comment is corrected rather than left asserting the outcome we
-  /// want.
+  /// **"Done" now means what it says.** Unit C removed `BackfillScreen`'s
+  /// `.onDisappear` cancel — `BackfillLifecycle` covers the double-start that
+  /// cancel was guarding against — so tapping this dismisses the screen and
+  /// nothing else. The scan carries on, and M-E's `BackfillBanner` is what
+  /// shows it once this screen is gone.
   ///
-  /// What §D1 adds meanwhile is a floor, not the fix: a cancelled backfill
-  /// leaves `MailStack.backfillIsUnfinished` set, so the next time the app is
-  /// backgrounded `AppSyncCoordinator` asks iOS for the processing task and the
-  /// remaining months are eventually fetched. Eventually, at a moment iOS
-  /// chooses, with nothing on screen to say so. Once C lands, leaving the screen
-  /// simply does not stop the scan and this note can go.
+  /// Tapping Cancel on the screen itself is still a real stop, and §D1 is the
+  /// floor under it: the cancelled backfill leaves `MailStack.backfillIsUnfinished`
+  /// set, so the next time the app is backgrounded `AppSyncCoordinator` asks iOS
+  /// for the processing task and the remaining months are eventually fetched.
   private var skipTitle: String {
     switch step {
     case .connectMail: return "Skip"

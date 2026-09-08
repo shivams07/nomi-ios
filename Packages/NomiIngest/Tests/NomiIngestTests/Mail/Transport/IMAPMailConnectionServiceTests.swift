@@ -387,6 +387,33 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
       "the bar must reach its end, or the banner never goes away")
   }
 
+  /// The value `startBackfill` used to throw away. `BackfillScreen` reached for
+  /// a second full `syncNow()` to get a summary to render, which re-fetched and
+  /// re-ingested everything the backfill had just finished doing.
+  ///
+  /// `unmatchedSenders` is the field that makes this more than a plumbing test:
+  /// `bandhanbank.in` is discovered by the pre-filter's tally deep inside the
+  /// engine, so a summary synthesised at this layer could not contain it. If it
+  /// arrives here, the engine's own value did.
+  func testBackfillReturnsTheEnginesSummary() async throws {
+    let pipeline = RecordingPipeline()
+    pipeline.result = IngestBatchResult(created: 2, merged: 0, flagged: 1)
+    let (service, _, _, _) = makeService(
+      messages: [
+        try MailFixtures.message("hdfc_debit_netbanking.eml", uid: 10),
+        try MailFixtures.message("unknown_bank_layer2.eml", uid: 11),
+      ],
+      pipeline: pipeline)
+
+    try await service.connect(credentials)
+    let summary = try await service.startBackfill(months: 6)
+
+    XCTAssertEqual(summary.scanned, 2)
+    XCTAssertEqual(summary.created, 2)
+    XCTAssertEqual(summary.unmatchedSenders.map(\.domain), ["bandhanbank.in"])
+    XCTAssertEqual(summary.unmatchedSenders.first?.count, 1)
+  }
+
   // `throws` for the same reason as `testSyncBeforeConnectIsRefused` above.
   func testBackfillBeforeConnectIsRefused() async throws {
     let (service, _, _, _) = makeService()

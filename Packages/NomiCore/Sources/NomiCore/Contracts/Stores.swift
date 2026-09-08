@@ -111,7 +111,7 @@ public protocol MailConnectionService: AnyObject, Sendable {
   func connect(_ credentials: IMAPCredentials) async throws
   func disconnect() async throws
   @discardableResult func syncNow() async throws -> SyncSummary
-  func startBackfill(months: Int) async throws
+  @discardableResult func startBackfill(months: Int) async throws -> SyncSummary
 }
 
 public protocol FileImportService: AnyObject, Sendable {

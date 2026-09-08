@@ -28,8 +28,10 @@ private actor SpyMailConnectionService: MailConnectionService {
     return SyncSummary(scanned: 5, created: 1, merged: 0, flagged: 0, packMatched: 1, heuristicMatched: 0, unmatchedSenders: [])
   }
 
-  func startBackfill(months: Int) async throws {
+  @discardableResult
+  func startBackfill(months: Int) async throws -> SyncSummary {
     calledMethods.append("startBackfill")
+    return SyncSummary(scanned: 180, created: 12, merged: 0, flagged: 2, packMatched: 10, heuristicMatched: 2, unmatchedSenders: [])
   }
 
   func recordedMethods() -> [String] { calledMethods }
