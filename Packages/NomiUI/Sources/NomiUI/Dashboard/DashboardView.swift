@@ -55,6 +55,13 @@ enum DashboardWiring {
     return (year, month)
   }
 
+  /// M9: `NeedsYouCard` is tappable exactly when it has something to show —
+  /// the same condition its own `isCaughtUp` uses, mirrored here as a pure
+  /// rule so a test can hold it without going through the view.
+  static func needsYouIsTappable(needsReviewCount: Int, uncategorizedCount: Int) -> Bool {
+    needsReviewCount > 0 || uncategorizedCount > 0
+  }
+
   // MARK: - F3: the rest of the dashboard's reads, pulled out of `body` for
   // the same reason `recentTransactions(from:)` above already is — `swift
   // test` cannot reach `DashboardView.body` or its private computed
@@ -127,6 +134,13 @@ public struct DashboardView: View {
   /// not a coincidence of it being unused. Do not delete it for looking dead.
   public let refreshToken: Int
 
+  /// M9. `nil` — the default, so every existing preview/test call site keeps
+  /// compiling — leaves `NeedsYouCard` non-interactive, same "absent
+  /// affordance, not a disabled one" rule the rest of this file already
+  /// applies to modules. `root-banner-and-review-route` is what actually
+  /// supplies this from `RootView`.
+  public let onOpenReviewQueue: (() -> Void)?
+
   @State private var basis: PeriodBasis = .calendarMonth
   @State private var anchor: Date = Date()
   @State private var mailState: MailConnectionState = .disconnected
@@ -142,6 +156,7 @@ public struct DashboardView: View {
     mailConnectionService: MailConnectionService? = nil,
     recurringStore: RecurringInsightsStore? = nil,
     refreshToken: Int = 0,
+    onOpenReviewQueue: (() -> Void)? = nil,
     basis: PeriodBasis = .calendarMonth,
     anchor: Date = Date()
   ) {
@@ -149,6 +164,7 @@ public struct DashboardView: View {
     self.mailConnectionService = mailConnectionService
     self.recurringStore = recurringStore
     self.refreshToken = refreshToken
+    self.onOpenReviewQueue = onOpenReviewQueue
     _basis = State(initialValue: basis)
     _anchor = State(initialValue: anchor)
   }
@@ -198,7 +214,10 @@ public struct DashboardView: View {
           budgetModule
           recentTransactionsModule
           TopMerchantsCard(merchants: insights.topMerchants)
-          NeedsYouCard(needsReviewCount: insights.needsReviewCount, uncategorizedCount: insights.uncategorizedCount)
+          NeedsYouCard(
+            needsReviewCount: insights.needsReviewCount, uncategorizedCount: insights.uncategorizedCount,
+            onTap: onOpenReviewQueue
+          )
         case .failed:
           FailedLoadCaption { retryToken += 1 }
         }
@@ -333,6 +352,19 @@ extension DashboardView: Equatable {
     DashboardView(insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService())
   }
   .environment(\.dynamicTypeSize, .accessibility3)
+  .preferredColorScheme(.dark)
+}
+
+/// M9 done-when: "counts > 0 with a chevron" at the dashboard level — proves
+/// `onOpenReviewQueue` actually reaches `NeedsYouCard`, not just that card's
+/// own preview in isolation.
+#Preview("Dashboard — needs-you card tappable, dark") {
+  NomiTabShell {
+    DashboardView(
+      insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService(),
+      onOpenReviewQueue: {}
+    )
+  }
   .preferredColorScheme(.dark)
 }
 

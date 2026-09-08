@@ -141,6 +141,24 @@ final class DashboardWiringTests: XCTestCase {
       return XCTFail("a throwing store must yield .failed when there is a month to evaluate")
     }
   }
+
+  // MARK: - M9: NeedsYouCard tappability
+
+  func testNeedsYouIsNotTappableWhenBothCountsAreZero() {
+    XCTAssertFalse(DashboardWiring.needsYouIsTappable(needsReviewCount: 0, uncategorizedCount: 0))
+  }
+
+  func testNeedsYouIsTappableWhenNeedsReviewCountIsPositive() {
+    XCTAssertTrue(DashboardWiring.needsYouIsTappable(needsReviewCount: 1, uncategorizedCount: 0))
+  }
+
+  func testNeedsYouIsTappableWhenUncategorizedCountIsPositive() {
+    XCTAssertTrue(DashboardWiring.needsYouIsTappable(needsReviewCount: 0, uncategorizedCount: 1))
+  }
+
+  func testNeedsYouIsTappableWhenBothCountsArePositive() {
+    XCTAssertTrue(DashboardWiring.needsYouIsTappable(needsReviewCount: 3, uncategorizedCount: 2))
+  }
 }
 
 /// Records which read the dashboard actually issues.
