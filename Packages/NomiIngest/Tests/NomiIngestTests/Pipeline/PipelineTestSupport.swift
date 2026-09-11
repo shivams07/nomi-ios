@@ -157,14 +157,6 @@ actor FakePipelineStore: PipelineStore {
     }
   }
 
-  func rulePassCandidates() async throws -> [TransactionSnapshot] {
-    rowsByID.values.filter { $0.categorySource != .manual }
-  }
-
-  func rows(appliedRuleID: UUID) async throws -> [TransactionSnapshot] {
-    rowsByID.values.filter { $0.appliedRuleID == appliedRuleID }
-  }
-
   func duplicateGroups() async throws -> [[TransactionSnapshot]] {
     var byKey: [String: [TransactionSnapshot]] = [:]
     for row in rowsByID.values where !row.dedupeKey.isEmpty {

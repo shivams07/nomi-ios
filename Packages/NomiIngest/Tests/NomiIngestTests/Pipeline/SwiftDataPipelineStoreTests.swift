@@ -41,22 +41,31 @@ final class SwiftDataPipelineStoreTests: XCTestCase {
     return try ModelContainer(for: schema, configurations: [configuration])
   }
 
+  /// Every stored row, read through a fresh `ModelContext` on the container
+  /// rather than through the store, so a read-back also shows the actor's
+  /// `save()` reached the container. These tests used to read through
+  /// `rulePassCandidates()`, which is gone (L9).
+  private static func storedRows(in container: ModelContainer) throws -> [TransactionSnapshot] {
+    try ModelContext(container).fetch(FetchDescriptor<Transaction>()).map(TransactionSnapshot.init)
+  }
+
   /// The `@ModelActor` macro's generated `init(modelContainer:)`, which is
   /// where the actor's `ModelContext` is built.
   func testTheModelActorIsConstructible() throws {
     _ = SwiftDataPipelineStore(modelContainer: try Self.makeContainer())
   }
 
-  /// A plan's inserts become rows, and the rows come back as snapshots through
-  /// the same `PipelineStore` contract `IngestPipeline` calls.
+  /// A plan's inserts become rows on the container, and convert back to the
+  /// snapshots that went in.
   func testAppliedInsertsAreReadBackAsSnapshots() async throws {
-    let store = SwiftDataPipelineStore(modelContainer: try Self.makeContainer())
+    let container = try Self.makeContainer()
+    let store = SwiftDataPipelineStore(modelContainer: container)
     let swiggy = Fixture.row(from: Fixture.draft(description: "UPI/P2M/1/SWIGGY", amountMinor: 45_900))
     let uber = Fixture.row(from: Fixture.draft(description: "UPI/P2M/2/UBER", amountMinor: 21_000, externalID: "uid-2"))
 
     try await store.apply(CommitPlan(inserts: [swiggy, uber]))
 
-    let rows = try await store.rulePassCandidates()
+    let rows = try Self.storedRows(in: container)
     XCTAssertEqual(Set(rows.map(\.id)), Set([swiggy.id, uber.id]))
     XCTAssertEqual(rows.first(where: { $0.id == swiggy.id })?.amountMinor, 45_900)
     XCTAssertEqual(rows.first(where: { $0.id == swiggy.id })?.dedupeKey, swiggy.dedupeKey)
@@ -65,7 +74,8 @@ final class SwiftDataPipelineStoreTests: XCTestCase {
   /// Updates mutate the stored row rather than adding one, and deletes remove
   /// it. Both go through `fetchRow(id:)` and a `#Predicate` on `id`.
   func testUpdatesAndDeletesLandOnTheStoredRow() async throws {
-    let store = SwiftDataPipelineStore(modelContainer: try Self.makeContainer())
+    let container = try Self.makeContainer()
+    let store = SwiftDataPipelineStore(modelContainer: container)
     var row = Fixture.row(from: Fixture.draft())
 
     try await store.apply(CommitPlan(inserts: [row]))
@@ -74,13 +84,13 @@ final class SwiftDataPipelineStoreTests: XCTestCase {
     row.mergedCount = 2
     try await store.apply(CommitPlan(updates: [row]))
 
-    let afterUpdate = try await store.rulePassCandidates()
+    let afterUpdate = try Self.storedRows(in: container)
     XCTAssertEqual(afterUpdate.count, 1)
     XCTAssertEqual(afterUpdate.first?.needsReview, true)
     XCTAssertEqual(afterUpdate.first?.mergedCount, 2)
 
     try await store.apply(CommitPlan(deletes: [row.id]))
-    let afterDelete = try await store.rulePassCandidates()
+    let afterDelete = try Self.storedRows(in: container)
     XCTAssertTrue(afterDelete.isEmpty)
   }
 
@@ -123,13 +133,60 @@ final class SwiftDataPipelineStoreTests: XCTestCase {
     XCTAssertEqual(matches.map(\.id), [inRange.id])
   }
 
+  // MARK: - M10: reconcile does not snapshot the whole ledger
+
+  /// 200 rows, one key held by two of them. The narrow pass reads `id` and
+  /// `dedupeKey` for all 200; only the two rows under the shared key are
+  /// fetched in full. The amounts are checked too, because a group built from
+  /// the narrow pass alone would carry ids and keys and nothing else.
+  func testDuplicateGroupsFetchesNarrowThenInFullForTheOneDuplicatedKey() async throws {
+    let store = SwiftDataPipelineStore(modelContainer: try Self.makeContainer())
+    let distinct = (1...198).map { index in
+      Fixture.row(from: Fixture.draft(amountMinor: 100 * index, externalID: "uid-\(index)"))
+    }
+    let twice = Fixture.draft(description: "UPI/P2M/UBER", amountMinor: 7, externalID: "uid-dup")
+    let first = Fixture.row(from: twice)
+    let second = Fixture.row(from: twice)
+    let all = distinct + [first, second]
+    XCTAssertEqual(all.count, 200)
+    XCTAssertEqual(Set(all.map(\.dedupeKey)).count, 199, "exactly one key is shared")
+
+    try await store.apply(CommitPlan(inserts: all))
+
+    let before = await store.fetchCount
+    let groups = try await store.duplicateGroups()
+    let fetches = await store.fetchCount - before
+
+    XCTAssertEqual(groups.count, 1)
+    XCTAssertEqual(Set(groups.first?.map(\.id) ?? []), Set([first.id, second.id]))
+    XCTAssertEqual(groups.first?.map(\.amountMinor), [7, 7])
+    XCTAssertEqual(fetches, 2, "narrow over all 200, then in full for the one key")
+  }
+
+  /// The ordinary case: nothing is duplicated, so nothing is fetched in full.
+  func testDuplicateGroupsOverALedgerWithNoDuplicatesFetchesOnce() async throws {
+    let store = SwiftDataPipelineStore(modelContainer: try Self.makeContainer())
+    let rows = (1...50).map { index in
+      Fixture.row(from: Fixture.draft(amountMinor: 100 * index, externalID: "uid-\(index)"))
+    }
+    try await store.apply(CommitPlan(inserts: rows))
+
+    let before = await store.fetchCount
+    let groups = try await store.duplicateGroups()
+    let fetches = await store.fetchCount - before
+
+    XCTAssertTrue(groups.isEmpty)
+    XCTAssertEqual(fetches, 1)
+  }
+
   // MARK: - C4: the three insert-time fields survive the round trip
 
   /// A field that is written on insert and dropped on read-back is invisible
   /// from every test above `PipelineStore`, and `setAccount` would then have
   /// nothing to learn from. This is the only place that can catch it.
   func testInsertTimeMailFieldsRoundTripThroughTheStore() async throws {
-    let store = SwiftDataPipelineStore(modelContainer: try Self.makeContainer())
+    let container = try Self.makeContainer()
+    let store = SwiftDataPipelineStore(modelContainer: container)
     var row = Fixture.row(from: Fixture.draft(source: .email))
     row.senderDomain = "alerts.hdfcbank.net"
     row.cardFragment = "4471"
@@ -138,7 +195,7 @@ final class SwiftDataPipelineStoreTests: XCTestCase {
 
     try await store.apply(CommitPlan(inserts: [row]))
 
-    let readBack = try await store.rulePassCandidates()
+    let readBack = try Self.storedRows(in: container)
     XCTAssertEqual(readBack.count, 1)
     XCTAssertEqual(readBack.first?.senderDomain, "alerts.hdfcbank.net")
     XCTAssertEqual(readBack.first?.cardFragment, "4471")
@@ -150,7 +207,8 @@ final class SwiftDataPipelineStoreTests: XCTestCase {
   /// rewrote `needsReviewReason` would let a near-merge flag be cleared by
   /// assigning an account.
   func testAnUpdateDoesNotRewriteTheInsertTimeMailFields() async throws {
-    let store = SwiftDataPipelineStore(modelContainer: try Self.makeContainer())
+    let container = try Self.makeContainer()
+    let store = SwiftDataPipelineStore(modelContainer: container)
     var row = Fixture.row(from: Fixture.draft(source: .email))
     row.senderDomain = "alerts.hdfcbank.net"
     row.cardFragment = "4471"
@@ -163,7 +221,7 @@ final class SwiftDataPipelineStoreTests: XCTestCase {
     row.mergedCount = 2
     try await store.apply(CommitPlan(updates: [row]))
 
-    let readBack = try await store.rulePassCandidates()
+    let readBack = try Self.storedRows(in: container)
     XCTAssertEqual(readBack.first?.mergedCount, 2, "the merge itself did land")
     XCTAssertEqual(readBack.first?.senderDomain, "alerts.hdfcbank.net")
     XCTAssertEqual(readBack.first?.cardFragment, "4471")

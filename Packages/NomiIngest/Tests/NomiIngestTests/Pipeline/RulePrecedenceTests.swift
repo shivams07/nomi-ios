@@ -4,8 +4,15 @@ import XCTest
 
 @testable import NomiIngest
 
-/// Rule precedence, and the three lifecycle passes: ingest, retroactive
-/// re-apply, delete.
+/// Rule precedence, and what `RuleEngine` does to a row on ingest, on a
+/// retroactive pass and on rule delete.
+///
+/// The retroactive and delete cases used to be driven through the pipeline's
+/// own `reapplyRules` and `ruleDeleted` passes, which nothing in the app
+/// called (L9) and which are gone. `SwiftDataRuleStore` runs the retroactive
+/// pass itself, through the same `RuleEngine.apply`. The semantics are pure, so
+/// they are pinned here against `RuleEngine` directly; ingest, the one rule
+/// pass the pipeline still runs, keeps its own tests.
 final class RulePrecedenceTests: XCTestCase {
 
   private let food = UUID()
@@ -125,54 +132,71 @@ final class RulePrecedenceTests: XCTestCase {
       food)
   }
 
+  /// Eight merchant rules and a catch-all that also matches every row but
+  /// loses on priority, so the winner depends on precedence, not on which rule
+  /// happens to match.
+  ///
+  /// Letters, not `MERCHANT\(n)`: `normalizeDescription` strips digit runs, so
+  /// a numbered merchant normalises to the same text as every other and no
+  /// numbered pattern can match it. The retroactive-pass version of these two
+  /// tests used numbered merchants, and every row it checked was `nil == nil`.
+  private static let merchants = ["ALPHA", "BRAVO", "CHARLIE", "DELTA", "ECHO", "FOXTROT", "GOLF", "HOTEL"]
+
+  private func merchantRules() -> [RuleSnapshot] {
+    var rules: [RuleSnapshot] = []
+    for (index, name) in Self.merchants.enumerated() {
+      rules.append(Fixture.rule(pattern: "*\(name)*", categoryID: food, priority: index))
+    }
+    rules.append(Fixture.rule(pattern: "*UPI*", categoryID: shopping, priority: 100))
+    return rules
+  }
+
+  private func merchantDrafts(count: Int) -> [TransactionDraft] {
+    (0..<count).map { index in
+      // A distinct amount per draft, so no two drafts in the batch merge.
+      Fixture.draft(
+        description: "UPI/PM/\(Self.merchants[index % Self.merchants.count])/X",
+        amountMinor: 1_000 + index,
+        externalID: "uid-\(index)")
+    }
+  }
+
   /// The cost B5 is about, measured rather than asserted in a comment.
   ///
   /// `firstMatch` used to sort internally and `apply` called `firstMatch`, so
-  /// a reapply over N rows ordered the rule set 2N times to answer the same
+  /// a batch of N drafts ordered the rule set 2N times to answer the same
   /// question N times. Both shapes return the same answer, so the only way to
   /// see the difference from outside is to count.
-  func testAHundredRowReapplyOrdersTheRuleSetOnce() async throws {
-    let rules = (0..<8).map {
-      Fixture.rule(pattern: "*MERCHANT\($0)*", categoryID: food, priority: $0)
-    }
-    let rows = (0..<100).map { index in
-      Fixture.row(
-        from: Fixture.draft(
-          description: "UPI/PM/MERCHANT\(index % 8)/X", externalID: "uid-\(index)"),
-        createdAt: "2026-08-20 10:00")
-    }
-    let store = FakePipelineStore(rows: rows, rules: rules)
+  func testAHundredDraftIngestOrdersTheRuleSetOnce() async throws {
+    let store = FakePipelineStore(rules: merchantRules())
     let pipeline = await Fixture.pipeline(store: store)
 
     RuleEngine.orderingCount = 0
-    _ = try await pipeline.reapplyRules()
+    let result = try await pipeline.ingest(merchantDrafts(count: 100))
 
+    XCTAssertEqual(result.created, 100)
     XCTAssertEqual(
       RuleEngine.orderingCount, 1,
-      "once for the pass - it was 200 for these rows before B5")
+      "once for the batch - it would be 200 for these drafts before B5")
   }
 
   /// And the cheaper pass still gets the same answer, row by row.
   func testTheCheaperPassAssignsExactlyWhatAnOrderedRuleSetWould() async throws {
-    let rules = (0..<8).map {
-      Fixture.rule(pattern: "*MERCHANT\($0)*", categoryID: food, priority: $0)
-    }
-    let rows = (0..<40).map { index in
-      Fixture.row(
-        from: Fixture.draft(
-          description: "UPI/PM/MERCHANT\(index % 8)/X", externalID: "uid-\(index)"),
-        createdAt: "2026-08-20 10:00")
-    }
-    let store = FakePipelineStore(rows: rows, rules: rules)
+    let rules = merchantRules()
+    let store = FakePipelineStore(rules: rules)
     let pipeline = await Fixture.pipeline(store: store)
 
-    _ = try await pipeline.reapplyRules()
+    _ = try await pipeline.ingest(merchantDrafts(count: 40))
 
     let ordered = RuleEngine.precedenceOrdered(rules)
-    for row in await store.allRows {
+    let rows = await store.allRows
+    XCTAssertEqual(rows.count, 40)
+    for row in rows {
       let expected = RuleEngine.firstMatch(
         normalizedDescription: row.normalizedDescription, in: ordered)
+      XCTAssertNotNil(expected, "every row must match something, or this compares nil to nil")
       XCTAssertEqual(row.appliedRuleID, expected?.id, row.normalizedDescription)
+      XCTAssertEqual(row.categoryID, food, "the merchant rule beats the catch-all")
     }
   }
 
@@ -194,21 +218,15 @@ final class RulePrecedenceTests: XCTestCase {
 
   // MARK: - Manual wins, permanently
 
-  func testAManualCategorySurvivesASubsequentRulePass() async throws {
-    let rule = Fixture.rule(pattern: "*SWIGGY*", categoryID: food)
+  func testAManualCategorySurvivesARulePass() {
+    let rules = RuleEngine.precedenceOrdered([Fixture.rule(pattern: "*SWIGGY*", categoryID: food)])
     let manual = Fixture.row(
       from: Fixture.draft(description: "SWIGGY ORDER"),
       categoryID: shopping,
       categorySource: .manual)
-    let store = FakePipelineStore(rows: [manual], rules: [rule])
-    let pipeline = await Fixture.pipeline(store: store)
 
-    let result = try await pipeline.reapplyRules()
-
-    XCTAssertEqual(result.recategorized, 0)
-    let after = await store.row(manual.id)
-    XCTAssertEqual(after?.categoryID, shopping, "a manual category is never overwritten by a rule")
-    XCTAssertEqual(after?.categorySource, .manual)
+    XCTAssertNil(
+      RuleEngine.apply(rules, to: manual), "a manual category is never overwritten by a rule")
   }
 
   func testAManualCategorySurvivesAMergeFromAnotherSource() async throws {
@@ -230,28 +248,24 @@ final class RulePrecedenceTests: XCTestCase {
     XCTAssertEqual(after?.mergedCount, 2)
   }
 
-  // MARK: - Retroactive re-apply
+  // MARK: - Retroactive
 
-  func testANewRuleIsRetroactiveAcrossTheLedgerWithoutAReImport() async throws {
+  func testANewRuleCategorizesAnExistingRowAndLeavesAnUnmatchedOneAlone() {
+    let rule = Fixture.rule(pattern: "*SWIGGY*", categoryID: food)
+    let rules = RuleEngine.precedenceOrdered([rule])
     let uncategorized = Fixture.row(from: Fixture.draft(description: "SWIGGY ORDER"))
     let unrelated = Fixture.row(
       from: Fixture.draft(description: "IRCTC TICKET", amountMinor: 1_240_00))
-    let store = FakePipelineStore(rows: [uncategorized, unrelated])
-    let pipeline = await Fixture.pipeline(store: store)
 
-    await store.setRules([Fixture.rule(pattern: "*SWIGGY*", categoryID: food)])
-    let result = try await pipeline.reapplyRules()
-
-    XCTAssertEqual(result.matched, 1)
-    XCTAssertEqual(result.recategorized, 1)
-
-    let hit = await store.row(uncategorized.id)
+    let hit = RuleEngine.apply(rules, to: uncategorized)
     XCTAssertEqual(hit?.categoryID, food)
-    let miss = await store.row(unrelated.id)
-    XCTAssertNil(miss?.categoryID)
+    XCTAssertEqual(hit?.categorySource, .rule)
+    XCTAssertEqual(hit?.appliedRuleID, rule.id)
+
+    XCTAssertNil(RuleEngine.apply(rules, to: unrelated))
   }
 
-  func testAHigherPriorityRuleOverridesAnExistingRuleAssignment() async throws {
+  func testAHigherPriorityRuleOverridesAnExistingRuleAssignment() {
     let oldRule = Fixture.rule(pattern: "*SWIGGY*", categoryID: shopping, priority: 5)
     let row = Fixture.row(
       from: Fixture.draft(description: "SWIGGY ORDER"),
@@ -259,39 +273,44 @@ final class RulePrecedenceTests: XCTestCase {
       categorySource: .rule,
       appliedRuleID: oldRule.id)
     let newRule = Fixture.rule(pattern: "*SWIGGY*", categoryID: food, priority: 1)
-    let store = FakePipelineStore(rows: [row], rules: [oldRule, newRule])
-    let pipeline = await Fixture.pipeline(store: store)
 
-    let result = try await pipeline.reapplyRules()
+    let next = RuleEngine.apply(RuleEngine.precedenceOrdered([oldRule, newRule]), to: row)
 
-    XCTAssertEqual(result.recategorized, 1)
-    let after = await store.row(row.id)
-    XCTAssertEqual(after?.categoryID, food)
-    XCTAssertEqual(after?.appliedRuleID, newRule.id)
+    XCTAssertEqual(next?.categoryID, food)
+    XCTAssertEqual(next?.appliedRuleID, newRule.id)
   }
 
-  // MARK: - Delete
-
-  func testRuleDeleteNullsProvenanceAndLeavesTheCategoryUntouched() async throws {
+  /// Re-running the rule that already assigned a row is not a change, so a
+  /// pass over an unchanged ledger writes nothing.
+  func testReapplyingTheRuleThatAlreadyAssignedARowIsANoOp() {
     let rule = Fixture.rule(pattern: "*SWIGGY*", categoryID: food)
     let row = Fixture.row(
       from: Fixture.draft(description: "SWIGGY ORDER"),
       categoryID: food,
       categorySource: .rule,
       appliedRuleID: rule.id)
-    let store = FakePipelineStore(rows: [row], rules: [rule])
-    let pipeline = await Fixture.pipeline(store: store)
 
-    let cleared = try await pipeline.ruleDeleted(rule.id)
-
-    XCTAssertEqual(cleared, 1)
-    let after = await store.row(row.id)
-    XCTAssertEqual(after?.categoryID, food, "user story 7: the category stays")
-    XCTAssertEqual(after?.categorySource, .rule)
-    XCTAssertNil(after?.appliedRuleID)
+    XCTAssertNil(RuleEngine.apply(RuleEngine.precedenceOrdered([rule]), to: row))
   }
 
-  func testRuleDeleteDoesNotTouchRowsAssignedByOtherRules() async throws {
+  // MARK: - Delete
+
+  func testRuleDeleteNullsProvenanceAndLeavesTheCategoryUntouched() throws {
+    let rule = Fixture.rule(pattern: "*SWIGGY*", categoryID: food)
+    let row = Fixture.row(
+      from: Fixture.draft(description: "SWIGGY ORDER"),
+      categoryID: food,
+      categorySource: .rule,
+      appliedRuleID: rule.id)
+
+    let after = try XCTUnwrap(RuleEngine.clearingProvenance(of: rule.id, from: row))
+
+    XCTAssertEqual(after.categoryID, food, "user story 7: the category stays")
+    XCTAssertEqual(after.categorySource, .rule)
+    XCTAssertNil(after.appliedRuleID)
+  }
+
+  func testRuleDeleteDoesNotTouchRowsAssignedByOtherRules() {
     let deleted = Fixture.rule(pattern: "*SWIGGY*", categoryID: food)
     let kept = Fixture.rule(pattern: "*IRCTC*", categoryID: travel)
     let other = Fixture.row(
@@ -299,13 +318,7 @@ final class RulePrecedenceTests: XCTestCase {
       categoryID: travel,
       categorySource: .rule,
       appliedRuleID: kept.id)
-    let store = FakePipelineStore(rows: [other], rules: [kept])
-    let pipeline = await Fixture.pipeline(store: store)
 
-    let cleared = try await pipeline.ruleDeleted(deleted.id)
-
-    XCTAssertEqual(cleared, 0)
-    let after = await store.row(other.id)
-    XCTAssertEqual(after?.appliedRuleID, kept.id)
+    XCTAssertNil(RuleEngine.clearingProvenance(of: deleted.id, from: other))
   }
 }

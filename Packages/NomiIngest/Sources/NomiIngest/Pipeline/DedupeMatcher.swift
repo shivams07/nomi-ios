@@ -48,12 +48,17 @@ enum DedupeMatcher {
       }
   }
 
+  /// Never for a ₹0 draft (L1). An unparseable candidate is ingested at ₹0, so
+  /// amount and direction agree for every one of them, and two alerts from one
+  /// bank's template on one day clear the similarity bar on narration alone.
+  /// A ₹0 draft still exact-matches its own key.
   static func nearMatch(
     _ derived: DerivedDraft,
     in candidates: [TransactionSnapshot],
     calendar: Calendar
   ) -> TransactionSnapshot? {
     let draft = derived.draft
+    guard draft.amountMinor != 0 else { return nil }
     let draftDay = calendar.startOfDay(for: draft.date)
 
     let scored: [(row: TransactionSnapshot, dayDelta: Int, similarity: Double)] =

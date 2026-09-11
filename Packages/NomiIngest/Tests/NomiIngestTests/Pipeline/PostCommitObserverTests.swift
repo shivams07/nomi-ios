@@ -61,10 +61,14 @@ final class PostCommitObserverTests: XCTestCase {
     XCTAssertEqual(observer.callCount, 1)
   }
 
+  /// Moving a row between categories, on the one pass that still does it here:
+  /// a merge. The row was assigned `travel` by an older rule, and a second
+  /// contributor arrives after a higher-precedence `food` rule exists. This
+  /// used to go through `reapplyRules()`, which is gone (L9).
   func testTheAffectedSetCarriesBothSidesOfARecategorization() async throws {
     let oldRule = Fixture.rule(pattern: "*SWIGGY*", categoryID: travel, priority: 5)
     let row = Fixture.row(
-      from: Fixture.draft(description: "SWIGGY ORDER"),
+      from: Fixture.draft(description: "SWIGGY ORDER", externalID: "uid-1"),
       categoryID: travel,
       categorySource: .rule,
       appliedRuleID: oldRule.id)
@@ -73,8 +77,10 @@ final class PostCommitObserverTests: XCTestCase {
     let observer = RecordingObserver()
     let pipeline = await Fixture.pipeline(store: store, observer: observer)
 
-    _ = try await pipeline.reapplyRules()
+    _ = try await pipeline.ingest([Fixture.draft(description: "SWIGGY ORDER", externalID: "uid-2")])
 
+    let after = await store.row(row.id)
+    XCTAssertEqual(after?.categoryID, food, "the merge did move the row; the set is not from a no-op")
     XCTAssertEqual(observer.callCount, 1)
     XCTAssertEqual(
       observer.calls.first, Set([travel, food]),

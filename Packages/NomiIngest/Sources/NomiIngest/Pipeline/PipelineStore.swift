@@ -22,13 +22,6 @@ public protocol PipelineStore: Sendable {
     dateRange: ClosedRange<Date>
   ) async throws -> [TransactionSnapshot]
 
-  /// Every row whose `categorySource` is not `.manual` — the retroactive rule
-  /// pass's working set.
-  func rulePassCandidates() async throws -> [TransactionSnapshot]
-
-  /// Every row whose `appliedRuleID` is this rule.
-  func rows(appliedRuleID: UUID) async throws -> [TransactionSnapshot]
-
   /// Rows grouped by `dedupeKey`, only groups of two or more. The R5
   /// reconcile pass's input.
   func duplicateGroups() async throws -> [[TransactionSnapshot]]
