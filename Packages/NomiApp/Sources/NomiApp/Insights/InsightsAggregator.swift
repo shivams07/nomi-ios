@@ -195,7 +195,7 @@ public enum InsightsAggregator {
       transactionCount: counted.count,
       byDay: byDay(debits, calendar: calendar),
       byCategory: byCategory(debits, categories: categories, debitTotal: debit),
-      topMerchants: topMerchants(debits, limit: 5),
+      topMerchants: topMerchants(debits, categories: categories, limit: 5),
       // Queue counts, not money counts, so they are over ALL rows. A foreign
       // row is excluded from every total precisely because it needs a human,
       // and a row that vanished from both the totals and the review count would
@@ -252,11 +252,24 @@ public enum InsightsAggregator {
   /// Debit only, grouped on `normalizedDescription` — the same key the dedupe
   /// path uses, so "SWIGGY*ORDER 8891" and "SWIGGY*ORDER 9002" roll up together
   /// rather than appearing as two merchants.
-  static func topMerchants(_ debits: [LedgerRow], limit: Int) -> [MerchantTotal] {
+  ///
+  /// A row with nothing to group on is grouped by its category instead
+  /// (W1-13). Every blank description normalises to the same empty string, so
+  /// keyed on that alone, blank manual entries in three categories would roll
+  /// up into one entry wearing whichever category came first. The fallback
+  /// key's lowercase prefix is one `normalizeDescription` can never produce —
+  /// it uppercases.
+  static func topMerchants(
+    _ debits: [LedgerRow],
+    categories: [UUID: CategoryRef],
+    limit: Int
+  ) -> [MerchantTotal] {
     var totals: [String: (label: String, amount: Int)] = [:]
     for row in debits {
-      let key = row.normalizedDescription
-      let label = row.merchantName ?? row.descriptionText
+      let key = row.normalizedDescription.isEmpty
+        ? "blank:\(row.categoryID?.uuidString ?? "uncategorized")"
+        : row.normalizedDescription
+      let label = merchantLabel(row, categoryName: row.categoryID.flatMap { categories[$0]?.name })
       let running = totals[key]?.amount ?? 0
       // First label wins, so the rollup's name does not depend on fetch order.
       totals[key] = (totals[key]?.label ?? label, running + row.amountMinor)
@@ -269,14 +282,31 @@ public enum InsightsAggregator {
       .map { $0 }
   }
 
+  /// Merchant, then a non-blank description, then the category name, then
+  /// "Manual entry". The same order `TransactionRow.title` gives the row itself
+  /// in NomiUI — where it is internal, so this cannot call it; keep the two in
+  /// step.
+  static func merchantLabel(_ row: LedgerRow, categoryName: String?) -> String {
+    if let merchant = row.merchantName, !merchant.isEmpty { return merchant }
+    if !row.descriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return row.descriptionText
+    }
+    if let categoryName, !categoryName.isEmpty { return categoryName }
+    return "Manual entry"
+  }
+
   // MARK: - Trend
 
   /// One bucket per calendar month present in `rows`, ascending. Both
   /// directions, unlike the dashboard's aggregates — the trend card draws
   /// spend against income.
+  ///
+  /// INR only, exactly as `insights` is (W1-13): a foreign row's `amountMinor`
+  /// is in another currency's minor unit. A month whose only rows are foreign
+  /// has no bucket, the same as a month with no rows.
   public static func trend(rows: [LedgerRow], calendar: Calendar = .current) -> [MonthBucket] {
     var totals: [Date: (debit: Int, credit: Int)] = [:]
-    for row in rows {
+    for row in rows where row.isINR {
       guard let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: row.date)) else {
         continue
       }
@@ -350,6 +380,9 @@ public enum InsightsAggregator {
   /// Disabled budgets are dropped, not rendered at zero: `Budget.isEnabled` is
   /// the model's own "this budget is not in force" and a bar for it would
   /// invite an alert for it.
+  ///
+  /// Spend is INR debits only (W1-13). A budget is a rupee figure, and a dollar
+  /// charge counted as paise would move the bar and could fire the alert.
   public static func budgetProgress(
     budgets: [BudgetRef],
     rows: [LedgerRow],
@@ -357,7 +390,7 @@ public enum InsightsAggregator {
     periodKey: String
   ) -> [BudgetProgress] {
     var spendByCategory: [UUID: Int] = [:]
-    for row in rows where row.isDebit {
+    for row in rows where row.isDebit && row.isINR {
       guard let categoryID = row.categoryID else { continue }
       spendByCategory[categoryID, default: 0] += row.amountMinor
     }

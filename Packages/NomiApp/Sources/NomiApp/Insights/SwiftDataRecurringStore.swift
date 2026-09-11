@@ -14,10 +14,10 @@ import SwiftData
 ///
 /// Follows `SwiftDataInsightsStore`'s two rules:
 ///
-/// 1. **The predicate does the narrowing.** Date window *and* direction are in
-///    the fetch, so SQLite never hands across the credits the detector would
-///    only throw away. On a ledger with a year of salary and refunds in it that
-///    is most of the rows.
+/// 1. **The predicate does the narrowing.** Date window, direction and currency
+///    are in the fetch, so SQLite never hands across the credits the detector
+///    would only throw away. On a ledger with a year of salary and refunds in it
+///    that is most of the rows.
 /// 2. **The result is cached and dropped on any write.** Detection is a sort
 ///    and a grouping over every debit in the window; the dashboard re-renders
 ///    far more often than it is written to.
@@ -60,10 +60,14 @@ public final class SwiftDataRecurringStore: RecurringInsightsStore {
       let lower = window.lowerBound
       let upper = window.upperBound
       let debit = Direction.debit.rawValue
+      // W1-13. A foreign run's amounts are in another currency's minor unit,
+      // and every figure the insights screens show is rupees.
+      let rupees = "INR"
 
       var descriptor = FetchDescriptor<Transaction>(
         predicate: #Predicate<Transaction> {
           $0.date >= lower && $0.date < upper && $0.directionRaw == debit
+            && $0.currencyCode == rupees
         },
         // Oldest first, which is the order the detector walks gaps in. Sorting
         // in SQLite rather than in Swift for the same reason the ledger does:
