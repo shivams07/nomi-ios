@@ -275,4 +275,34 @@ final class FileImportServiceImplTests: XCTestCase {
     XCTAssertEqual(Set(first).count, 2, "two identical rows are two transactions")
     XCTAssertEqual(Array(all.suffix(2)), first, "the same file twice yields the same ids")
   }
+
+  /// Two statements downloaded days apart overlap: the ₹20 tea on the 3rd is
+  /// the last row of `overlap_a.csv` and the first row of `overlap_b.csv`. It is
+  /// one transaction seen twice, so it must carry one id, or importing the
+  /// second statement is not a no-op for it.
+  ///
+  /// FAILS on `main`: a row-index id is `signature:2` in one file and
+  /// `signature:0` in the other — and `signature:0` there is a different row.
+  func testTheSameRowAtADifferentIndexInAnOverlappingStatementGetsTheSameId() async throws {
+    let ingester = RecordingIngester()
+    let service = FileImportServiceImpl(pipeline: ingester, now: Fixture.clock)
+
+    _ = try await service.commit(fixture("overlap_a.csv"), mapping: noReferenceMapping, accountID: nil)
+    _ = try await service.commit(fixture("overlap_b.csv"), mapping: noReferenceMapping, accountID: nil)
+
+    let drafts = await ingester.drafts
+    guard drafts.count == 6 else {
+      return XCTFail("expected three drafts from each file, got \(drafts.count)")
+    }
+    let a = Array(drafts.prefix(3))
+    let b = Array(drafts.suffix(3))
+    XCTAssertEqual(a[2].descriptionText, "CHAI POINT KORAMANGALA", "the last row of overlap_a")
+    XCTAssertEqual(b[0].descriptionText, "CHAI POINT KORAMANGALA", "the first row of overlap_b")
+
+    XCTAssertEqual(a[2].externalID, b[0].externalID, "one transaction, one id, whatever its index")
+    XCTAssertEqual(
+      Set(a.map(\.externalID)).intersection(b.map(\.externalID)), [a[2].externalID],
+      "and only that row: the other four are four different transactions"
+    )
+  }
 }
