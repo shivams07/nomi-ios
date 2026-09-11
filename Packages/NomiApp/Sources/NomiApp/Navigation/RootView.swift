@@ -24,11 +24,21 @@ struct RootView: View {
   @State private var selection: RootTab = .dashboard
   @State private var isPresentingEntry = false
   @State private var tabBarHeight: CGFloat = 0
+  @State private var ledgerInitialChip: LedgerChipSelection = .all
+  @State private var backfillProgress: BackfillProgress?
+  @State private var backfillUnfinished = false
 
   var body: some View {
     NomiTabShell {
       ZStack(alignment: .bottom) {
         destination
+          .safeAreaInset(edge: .top) {
+            if BackfillBannerVisibility.shouldShow(progress: backfillProgress, unfinished: backfillUnfinished) {
+              BackfillBanner(progress: backfillProgress ?? BackfillProgress(scanned: 0, total: 0, created: 0))
+                .padding(.horizontal, NomiSpacing.screenGutter)
+                .padding(.top, NomiSpacing.xs)
+            }
+          }
           .safeAreaInset(edge: .bottom) {
             Color.clear.frame(height: TabBarInsetHeight.reserved(barHeight: tabBarHeight))
           }
@@ -38,6 +48,22 @@ struct RootView: View {
       }
     }
     .onPreferenceChange(TabBarHeightKey.self) { tabBarHeight = $0 }
+    .onChange(of: selection) { _, newValue in
+      // `LedgerScreen` only reads `initialChip` once, at construction — the
+      // instance is torn down the moment `selection` leaves `.ledger`. Reset
+      // here so a plain tab tap back in never inherits the review chip
+      // `onOpenReviewQueue` set.
+      if newValue != .ledger {
+        ledgerInitialChip = .all
+      }
+    }
+    .task {
+      backfillUnfinished = await environment.mail.backfillIsUnfinished
+      for await tick in environment.mailConnectionService.backfillProgress {
+        backfillProgress = tick
+        backfillUnfinished = await environment.mail.backfillIsUnfinished
+      }
+    }
     .sheet(isPresented: $isPresentingEntry) {
       // The "Add" bottom sheet. `EntryView` reads categories through `@Query`,
       // so the container has to reach it — a sheet is a new presentation
@@ -73,7 +99,11 @@ struct RootView: View {
           // It is what makes SwiftUI re-invoke `body` after a write, and it is
           // only doing that job because it *changes*: passing a literal here
           // would compile, satisfy the parameter, and fix nothing.
-          refreshToken: environment.insightsGeneration
+          refreshToken: environment.insightsGeneration,
+          onOpenReviewQueue: {
+            ledgerInitialChip = .needsReview
+            selection = .ledger
+          }
         )
         .navigationTitle("Home")
         .toolbar {
@@ -108,7 +138,8 @@ struct RootView: View {
           editor: SwiftDataTransactionEditor(
             context: environment.container.mainContext,
             coordinator: environment.coordinator
-          )
+          ),
+          initialChip: ledgerInitialChip
         )
         // `LedgerScreen` is a tab-root screen and sets no title of its own —
         // same as `DashboardView`, and the same reason Dashboard and Reports
