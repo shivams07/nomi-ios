@@ -49,12 +49,9 @@ public final class FileImportServiceImpl: FileImportService, @unchecked Sendable
 
     let parseableRowCount: Int
     if let mapping = suggestedMapping {
-      parseableRowCount = file.dataRows.enumerated().reduce(into: 0) { count, element in
-        let (index, row) = element
-        if RowMapper.map(row: row, rowIndex: index, mapping: mapping, formatSignature: signature, calendar: calendar) != nil {
-          count += 1
-        }
-      }
+      parseableRowCount = RowMapper.mapAll(
+        rows: file.dataRows, mapping: mapping, formatSignature: signature, calendar: calendar
+      ).compactMap { $0 }.count
     } else {
       parseableRowCount = 0
     }
@@ -73,15 +70,11 @@ public final class FileImportServiceImpl: FileImportService, @unchecked Sendable
     let file = try FileReader.read(url: url)
     let signature = FormatSignature.make(headers: file.headers)
 
-    var parsed: [ParsedRow] = []
-    var skipped = 0
-    for (index, row) in file.dataRows.enumerated() {
-      if let mapped = RowMapper.map(row: row, rowIndex: index, mapping: mapping, formatSignature: signature, calendar: calendar) {
-        parsed.append(mapped)
-      } else {
-        skipped += 1
-      }
-    }
+    let mapped = RowMapper.mapAll(
+      rows: file.dataRows, mapping: mapping, formatSignature: signature, calendar: calendar
+    )
+    let parsed = mapped.compactMap { $0 }
+    let skipped = mapped.count - parsed.count
 
     guard !parsed.isEmpty else {
       throw ImportError.noParseableRows

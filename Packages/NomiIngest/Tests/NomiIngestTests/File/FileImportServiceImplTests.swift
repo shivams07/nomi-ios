@@ -241,6 +241,37 @@ final class FileImportServiceImplTests: XCTestCase {
     XCTAssertEqual(drafts.map(\.amountMinor), [62_000, 150_000, 129_900])
   }
 
+  /// The built-in ids a date cell can carry: 14–22, 27–36, 45–47. The
+  /// neighbours on each side are numbers, text and currency.
+  func testOnlyTheBuiltInDateAndTimeIDsAreDates() {
+    for id in [14, 15, 22, 27, 36, 45, 47] {
+      XCTAssertTrue(XLSXDateStyles.isBuiltInDateFormat(id), "\(id)")
+    }
+    for id in [0, 1, 2, 4, 10, 13, 23, 26, 37, 44, 48, 49] {
+      XCTAssertFalse(XLSXDateStyles.isBuiltInDateFormat(id), "\(id)")
+    }
+  }
+
+  /// A `y`, `d` or `h` outside quotes and brackets. The failures matter more
+  /// than the passes: a number format misread as a date turns every amount in
+  /// its column into a day.
+  func testACustomFormatIsADateOnlyWhenADayYearOrHourStandsOutsideQuotesAndBrackets() {
+    XCTAssertTrue(XLSXDateStyles.isDateFormatCode("dd/mm/yyyy"))
+    XCTAssertTrue(XLSXDateStyles.isDateFormatCode("[$-409]d-mmm-yy"), "a locale prefix is bracketed")
+    XCTAssertTrue(XLSXDateStyles.isDateFormatCode("hh:mm"))
+    XCTAssertFalse(XLSXDateStyles.isDateFormatCode("#,##0.00"))
+    XCTAssertFalse(XLSXDateStyles.isDateFormatCode("[Red]#,##0.00"), "the d in Red is a colour")
+    XCTAssertFalse(XLSXDateStyles.isDateFormatCode("0.00\" days\""), "a quoted d is a literal")
+    XCTAssertFalse(XLSXDateStyles.isDateFormatCode("0.0\\d"), "an escaped d is a literal")
+    XCTAssertFalse(XLSXDateStyles.isDateFormatCode("mm"), "m alone is months or minutes")
+  }
+
+  func testASerialCountsWholeDaysFrom1899_12_30() {
+    XCTAssertEqual(XLSXDateStyles.isoDate(serial: 1), "1899-12-31")
+    XCTAssertEqual(XLSXDateStyles.isoDate(serial: 46113), "2026-04-01")
+    XCTAssertEqual(XLSXDateStyles.isoDate(serial: 46118.60763888889), "2026-04-06", "the time of day is dropped")
+  }
+
   // MARK: - W1-11 (L10): external ids without a reference column
 
   private let noReferenceMapping = ColumnMapping(
