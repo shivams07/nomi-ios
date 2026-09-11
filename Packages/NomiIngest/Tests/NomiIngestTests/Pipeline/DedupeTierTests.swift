@@ -142,6 +142,78 @@ final class DedupeTierTests: XCTestCase {
     XCTAssertEqual(count, 2)
   }
 
+  // MARK: - L1: a ₹0 row never near-merges
+
+  /// Two narrations one character apart, digit-free so normalisation cannot
+  /// make them identical. Checked by `assertNearButDistinct` rather than
+  /// assumed: below the bar, the ₹0 test would pass on `main` for the wrong
+  /// reason.
+  private let templateA = "HDFC BANK ALERT TXN A"
+  private let templateB = "HDFC BANK ALERT TXN B"
+
+  private func assertNearButDistinct(_ lhs: String, _ rhs: String) {
+    let similarity = Similarity.ratio(normalizeDescription(lhs), normalizeDescription(rhs))
+    XCTAssertGreaterThanOrEqual(similarity, DedupeMatcher.nearSimilarityThreshold)
+    XCTAssertLessThan(similarity, 1.0, "identical narrations would share a key and exact-match")
+  }
+
+  /// An unparseable candidate is ingested at ₹0, so every one of them agrees
+  /// on amount and direction, and two alerts from one bank's template on one
+  /// day clear the similarity bar. Tier 2 folded them into one row. FAILS on
+  /// `main`.
+  func testTwoZeroAmountDraftsOnOneDayAtNearSimilarityStayTwoRows() async throws {
+    assertNearButDistinct(templateA, templateB)
+    let store = FakePipelineStore()
+    let pipeline = await Fixture.pipeline(store: store)
+
+    _ = try await pipeline.ingest([
+      Fixture.draft(date: "2026-08-20", description: templateA, amountMinor: 0, externalID: "a")
+    ])
+    _ = try await pipeline.ingest([
+      Fixture.draft(date: "2026-08-20", description: templateB, amountMinor: 0, externalID: "b")
+    ])
+
+    let count = await store.rowCount
+    XCTAssertEqual(count, 2, "a ₹0 row has no amount to corroborate a narration match")
+  }
+
+  /// The control: the same pair at a real amount still near-merges, so the
+  /// test above is about the amount and nothing else.
+  func testTheSamePairAtANonZeroAmountStillNearMerges() async throws {
+    assertNearButDistinct(templateA, templateB)
+    let store = FakePipelineStore()
+    let pipeline = await Fixture.pipeline(store: store)
+
+    _ = try await pipeline.ingest([
+      Fixture.draft(date: "2026-08-20", description: templateA, amountMinor: 45_900, externalID: "a")
+    ])
+    _ = try await pipeline.ingest([
+      Fixture.draft(date: "2026-08-20", description: templateB, amountMinor: 45_900, externalID: "b")
+    ])
+
+    let count = await store.rowCount
+    XCTAssertEqual(count, 1)
+  }
+
+  /// A ₹0 draft still exact-matches its own key: the same alert under a second
+  /// UID is one row, not two.
+  func testAZeroAmountDraftStillExactMatchesItsOwnKey() async throws {
+    let store = FakePipelineStore()
+    let pipeline = await Fixture.pipeline(store: store)
+
+    _ = try await pipeline.ingest([
+      Fixture.draft(date: "2026-08-20", description: templateA, amountMinor: 0, externalID: "a")
+    ])
+    _ = try await pipeline.ingest([
+      Fixture.draft(date: "2026-08-20", description: templateA, amountMinor: 0, externalID: "b")
+    ])
+
+    let count = await store.rowCount
+    XCTAssertEqual(count, 1)
+    let onlyRow = await store.onlyRow
+    XCTAssertEqual(onlyRow?.mergedCount, 2)
+  }
+
   // MARK: - Merge field resolution
 
   func testConflictingAccountIDsKeepTheEarlierOneAndFlagForReview() async throws {
