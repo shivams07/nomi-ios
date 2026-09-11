@@ -25,8 +25,7 @@ public struct RulesScreen: View {
     List {
       ForEach(rules) { rule in
         row(for: rule)
-          .contentShape(Rectangle())
-          .onTapGesture { editingRule = rule }
+          .deleteDisabled(!RuleRowActions.offered(isSystem: rule.isSystem).contains(.delete))
       }
       .onDelete(perform: delete)
       .onMove(perform: move)
@@ -62,19 +61,49 @@ public struct RulesScreen: View {
   private func row(for rule: NomiCore.Rule) -> some View {
     let categoryName = categories.first(where: { $0.id == rule.categoryID })?.name ?? "Uncategorized"
     return HStack(spacing: NomiSpacing.xs) {
-      Image(systemName: "line.3.horizontal")
-        .foregroundStyle(NomiColor.textTertiary)
-      VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-        Text(rule.pattern)
-          .nomiTextStyle(.body)
-          .foregroundStyle(NomiColor.textPrimary)
-        Text(categoryName)
-          .nomiTextStyle(.caption)
+      HStack(spacing: NomiSpacing.xs) {
+        Image(systemName: "line.3.horizontal")
           .foregroundStyle(NomiColor.textTertiary)
+        VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+          Text(rule.pattern)
+            .nomiTextStyle(.body)
+            .foregroundStyle(NomiColor.textPrimary)
+          HStack(spacing: NomiSpacing.xxs) {
+            Text(categoryName)
+              .nomiTextStyle(.caption)
+              .foregroundStyle(NomiColor.textTertiary)
+            if rule.isSystem {
+              Text("System")
+                .nomiTextStyle(.caption)
+                .foregroundStyle(NomiColor.textTertiary)
+            }
+          }
+        }
       }
+      // Scoped to the label, not the whole row: a `Toggle` sits to its right,
+      // and an `onTapGesture` spanning both would fight the toggle for the
+      // tap that lands on it.
+      .contentShape(Rectangle())
+      .onTapGesture { editingRule = rule }
       Spacer()
+      Toggle(
+        "",
+        isOn: Binding(
+          get: { rule.isEnabled },
+          set: { setEnabled(rule, $0) }
+        )
+      )
+      .labelsHidden()
     }
     .listRowBackground(NomiColor.surfaceRaised)
+  }
+
+  private func setEnabled(_ rule: NomiCore.Rule, _ enabled: Bool) {
+    do {
+      try ruleStore.setEnabled(rule.id, enabled)
+    } catch {
+      actionError = true
+    }
   }
 
   private func delete(at offsets: IndexSet) {
@@ -113,10 +142,39 @@ public struct RulesScreen: View {
   .preferredColorScheme(.dark)
 }
 
+/// A container built locally to this file rather than through
+/// `EntryRulesPreviewSupport` — that file is untouched by this unit (no new
+/// `@Query`, per the design note), and its `makeRulesContainer()` seeds only
+/// user rules, none disabled.
+@MainActor
+private func makeSystemRuleDisabledContainer() -> ModelContainer {
+  let container = try! ModelContainer(
+    for: Schema([NomiCore.Category.self, NomiCore.Rule.self]),
+    configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+  )
+  let category = NomiCore.Category(
+    name: "Food & Dining", symbolName: "fork.knife", paletteSlot: 0, isSystem: true, sortIndex: 0
+  )
+  container.mainContext.insert(category)
+  container.mainContext.insert(
+    NomiCore.Rule(pattern: "*SWIGGY*", categoryID: category.id, priority: 0, isEnabled: false, isSystem: true)
+  )
+  return container
+}
+
+#Preview("Rules — system rule, toggle off, dark") {
+  NavigationStack {
+    RulesScreen(ruleStore: FakeRuleStore(), categoryStore: FakeCategoryStore())
+  }
+  .modelContainer(makeSystemRuleDisabledContainer())
+  .preferredColorScheme(.dark)
+}
+
 private struct RulesScreenActionFailure: Error {}
 
-/// Delete and reorder always throw, so swiping to delete or dragging a row
-/// in the canvas exercises the `actionError` alert this unit added.
+/// Delete, reorder, and now `setEnabled` all always throw, so swiping to
+/// delete, dragging a row, or flipping its toggle in the canvas exercises the
+/// `actionError` alert.
 @MainActor
 private final class AlwaysFailingRuleStore: RuleStore {
   @discardableResult
