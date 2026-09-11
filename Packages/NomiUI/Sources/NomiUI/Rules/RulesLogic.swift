@@ -30,3 +30,18 @@ enum RuleMatchSummary {
     }
   }
 }
+
+/// What a rule's row offers, gated on `Rule.isSystem`. A system rule may be
+/// turned off but not deleted — deleting it is indistinguishable from one
+/// `DefaultRuleSeed` never got to, and the seed puts it straight back (see
+/// `Rule.isSystem`'s own note). A user rule offers both.
+enum RuleRowAction: Hashable {
+  case toggle
+  case delete
+}
+
+enum RuleRowActions {
+  static func offered(isSystem: Bool) -> Set<RuleRowAction> {
+    isSystem ? [.toggle] : [.toggle, .delete]
+  }
+}
