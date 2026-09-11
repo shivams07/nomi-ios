@@ -98,9 +98,9 @@ extension CategorySeedSpec {
 
 // MARK: - Applying the seed
 //
-// Below this line touches `@Model`. No test drives it today, but one could —
-// an XCTest can build a container (see `InMemoryModelContainer`'s measured
-// note). Keep it thin regardless: everything that decides anything is above.
+// Below this line touches `@Model`. `DefaultCategorySeedTests` drives it through
+// an XCTest container (see `InMemoryModelContainer`'s measured note). Keep it
+// thin regardless: everything that decides anything is above.
 
 extension DefaultCategorySeed {
   /// Inserts whatever is missing. Safe to call on every launch, and it is
@@ -110,10 +110,15 @@ extension DefaultCategorySeed {
   /// It does **not** rewrite existing rows. A user who renamed "Other" keeps
   /// their name; a palette change in `Design/**` needs no re-seed because the
   /// row stores a slot, not a colour.
+  ///
+  /// Every insert carries `createdAt`. Two devices seeding the same id is the
+  /// duplicate `ReferenceDataReconciler` collapses, and it keeps the earliest;
+  /// an undated seed row would cost a pass being stamped before it could be.
   @MainActor
   static func apply(in context: ModelContext) throws {
     let existing = try context.fetch(FetchDescriptor<NomiCore.Category>())
     let existingIDs = Set(existing.map(\.id))
+    let insertedAt = Date()
 
     for spec in missing(existingIDs: existingIDs) {
       context.insert(
@@ -123,7 +128,8 @@ extension DefaultCategorySeed {
           symbolName: spec.symbolName,
           paletteSlot: spec.paletteSlot,
           isSystem: true,
-          sortIndex: spec.sortIndex
+          sortIndex: spec.sortIndex,
+          createdAt: insertedAt
         )
       )
     }

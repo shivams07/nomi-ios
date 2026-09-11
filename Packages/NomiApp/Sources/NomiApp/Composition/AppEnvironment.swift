@@ -124,7 +124,11 @@ public final class AppEnvironment: ObservableObject {
       bindings: SwiftDataAccountBindings(container: container)
     )
     self.mail = mail
-    self.sync = AppSyncCoordinator(mail: mail, pipeline: pipeline)
+
+    // W1-1. On `mainContext`, beside the stores whose rows it collapses, and
+    // through the same coordinator, so a removal drops the aggregate cache.
+    let referenceData = ReferenceDataReconciler(context: context, coordinator: coordinator)
+    self.sync = AppSyncCoordinator(mail: mail, pipeline: pipeline, referenceData: referenceData)
 
     // File import writes through the same pipeline mail does. U3b (#17) closed
     // the gap this unit reported: `commit` used to map rows, count them against
