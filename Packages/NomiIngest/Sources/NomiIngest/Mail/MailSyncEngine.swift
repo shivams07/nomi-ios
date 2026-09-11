@@ -140,6 +140,26 @@ public actor MailSyncEngine {
     let before: Date
   }
 
+  /// The calendar every search window is cut with: Gregorian, pinned to UTC
+  /// (M1).
+  ///
+  /// UTC because `IMAPCommand.imapDate` renders each `SINCE`/`BEFORE` date with
+  /// a UTC formatter, and the cut and the rendering have to agree about which
+  /// day a boundary falls on. They did not: the default was the device's zone,
+  /// and in IST midnight tomorrow is 18:30 UTC *today*, so the last window's
+  /// `BEFORE` named today's date and every first sync and backfill on an Indian
+  /// device missed the mail that had arrived that day.
+  ///
+  /// Not IST either. The server compares these dates against `INTERNALDATE` in
+  /// its own zone, which nothing here knows, and the one-day overlap in
+  /// `monthlyWindows` is what absorbs that. What must never drift is our two
+  /// halves against each other.
+  static let searchCalendar: Calendar = {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "UTC")!
+    return calendar
+  }()
+
   /// `months` windows walking back from `end`, newest last.
   ///
   /// Two deliberate distortions, both in the direction the design specifies —
@@ -154,11 +174,12 @@ public actor MailSyncEngine {
   /// 2. The last window ends *tomorrow*, not today, because `BEFORE` is
   ///    exclusive and date-granular: `BEFORE <today>` omits everything that
   ///    arrived today, which on a first run is exactly the mail the user is
-  ///    looking at while they wait.
+  ///    looking at while they wait. "Tomorrow" is counted in
+  ///    `searchCalendar`, which is what makes it tomorrow once rendered.
   static func monthlyWindows(
     months: Int,
     endingAt end: Date,
-    calendar: Calendar = Calendar(identifier: .gregorian)
+    calendar: Calendar = MailSyncEngine.searchCalendar
   ) -> [SearchWindow] {
     let span = max(months, 1)
     let today = calendar.startOfDay(for: end)

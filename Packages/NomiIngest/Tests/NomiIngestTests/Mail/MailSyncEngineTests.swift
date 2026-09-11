@@ -373,7 +373,9 @@ final class MailSyncEngineTests: XCTestCase {
   /// transactions silently, which is the one failure mode here that nobody would
   /// ever notice (§2.17).
   func testTheWindowsTileTheWholeSpanAndOverlapRatherThanRiskAGap() {
-    let calendar = Calendar(identifier: .gregorian)
+    // The engine's calendar, not the runner's. Written with the runner's zone,
+    // this passed on CI only because CI runs in UTC.
+    let calendar = MailSyncEngine.searchCalendar
     let now = Date(timeIntervalSince1970: 1_787_000_000)
     let windows = MailSyncEngine.monthlyWindows(months: 6, endingAt: now)
 
