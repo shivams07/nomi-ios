@@ -340,7 +340,7 @@ final class InsightsAggregatorTests: XCTestCase {
       row(900, .debit, on: date(2026, 4, 2), normalized: "UBER TRIP", merchant: "Uber"),
     ]
 
-    let merchants = InsightsAggregator.topMerchants(debits, limit: 5)
+    let merchants = InsightsAggregator.topMerchants(debits, categories: [:], limit: 5)
 
     XCTAssertEqual(merchants.map(\.label), ["Swiggy", "Uber"])
     XCTAssertEqual(merchants.map(\.totalMinor), [1_000, 900])
@@ -349,6 +349,7 @@ final class InsightsAggregatorTests: XCTestCase {
   func testMerchantFallsBackToDescriptionWhenThereIsNoMerchantName() {
     let merchants = InsightsAggregator.topMerchants(
       [row(100, .debit, on: date(2026, 4, 1), normalized: "N", merchant: nil, description: "RAW NARRATION")],
+      categories: [:],
       limit: 5
     )
     XCTAssertEqual(merchants.first?.label, "RAW NARRATION")
@@ -358,7 +359,7 @@ final class InsightsAggregatorTests: XCTestCase {
     let debits = (1...9).map {
       row($0 * 100, .debit, on: date(2026, 4, 1), normalized: "M\($0)", merchant: "M\($0)")
     }
-    XCTAssertEqual(InsightsAggregator.topMerchants(debits, limit: 5).count, 5)
+    XCTAssertEqual(InsightsAggregator.topMerchants(debits, categories: [:], limit: 5).count, 5)
   }
 
   /// W1-13 (M8). A manual entry saved with no description was listed with a
