@@ -74,21 +74,6 @@ public struct RecurringSeries: Sendable, Identifiable, Equatable {
   /// when `categoryID` names a category that no longer exists.
   public let category: CategoryBadge?
 
-  /// What a row needs to draw the category tile, and nothing else.
-  public struct CategoryBadge: Sendable, Equatable {
-    public let id: UUID
-    public let name: String
-    public let symbolName: String
-    public let paletteSlot: Int
-
-    public init(id: UUID, name: String, symbolName: String, paletteSlot: Int) {
-      self.id = id
-      self.name = name
-      self.symbolName = symbolName
-      self.paletteSlot = paletteSlot
-    }
-  }
-
   /// `categoryID` and `category` default to `nil` so every construction that
   /// predates them (NomiUI's card, previews and tests) compiles unchanged.
   public init(

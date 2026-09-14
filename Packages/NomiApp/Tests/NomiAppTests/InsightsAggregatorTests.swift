@@ -635,6 +635,63 @@ final class InsightsAggregatorTests: XCTestCase {
 
     XCTAssertEqual(progress.map(\.categoryName), ["Alpha", "Beta"])
   }
+
+  // MARK: - Category map (UI refresh P1b)
+
+  /// Handed over 2, 0, 1 and named so that name order is 2, 1, 0: neither the
+  /// input order nor a sort on name alone gives 0, 1, 2. There are no rows, so
+  /// this also holds that the map is not scoped to spend.
+  func testTheCategoryMapComesBackInSortIndexOrder() {
+    let two = UUID()
+    let zero = UUID()
+    let one = UUID()
+    let categories: [UUID: CategoryRef] = [
+      two: CategoryRef(id: two, name: "Alpha", symbolName: "bag", paletteSlot: 1, sortIndex: 2),
+      zero: CategoryRef(id: zero, name: "Charlie", symbolName: "fork.knife", paletteSlot: 0, sortIndex: 0),
+      one: CategoryRef(id: one, name: "Bravo", symbolName: "bolt", paletteSlot: 3, sortIndex: 1),
+    ]
+
+    let insights = InsightsAggregator.insights(
+      period: .month(year: 2026, month: 4), rows: [], categories: categories, priorRows: nil)
+
+    XCTAssertEqual(
+      insights.categories,
+      [
+        CategoryBadge(id: zero, name: "Charlie", symbolName: "fork.knife", paletteSlot: 0),
+        CategoryBadge(id: one, name: "Bravo", symbolName: "bolt", paletteSlot: 3),
+        CategoryBadge(id: two, name: "Alpha", symbolName: "bag", paletteSlot: 1),
+      ])
+  }
+
+  /// Equal `sortIndex` falls to name. Five rather than two: the map is a
+  /// `Dictionary`, and with two entries a missing tie-break would still pass
+  /// on half of all runs.
+  func testCategoriesWithEqualSortIndexComeBackByName() {
+    let names = ["Delta", "Alpha", "Echo", "Charlie", "Bravo"]
+    let categories = Dictionary(
+      uniqueKeysWithValues: names.map { name -> (UUID, CategoryRef) in
+        let id = UUID()
+        return (id, CategoryRef(id: id, name: name, paletteSlot: 0, sortIndex: 1))
+      })
+
+    let insights = InsightsAggregator.insights(
+      period: .month(year: 2026, month: 4), rows: [], categories: categories, priorRows: nil)
+
+    XCTAssertEqual(insights.categories.map(\.name), ["Alpha", "Bravo", "Charlie", "Delta", "Echo"])
+  }
+
+  /// The map is the source, not the rows: a row filed under an id the map does
+  /// not hold adds a slice and no badge.
+  func testAnEmptyCategoryMapYieldsNoCategories() {
+    let insights = InsightsAggregator.insights(
+      period: .month(year: 2026, month: 4),
+      rows: [row(1_000, .debit, on: date(2026, 4, 1), category: UUID())],
+      categories: [:],
+      priorRows: nil)
+
+    XCTAssertEqual(insights.categories, [])
+    XCTAssertEqual(insights.byCategory.count, 1, "control: the row itself was counted")
+  }
 }
 
 /// UI refresh P1, the half the tests above cannot reach. `CategoryRef` defaults
@@ -646,6 +703,49 @@ final class InsightsAggregatorTests: XCTestCase {
 /// Real container, so XCTest and `@MainActor`, like `RecentTransactionsTests`.
 @MainActor
 final class InsightsStoreSymbolNameTests: XCTestCase {
+
+  /// UI refresh P1b. `CategoryRef.sortIndex` is defaulted as well, so a
+  /// `categoryMap()` that dropped it would hand the aggregator three zeros and
+  /// the map would come back in name order. The names make that order, and the
+  /// insertion order, both wrong.
+  func testTheStoreReturnsEveryCategoryInSortIndexOrderWithItsOwnSymbol() throws {
+    let schema = Schema([
+      Transaction.self, NomiCore.Category.self, Budget.self, BudgetAlertLog.self,
+      Rule.self, Account.self, AccountBinding.self, ColumnMappingRecord.self,
+    ])
+    let container = try ModelContainer(
+      for: schema,
+      configurations: [
+        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+      ])
+    let context = container.mainContext
+
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Asia/Kolkata") ?? .current
+    let inApril = calendar.date(from: DateComponents(year: 2026, month: 4, day: 2, hour: 12))!
+
+    let alpha = NomiCore.Category(name: "Alpha", symbolName: "bag", paletteSlot: 1, sortIndex: 2)
+    let charlie = NomiCore.Category(name: "Charlie", symbolName: "fork.knife", paletteSlot: 0, sortIndex: 0)
+    let bravo = NomiCore.Category(name: "Bravo", symbolName: "bolt", paletteSlot: 3, sortIndex: 1)
+    context.insert(alpha)
+    context.insert(charlie)
+    context.insert(bravo)
+    try context.save()
+
+    let store = SwiftDataInsightsStore(
+      context: context, cache: InsightsCache(), calendar: calendar, now: { inApril })
+
+    let categories = try store.insights(for: .month(year: 2026, month: 4)).categories
+
+    XCTAssertEqual(categories.count, 3)
+    XCTAssertEqual(
+      categories,
+      [
+        CategoryBadge(id: charlie.id, name: "Charlie", symbolName: "fork.knife", paletteSlot: 0),
+        CategoryBadge(id: bravo.id, name: "Bravo", symbolName: "bolt", paletteSlot: 3),
+        CategoryBadge(id: alpha.id, name: "Alpha", symbolName: "bag", paletteSlot: 1),
+      ])
+  }
 
   func testTheStoreCarriesEachCategorysOwnSymbolIntoSlicesAndBudgets() throws {
     let schema = Schema([

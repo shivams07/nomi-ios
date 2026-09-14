@@ -62,6 +62,16 @@ public final class FakeInsightsStore: InsightsStore {
       .sorted { $0.totalMinor > $1.totalMinor }
       .prefix(5)
 
+    // The aggregator's order, id last, so a preview lists categories the way the
+    // app does.
+    let badges = categories
+      .sorted { lhs, rhs in
+        if lhs.sortIndex != rhs.sortIndex { return lhs.sortIndex < rhs.sortIndex }
+        if lhs.name != rhs.name { return lhs.name < rhs.name }
+        return lhs.id.uuidString < rhs.id.uuidString
+      }
+      .map { CategoryBadge(id: $0.id, name: $0.name, symbolName: $0.symbolName, paletteSlot: $0.paletteSlot) }
+
     return PeriodInsights(
       period: period,
       debitMinor: debit,
@@ -74,7 +84,8 @@ public final class FakeInsightsStore: InsightsStore {
       byCategory: categorySlices,
       topMerchants: Array(topMerchants),
       needsReviewCount: rows.filter { $0.needsReview }.count,
-      uncategorizedCount: rows.filter { $0.categoryID == nil }.count
+      uncategorizedCount: rows.filter { $0.categoryID == nil }.count,
+      categories: badges
     )
   }
 

@@ -142,7 +142,7 @@ final class RecurringStoreTests: XCTestCase {
     XCTAssertEqual(series.categoryID, streaming.id)
     XCTAssertEqual(
       series.category,
-      RecurringSeries.CategoryBadge(id: streaming.id, name: "Streaming", symbolName: "tv", paletteSlot: 4))
+      CategoryBadge(id: streaming.id, name: "Streaming", symbolName: "tv", paletteSlot: 4))
   }
 
   /// A category existing in the store must not leak onto a run that has none.

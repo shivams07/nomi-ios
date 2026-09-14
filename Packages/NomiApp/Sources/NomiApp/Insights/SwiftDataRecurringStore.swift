@@ -95,13 +95,13 @@ public final class SwiftDataRecurringStore: RecurringInsightsStore {
   /// `uniquingKeysWith`, as `SwiftDataInsightsStore.categoryMap()` does and for
   /// its reason: `Category` syncs through CloudKit with no cross-device
   /// uniqueness, and `uniqueKeysWithValues` traps on a duplicate id.
-  private func categoryBadges() throws -> [UUID: RecurringSeries.CategoryBadge] {
+  private func categoryBadges() throws -> [UUID: CategoryBadge] {
     let categories = try context.fetch(FetchDescriptor<NomiCore.Category>())
     return Dictionary(
       categories.map {
         (
           $0.id,
-          RecurringSeries.CategoryBadge(
+          CategoryBadge(
             id: $0.id, name: $0.name, symbolName: $0.symbolName, paletteSlot: $0.paletteSlot)
         )
       },

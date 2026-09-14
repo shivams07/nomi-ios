@@ -67,12 +67,23 @@ public struct CategoryRef: Sendable, Equatable {
   /// `InsightsAggregatorTests` holds that through a real container.
   public let symbolName: String
   public let paletteSlot: Int
+  /// `Category.sortIndex`, the order `PeriodInsights.categories` comes back in.
+  /// Defaulted for the same reason as `symbolName`, and held through a real
+  /// container the same way.
+  public let sortIndex: Int
 
-  public init(id: UUID, name: String, symbolName: String = "questionmark", paletteSlot: Int) {
+  public init(
+    id: UUID,
+    name: String,
+    symbolName: String = "questionmark",
+    paletteSlot: Int,
+    sortIndex: Int = 0
+  ) {
     self.id = id
     self.name = name
     self.symbolName = symbolName
     self.paletteSlot = paletteSlot
+    self.sortIndex = sortIndex
   }
 }
 
@@ -206,8 +217,24 @@ public enum InsightsAggregator {
       // and a row that vanished from both the totals and the review count would
       // be invisible in the app entirely.
       needsReviewCount: rows.filter(\.needsReview).count,
-      uncategorizedCount: rows.filter { $0.categoryID == nil }.count
+      uncategorizedCount: rows.filter { $0.categoryID == nil }.count,
+      categories: categoryBadges(categories)
     )
+  }
+
+  /// Every category in the map, spend or not, by `sortIndex` then name. The map
+  /// is a `Dictionary`, so the id is a last key rather than a tie left to hash
+  /// order: two devices adding a category offline both take max + 1
+  /// (`SwiftDataCategoryStore`), and a same-named pair would otherwise swap
+  /// places between launches.
+  static func categoryBadges(_ categories: [UUID: CategoryRef]) -> [CategoryBadge] {
+    categories.values
+      .sorted { lhs, rhs in
+        if lhs.sortIndex != rhs.sortIndex { return lhs.sortIndex < rhs.sortIndex }
+        if lhs.name != rhs.name { return lhs.name < rhs.name }
+        return lhs.id.uuidString < rhs.id.uuidString
+      }
+      .map { CategoryBadge(id: $0.id, name: $0.name, symbolName: $0.symbolName, paletteSlot: $0.paletteSlot) }
   }
 
   /// Debit only, one bucket per day that has spend, ascending. Days with no
