@@ -39,6 +39,7 @@ public final class AppEnvironment: ObservableObject {
   public let insightsStore: any InsightsStore
   public let budgetStore: any BudgetStore
   public let accountStore: any AccountStore
+  public let categorySuggester: any CategorySuggesting
 
   public let fileImportService: any FileImportService
   public let mail: MailStack
@@ -100,6 +101,7 @@ public final class AppEnvironment: ObservableObject {
     self.ruleStore = SwiftDataRuleStore(context: context, coordinator: coordinator)
     self.budgetStore = SwiftDataBudgetStore(context: context, coordinator: coordinator)
     self.accountStore = SwiftDataAccountStore(context: context, coordinator: coordinator)
+    self.categorySuggester = SwiftDataCategorySuggester(context: context)
 
     self.firstRun = FirstRunGate(store: preferences)
 
