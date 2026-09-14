@@ -137,6 +137,23 @@ public struct MerchantTotal: Sendable, Identifiable {
   }
 }
 
+/// A category as a screen draws it. The one shape every badge on every screen
+/// reads: `RecurringSeries.category` and `PeriodInsights.categories` share it,
+/// and no second type with these four fields exists in the module.
+public struct CategoryBadge: Sendable, Equatable, Identifiable {
+  public let id: UUID
+  public let name: String
+  public let symbolName: String
+  public let paletteSlot: Int
+
+  public init(id: UUID, name: String, symbolName: String, paletteSlot: Int) {
+    self.id = id
+    self.name = name
+    self.symbolName = symbolName
+    self.paletteSlot = paletteSlot
+  }
+}
+
 public struct PeriodInsights: Sendable {
   public let period: InsightPeriod
   public let debitMinor: Int
@@ -150,6 +167,15 @@ public struct PeriodInsights: Sendable {
   public let topMerchants: [MerchantTotal]
   public let needsReviewCount: Int
   public let uncategorizedCount: Int
+  /// Every category, by `sortIndex` then name: the map a transaction list reads
+  /// to draw a badge per row. Not period-scoped, so a category with no spend
+  /// this period is still here.
+  ///
+  /// The init default exists so NomiUI's own literals (previews, tests) compile
+  /// unchanged. Every NomiApp and NomiPreview site passes it explicitly, under
+  /// the rule `CategorySlice.symbolName` states: a default is how a production
+  /// site ships an empty map and every row draws the fallback badge.
+  public let categories: [CategoryBadge]
 
   public init(
     period: InsightPeriod,
@@ -163,7 +189,8 @@ public struct PeriodInsights: Sendable {
     byCategory: [CategorySlice],
     topMerchants: [MerchantTotal],
     needsReviewCount: Int,
-    uncategorizedCount: Int
+    uncategorizedCount: Int,
+    categories: [CategoryBadge] = []
   ) {
     self.period = period
     self.debitMinor = debitMinor
@@ -177,6 +204,7 @@ public struct PeriodInsights: Sendable {
     self.topMerchants = topMerchants
     self.needsReviewCount = needsReviewCount
     self.uncategorizedCount = uncategorizedCount
+    self.categories = categories
   }
 }
 

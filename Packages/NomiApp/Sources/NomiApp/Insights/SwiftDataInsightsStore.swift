@@ -172,7 +172,12 @@ public final class SwiftDataInsightsStore: InsightsStore {
     let categories = try context.fetch(FetchDescriptor<NomiCore.Category>())
     return Dictionary(
       categories.map {
-        ($0.id, CategoryRef(id: $0.id, name: $0.name, symbolName: $0.symbolName, paletteSlot: $0.paletteSlot))
+        (
+          $0.id,
+          CategoryRef(
+            id: $0.id, name: $0.name, symbolName: $0.symbolName, paletteSlot: $0.paletteSlot,
+            sortIndex: $0.sortIndex)
+        )
       },
       uniquingKeysWith: { first, _ in first }
     )

@@ -42,13 +42,13 @@ public final class FakeRecurringStore: RecurringInsightsStore {
   /// language mode. Safe: `RecurringSeries` is `Sendable` and this is a `let`.
   nonisolated public static let sampleSeries: [RecurringSeries] = {
     let day: TimeInterval = 86_400
-    let bills = RecurringSeries.CategoryBadge(
+    let bills = CategoryBadge(
       id: UUID(uuidString: "00000000-0000-0000-0000-000000000103")!,
       name: "Bills & Utilities",
       symbolName: "bolt",
       paletteSlot: 3
     )
-    let shopping = RecurringSeries.CategoryBadge(
+    let shopping = CategoryBadge(
       id: UUID(uuidString: "00000000-0000-0000-0000-000000000101")!,
       name: "Shopping",
       symbolName: "bag",
