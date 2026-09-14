@@ -43,3 +43,79 @@ enum BudgetFormGate {
     categoryID != nil
   }
 }
+
+/// The Budgets screen's aggregate — and, per v5 §Home, the Home remaining-
+/// budget card's source too (`DashboardWiring.budgetModule` wraps this),
+/// which is why it lives here rather than nested in `BudgetsScreen`.
+enum BudgetTotals {
+  struct Totals: Equatable {
+    let budgetMinor: Int
+    let spentMinor: Int
+    let remainingMinor: Int
+    let fraction: Double
+  }
+
+  /// `nil` for `[]` — a zero-budgets month has no totals to show, distinct
+  /// from a budgeted month that happens to sum to zero.
+  static func compute(_ progress: [BudgetProgress]) -> Totals? {
+    guard !progress.isEmpty else { return nil }
+    let budgetMinor = progress.reduce(0) { $0 + $1.budgetMinor }
+    let spentMinor = progress.reduce(0) { $0 + $1.spentMinor }
+    return Totals(
+      budgetMinor: budgetMinor,
+      spentMinor: spentMinor,
+      remainingMinor: budgetMinor - spentMinor,
+      fraction: budgetMinor == 0 ? 0 : Double(spentMinor) / Double(budgetMinor)
+    )
+  }
+}
+
+/// Days remaining in the current month, inclusive of today — the gauge
+/// card's "Days left" figure.
+enum BudgetDaysLeft {
+  static func remaining(from date: Date, calendar: Calendar = .current) -> Int {
+    guard let daysInMonth = calendar.range(of: .day, in: .month, for: date)?.count else { return 0 }
+    let today = calendar.component(.day, from: date)
+    return daysInMonth - today + 1
+  }
+}
+
+/// Whether spend is tracking under, on, over or past pace for the month —
+/// the pace card and Home's remaining-budget card (M2) both read the same
+/// four strings off `line(overByMinor:)` so they can never disagree.
+enum BudgetPace {
+  enum Pace: Equatable {
+    case under
+    case onPace
+    case ahead
+    case overBudget
+
+    func line(overByMinor: Int) -> String {
+      switch self {
+      case .under: return "Well under pace. You've built a cushion."
+      case .onPace: return "On pace."
+      case .ahead: return "Ahead of pace. Slow down to land under budget."
+      case .overBudget: return "Over budget by \(NomiFormatters.amountString(minor: overByMinor))."
+      }
+    }
+  }
+
+  static func assess(spentFraction: Double, elapsedFraction: Double) -> Pace {
+    if spentFraction >= 1 { return .overBudget }
+    if spentFraction > elapsedFraction + 0.10 { return .ahead }
+    if spentFraction < elapsedFraction - 0.10 { return .under }
+    return .onPace
+  }
+}
+
+/// A budget tile's caption — "₹3,000 left" or "₹600 over" — and `isOver`,
+/// which the tile uses to pick `overBudget` for the caption's colour. The
+/// ≥90% emphasis glyph/weight is `BudgetRowEmphasis`'s own separate call;
+/// this only decides the caption text and its colour.
+enum BudgetTileCaption {
+  static func text(_ remainingMinor: Int) -> (text: String, isOver: Bool) {
+    remainingMinor >= 0
+      ? ("\(NomiFormatters.amountString(minor: remainingMinor)) left", false)
+      : ("\(NomiFormatters.amountString(minor: -remainingMinor)) over", true)
+  }
+}

@@ -32,10 +32,10 @@ enum BudgetsPreviewSupport {
   ]
 
   static let sampleProgress: [BudgetProgress] = [
-    BudgetProgress(id: foodID, categoryName: "Food & Dining", paletteSlot: 0, budgetMinor: 5000_00, spentMinor: 2000_00, fraction: 0.4, periodKey: "2026-08"),
-    BudgetProgress(id: shoppingID, categoryName: "Shopping", paletteSlot: 1, budgetMinor: 8000_00, spentMinor: 7200_00, fraction: 0.9, periodKey: "2026-08"),
-    BudgetProgress(id: transportID, categoryName: "Transport", paletteSlot: 2, budgetMinor: 2000_00, spentMinor: 2600_00, fraction: 1.3, periodKey: "2026-08"),
-    BudgetProgress(id: billsID, categoryName: "Bills & Utilities", paletteSlot: 3, budgetMinor: 3000_00, spentMinor: 0, fraction: 0.0, periodKey: "2026-08"),
+    BudgetProgress(id: foodID, categoryName: "Food & Dining", symbolName: "fork.knife", paletteSlot: 0, budgetMinor: 5000_00, spentMinor: 2000_00, fraction: 0.4, periodKey: "2026-08"),
+    BudgetProgress(id: shoppingID, categoryName: "Shopping", symbolName: "bag", paletteSlot: 1, budgetMinor: 8000_00, spentMinor: 7200_00, fraction: 0.9, periodKey: "2026-08"),
+    BudgetProgress(id: transportID, categoryName: "Transport", symbolName: "car", paletteSlot: 2, budgetMinor: 2000_00, spentMinor: 2600_00, fraction: 1.3, periodKey: "2026-08"),
+    BudgetProgress(id: billsID, categoryName: "Bills & Utilities", symbolName: "bolt", paletteSlot: 3, budgetMinor: 3000_00, spentMinor: 0, fraction: 0.0, periodKey: "2026-08"),
   ]
 
   @MainActor
