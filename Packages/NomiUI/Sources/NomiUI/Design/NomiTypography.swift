@@ -53,17 +53,25 @@ public enum NomiFont {
 
 /// Type roles mapped from DESIGN.md's Figma-derived scale, negative tracking preserved.
 public enum NomiTextStyle {
+  /// v5 (`nomi-ui-refresh`): Montserrat-Bold 44, up from SemiBold 39 — "bold
+  /// white text" moving to the Bold cut, shipped in the bundle since U5 with
+  /// zero call sites until now.
   case dashboardHeroTotal
   case title
   case body
   case caption
+  /// v5, new: Montserrat-Bold 28. Gauge centre, remaining-budget figure,
+  /// sheet amount, subscriptions monthly total. v3 listed "Card value Bold
+  /// 28" and no case was ever added until this one.
+  case displayValue
 
   public var font: Font {
     switch self {
-    case .dashboardHeroTotal: return .custom(NomiFont.montserratSemiBold, size: 39)
+    case .dashboardHeroTotal: return .custom(NomiFont.montserratBold, size: 44)
     case .title: return .custom(NomiFont.montserratSemiBold, size: 20)
     case .body: return .custom(NomiFont.montserratMedium, size: 16)
     case .caption: return .custom(NomiFont.interRegular, size: 13)
+    case .displayValue: return .custom(NomiFont.montserratBold, size: 28)
     }
   }
 }

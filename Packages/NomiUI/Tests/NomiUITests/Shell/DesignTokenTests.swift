@@ -6,12 +6,17 @@ import XCTest
 final class DesignTokenTests: XCTestCase {
   func testFiveOpaqueSurfaceStepsMatchTheDesignScale() {
     let environment = EnvironmentValues()
+    // v5 (`nomi-ui-refresh`) hexes. Pinning these against the production
+    // tokens before this unit's change is exactly how a run of this test
+    // would go red first (the gate this done-when asks for) — the old
+    // production values (`#0c0c0c`, `#292929`, `#212121`, `#1C1C1C`,
+    // `#1E1E1E`) fail these five assertions until NomiColor.swift moves too.
     let steps: [(Color, UInt32)] = [
-      (NomiColor.surfaceCanvas, 0x0c0c0c),
-      (NomiColor.surface, 0x292929),
-      (NomiColor.surfaceRaised, 0x212121),
-      (NomiColor.surfaceRow, 0x1C1C1C),
-      (NomiColor.surfaceInput, 0x1E1E1E),
+      (NomiColor.surfaceCanvas, 0x0A0E17),
+      (NomiColor.surface, 0x262C3A),
+      (NomiColor.surfaceRaised, 0x1C2130),
+      (NomiColor.surfaceRow, 0x151A25),
+      (NomiColor.surfaceInput, 0x1A1F2B),
     ]
     for (actual, hex) in steps {
       let resolvedActual = actual.resolve(in: environment)
@@ -60,6 +65,14 @@ final class DesignTokenTests: XCTestCase {
     XCTAssertGreaterThanOrEqual(NomiRadius.tile, 8)
     XCTAssertGreaterThanOrEqual(NomiRadius.card, 8)
     XCTAssertGreaterThanOrEqual(NomiRadius.bar, 8)
+  }
+
+  func testCardRadiusIsTwentyFourAndInsetIsSixteen() {
+    // v5: card 16 -> 24, restoring the v4 ruling that never shipped; new
+    // `inset` step for tiles inside a card. Concentric: card 24 -> inset 16 -> tile 8.
+    XCTAssertEqual(NomiRadius.card, 24)
+    XCTAssertEqual(NomiRadius.inset, 16)
+    XCTAssertEqual(NomiRadius.tile, 8)
   }
 
   func testCurrencyFormatterUsesEnINGroupingAndRupeeSymbol() {

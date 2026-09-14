@@ -7,16 +7,27 @@ import SwiftUI
 public enum NomiColor {
   // MARK: - Surface steps
 
-  /// The canvas. Never `#000000` — DESIGN.md reserves true black for device chrome.
-  public static let surfaceCanvas = Color(hex: 0x0c0c0c)
-  /// Entry sheet composer, secondary buttons.
-  public static let surface = Color(hex: 0x292929)
-  /// Dashboard cards and other content sitting on the canvas.
-  public static let surfaceRaised = Color(hex: 0x212121)
-  /// Ledger rows once they become cards (`ui-ledger-surfaces`).
-  public static let surfaceRow = Color(hex: 0x1C1C1C)
-  /// Text inputs — amount field, note field.
-  public static let surfaceInput = Color(hex: 0x1E1E1E)
+  /// v5 (`nomi-ui-refresh`, Expensa reference): navy-black, one hue with
+  /// `accent`, reversing the neutral-ground ruling of 2026-09-03. Never
+  /// `#000000` — DESIGN.md reserves true black for device chrome.
+  public static let surfaceCanvas = Color(hex: 0x0A0E17)
+  /// v5: composer, secondary buttons, chips. White-on-surface passes AA on
+  /// every text step; two `CategoryPalette` slots (slot 5 green, `other`)
+  /// stay marginal at 2.82:1 / 2.70:1 — already true on `main` at 2.86/2.73,
+  /// not made worse here, not fixed here (`EntryChip` draws the dot here).
+  public static let surface = Color(hex: 0x262C3A)
+  /// v5: cards — the "charcoal". White 16.04:1, `textTertiary` 6.98:1,
+  /// `textSecondary` 13.46:1 — every text step passes AA. Every
+  /// `CategoryPalette` slot ≥ 3.10:1 (slot 5 green 3.24, `other` 3.10).
+  /// `debitText` 4.71:1, `creditText` 7.93:1. raised/canvas ratio 1.204
+  /// (was 1.215).
+  public static let surfaceRaised = Color(hex: 0x1C2130)
+  /// v5: ledger / list row cards. `debitText` 5.11:1, `creditText` 8.61:1.
+  /// row/canvas ratio 1.109 (was 1.148) — a touch flatter against the
+  /// ground; the row card's radius-`inset` shape carries the edge.
+  public static let surfaceRow = Color(hex: 0x151A25)
+  /// v5: text inputs — amount field, note field.
+  public static let surfaceInput = Color(hex: 0x1A1F2B)
 
   // MARK: - Glass
 
@@ -25,8 +36,9 @@ public enum NomiColor {
   public static let glassHairlineStrong = Color.white.opacity(0.15)
   public static let glassBlurRadius: CGFloat = 3
 
-  /// The floating tab bar's glass treatment — distinct from the card glass above.
-  public static let floatingGlassFill = Color(hex: 0x151515).opacity(0.8)
+  /// The floating tab bar's glass treatment — distinct from the card glass
+  /// above. v5: `#10141D` @ 0.8.
+  public static let floatingGlassFill = Color(hex: 0x10141D).opacity(0.8)
   public static let floatingGlassHairline = Color.white.opacity(0.12)
   public static let floatingGlassBlurRadius: CGFloat = 12
 
