@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import NomiCore
 
@@ -14,11 +15,40 @@ struct ParsedRow {
 }
 
 enum RowMapper {
-  /// `nil` means the row could not be mapped (bad date, bad amount, or a
-  /// row shorter than the mapping requires) and should count as `skipped`.
-  static func map(
+  /// Every data row of one file, in file order. An element is `nil` when its
+  /// row could not be mapped (bad date, bad amount, or a row shorter than the
+  /// mapping requires) and counts as `skipped`.
+  ///
+  /// This is the only way in, and it takes the whole file rather than a row,
+  /// because a row's id depends on the rows before it (W1-11): `k` is how many
+  /// byte-identical rows — fields joined by `|` — came earlier in the same
+  /// file, mapped or not.
+  static func mapAll(
+    rows: [[String]],
+    mapping: ColumnMapping,
+    formatSignature: String,
+    calendar: Calendar
+  ) -> [ParsedRow?] {
+    var seen: [String: Int] = [:]
+    return rows.map { row in
+      let rawRow = row.joined(separator: "|")
+      let k = seen[rawRow, default: 0]
+      seen[rawRow] = k + 1
+      return map(
+        row: row,
+        rawRow: rawRow,
+        k: k,
+        mapping: mapping,
+        formatSignature: formatSignature,
+        calendar: calendar
+      )
+    }
+  }
+
+  private static func map(
     row: [String],
-    rowIndex: Int,
+    rawRow: String,
+    k: Int,
     mapping: ColumnMapping,
     formatSignature: String,
     calendar: Calendar
@@ -43,7 +73,13 @@ enum RowMapper {
       !rawReference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
       externalID = rawReference.trimmingCharacters(in: .whitespacesAndNewlines)
     } else {
-      externalID = "\(formatSignature):\(rowIndex)"
+      // L10. The row's content, not its index: in an overlapping statement the
+      // same row sits at another index and must get the same id, so importing
+      // it again is a no-op. Two identical rows in one file differ only in `k`,
+      // so both are kept.
+      let digest = SHA256.hash(data: Data(rawRow.utf8))
+      let hex = digest.map { String(format: "%02x", $0) }.joined()
+      externalID = "\(formatSignature):\(hex):\(k)"
     }
 
     let normalized = normalizeDescription(description)
@@ -109,13 +145,28 @@ enum RowMapper {
     return NSDecimalNumber(decimal: rounded).intValue
   }
 
+  /// What `XLSXParser` writes for a real date cell.
+  static let isoDateFormat = "yyyy-MM-dd"
+
+  /// `format` first, then `isoDateFormat`, both in IST (W1-11).
+  ///
+  /// The fallback is what lets a preset read its own bank's `.xlsx`: the
+  /// preset says `dd/MM/yy` because that is what the bank's CSV contains, but a
+  /// date *cell* reaches the grid as ISO whatever the sheet displayed.
+  /// `DateFormatter` is not lenient, so a mapped format that does not fit the
+  /// string returns nil rather than a wrong date, and the fallback is tried.
   private static func parseDate(_ raw: String, format: String) -> Date? {
     let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = TimeZone(identifier: "Asia/Kolkata")
-    formatter.dateFormat = format
-    return formatter.date(from: trimmed)
+    for candidate in [format, isoDateFormat] {
+      let formatter = DateFormatter()
+      formatter.locale = Locale(identifier: "en_US_POSIX")
+      formatter.timeZone = TimeZone(identifier: "Asia/Kolkata")
+      formatter.dateFormat = candidate
+      if let date = formatter.date(from: trimmed) {
+        return date
+      }
+    }
+    return nil
   }
 }
