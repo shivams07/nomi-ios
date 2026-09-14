@@ -6,21 +6,16 @@ import SwiftUI
 /// increase/decrease framing is unit-testable without a live store.
 enum HeroDelta {
   struct Result: Equatable {
-    let percent: Double
+    let deltaMinor: Int
     let isIncrease: Bool
   }
 
-  /// `nil` when there is no comparable prior period, or the prior period was
-  /// zero (a percentage change against zero is undefined, not "infinite%").
+  /// `nil` only when there is no comparable prior period at all — v5: a zero
+  /// prior is a real prior now, so `compute(1000, 0)` is `+1000`, not `nil`;
+  /// the delta is simply the whole current figure.
   static func compute(current: Int, prior: Int?) -> Result? {
-    guard let prior, prior != 0 else { return nil }
-    let percent = Double(current - prior) / Double(abs(prior))
-    return Result(percent: percent, isIncrease: current >= prior)
-  }
-
-  static func percentText(_ percent: Double) -> String {
-    let whole = Int((abs(percent) * 100).rounded())
-    return "\(whole)%"
+    guard let prior else { return nil }
+    return Result(deltaMinor: current - prior, isIncrease: current >= prior)
   }
 }
 
@@ -34,11 +29,12 @@ enum HeroCountUp {
   }
 }
 
-/// The two nested tiles inside the accent-filled hero card (`nomi.md`
-/// "UI direction — v4"). Pulled out as a pure function, same reasoning as
-/// `HeroDelta`/`HeroCountUp` above: this package's `swift test` runner has no
-/// view-inspection library, so what the card is supposed to show is tested as
-/// data rather than by rendering.
+/// The two figures behind the hero's income/expenses caption line (v5: the
+/// nested tiles became text, but the pure source of both strings survives
+/// unchanged). Pulled out as a pure function, same reasoning as `HeroDelta`/
+/// `HeroCountUp` above: this package's `swift test` runner has no
+/// view-inspection library, so what the line is supposed to show is tested
+/// as data rather than by rendering.
 enum HeroIncomeExpense {
   struct Tile: Equatable {
     let title: String
@@ -53,48 +49,47 @@ enum HeroIncomeExpense {
   }
 }
 
-/// Card 1: the period's spend total against the prior period, now
-/// accent-filled with two nested Income/Expenses tiles and `NomiGlow` — the
-/// v4 change U9 specified but never wired up (`nomi-ui-reference-comparison.md`
-/// §3). The AC is explicit that the headline figure — and only this figure on
-/// the dashboard — uses PROPORTIONAL digits (`NomiTextStyle.dashboardHeroTotal`,
-/// a plain custom font, not `TabularFigures`); every ranked list and axis tick
-/// elsewhere uses the tabular helper instead.
-///
-/// Deliberately not `DashboardCard`: that shell is contractually `#212121`
-/// per U9's own done-when, so this card builds its own accent-filled
-/// container instead of touching that shared shell's contract.
+/// Card 3 (v5 `nomi-ui-refresh` §Home): the period's spend total, flush on
+/// the ground — deliberately not `DashboardCard`, no accent fill, no glow
+/// modifier. Centred: caption, headline figure, delta, the cumulative
+/// sparkline, then one income/expenses caption line. The AC is explicit that
+/// the headline figure — and only this figure on the dashboard — uses
+/// PROPORTIONAL digits (`NomiTextStyle.dashboardHeroTotal`, a plain custom
+/// font, not `TabularFigures`); every ranked list and axis tick elsewhere
+/// uses the tabular helper instead.
 public struct HeroTotalCard: View {
   public let insights: PeriodInsights
+  public let periodLabel: String
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @State private var displayedMinor: Int
 
-  public init(insights: PeriodInsights) {
+  public init(insights: PeriodInsights, periodLabel: String) {
     self.insights = insights
+    self.periodLabel = periodLabel
     _displayedMinor = State(initialValue: insights.debitMinor)
   }
 
   public var body: some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.sm) {
-      VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-        Text("Spent this period")
+    VStack(spacing: NomiSpacing.sm) {
+      VStack(spacing: NomiSpacing.xxs) {
+        Text("Total spent in \(periodLabel)")
           .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.textPrimary.opacity(0.7))
+          .foregroundStyle(NomiColor.textTertiary)
         Text(NomiFormatters.amountString(minor: displayedMinor))
           .nomiTextStyle(.dashboardHeroTotal)
-          .foregroundStyle(NomiColor.textPrimary)
+          .foregroundStyle(Color.white)
           .contentTransition(.numericText(value: Double(displayedMinor)))
         deltaView
       }
-      tilesRow
+      HeroSparklineView(byDay: insights.byDay)
+        .frame(maxWidth: .infinity)
+      Text(incomeExpenseLine)
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.textTertiary)
     }
-    .padding(NomiSpacing.cardPadding)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(NomiColor.accent)
-    .nomiCornerRadius(NomiRadius.card)
-    .nomiGlow()
+    .frame(maxWidth: .infinity)
+    .multilineTextAlignment(.center)
     .onAppear { animateIn() }
     .onChange(of: insights.debitMinor) { _, _ in animateIn() }
   }
@@ -107,114 +102,123 @@ public struct HeroTotalCard: View {
     }
   }
 
+  /// An absolute amount, as the reference — the glyph carries direction, no
+  /// hue, so the caption stays tertiary regardless of increase or decrease.
   @ViewBuilder
   private var deltaView: some View {
     if let delta = HeroDelta.compute(current: insights.debitMinor, prior: insights.priorDebitMinor) {
-      Text("\(delta.isIncrease ? "▲" : "▼") \(HeroDelta.percentText(delta.percent)) vs last period")
+      Text("\(delta.isIncrease ? "↑" : "↓") \(NomiFormatters.amountString(minor: abs(delta.deltaMinor))) vs last period")
         .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textPrimary.opacity(0.7))
+        .foregroundStyle(NomiColor.textTertiary)
     } else {
       Text("No prior period to compare")
         .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textPrimary.opacity(0.7))
+        .foregroundStyle(NomiColor.textTertiary)
     }
   }
 
-  // At accessibility Dynamic Type sizes the tiles stack instead of fighting
-  // each other for horizontal space, same rule as `TransactionRow`.
-  private var tilesRow: some View {
-    Group {
-      if dynamicTypeSize.isAccessibilitySize {
-        VStack(spacing: NomiSpacing.xs) {
-          ForEach(HeroIncomeExpense.tiles(for: insights), id: \.title) { tile in
-            tileView(tile)
-          }
-        }
-      } else {
-        HStack(spacing: NomiSpacing.xs) {
-          ForEach(HeroIncomeExpense.tiles(for: insights), id: \.title) { tile in
-            tileView(tile)
-          }
-        }
-      }
-    }
-  }
-
-  private func tileView(_ tile: HeroIncomeExpense.Tile) -> some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-      Text(tile.title)
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textPrimary.opacity(0.7))
-      Text(tile.amountText)
-        .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 14))
-        .foregroundStyle(NomiColor.textPrimary)
-    }
-    .padding(NomiSpacing.sm)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(NomiColor.glassFill)
-    .overlay(
-      RoundedRectangle(cornerRadius: NomiRadius.tile, style: NomiRadius.cardSheetStyle)
-        .stroke(NomiColor.glassHairline, lineWidth: 1)
-    )
-    .nomiCornerRadius(NomiRadius.tile)
+  private var incomeExpenseLine: String {
+    HeroIncomeExpense.tiles(for: insights)
+      .map { "\($0.title) \($0.amountText)" }
+      .joined(separator: " · ")
   }
 }
 
 #Preview("Hero total — default, dark") {
-  HeroTotalCard(insights: PeriodInsights(
-    period: .month(year: 2026, month: 8),
-    debitMinor: 42_318_00,
-    creditMinor: 60_000_00,
-    netMinor: 17_682_00,
-    priorDebitMinor: 38_000_00,
-    priorCreditMinor: 55_000_00,
-    transactionCount: 74,
-    byDay: [],
-    byCategory: [],
-    topMerchants: [],
-    needsReviewCount: 0,
-    uncategorizedCount: 0
-  ))
+  HeroTotalCard(
+    insights: PeriodInsights(
+      period: .month(year: 2026, month: 8),
+      debitMinor: 42_318_00,
+      creditMinor: 60_000_00,
+      netMinor: 17_682_00,
+      priorDebitMinor: 38_000_00,
+      priorCreditMinor: 55_000_00,
+      transactionCount: 74,
+      byDay: (0..<20).map { offset in
+        DayBucket(
+          id: Calendar.current.date(byAdding: .day, value: -offset, to: Date())!,
+          debitMinor: Int.random(in: 500...9000) * 100
+        )
+      },
+      byCategory: [],
+      topMerchants: [],
+      needsReviewCount: 0,
+      uncategorizedCount: 0
+    ),
+    periodLabel: "August 2026"
+  )
   .padding()
   .background(NomiColor.surfaceCanvas)
   .preferredColorScheme(.dark)
 }
 
 #Preview("Hero total — no prior period, dark") {
-  HeroTotalCard(insights: PeriodInsights(
-    period: .allTime,
-    debitMinor: 12_000_00,
-    creditMinor: 20_000_00,
-    netMinor: 8_000_00,
-    priorDebitMinor: nil,
-    priorCreditMinor: nil,
-    transactionCount: 9,
-    byDay: [],
-    byCategory: [],
-    topMerchants: [],
-    needsReviewCount: 0,
-    uncategorizedCount: 0
-  ))
+  HeroTotalCard(
+    insights: PeriodInsights(
+      period: .allTime,
+      debitMinor: 12_000_00,
+      creditMinor: 20_000_00,
+      netMinor: 8_000_00,
+      priorDebitMinor: nil,
+      priorCreditMinor: nil,
+      transactionCount: 9,
+      byDay: [],
+      byCategory: [],
+      topMerchants: [],
+      needsReviewCount: 0,
+      uncategorizedCount: 0
+    ),
+    periodLabel: "All time"
+  )
+  .padding()
+  .background(NomiColor.surfaceCanvas)
+  .preferredColorScheme(.dark)
+}
+
+#Preview("Hero total — sparkline with two buckets, dark") {
+  HeroTotalCard(
+    insights: PeriodInsights(
+      period: .month(year: 2026, month: 9),
+      debitMinor: 3500_00,
+      creditMinor: 5000_00,
+      netMinor: 1500_00,
+      priorDebitMinor: 3000_00,
+      priorCreditMinor: 5000_00,
+      transactionCount: 4,
+      byDay: [
+        DayBucket(id: Calendar.current.date(byAdding: .day, value: -1, to: Date())!, debitMinor: 2000_00),
+        DayBucket(id: Date(), debitMinor: 1500_00),
+      ],
+      byCategory: [],
+      topMerchants: [],
+      needsReviewCount: 0,
+      uncategorizedCount: 0
+    ),
+    periodLabel: "September 2026"
+  )
   .padding()
   .background(NomiColor.surfaceCanvas)
   .preferredColorScheme(.dark)
 }
 
 #Preview("Hero total — accessibility 3, dark") {
-  HeroTotalCard(insights: PeriodInsights(
-    period: .month(year: 2026, month: 8),
-    debitMinor: 42_318_00,
-    creditMinor: 60_000_00,
-    netMinor: 17_682_00,
-    priorDebitMinor: 38_000_00,
-    priorCreditMinor: 55_000_00,
-    transactionCount: 74,
-    byDay: [],
-    byCategory: [],
-    topMerchants: [],
-    needsReviewCount: 0,
-    uncategorizedCount: 0
-  ))
+  HeroTotalCard(
+    insights: PeriodInsights(
+      period: .month(year: 2026, month: 8),
+      debitMinor: 42_318_00,
+      creditMinor: 60_000_00,
+      netMinor: 17_682_00,
+      priorDebitMinor: 38_000_00,
+      priorCreditMinor: 55_000_00,
+      transactionCount: 74,
+      byDay: [],
+      byCategory: [],
+      topMerchants: [],
+      needsReviewCount: 0,
+      uncategorizedCount: 0
+    ),
+    periodLabel: "August 2026"
+  )
   .padding()
   .background(NomiColor.surfaceCanvas)
   .environment(\.dynamicTypeSize, .accessibility3)

@@ -20,14 +20,30 @@ enum RecentRows {
   }
 }
 
-/// Card 7 (v5): the 5 most recent rows across all accounts, newest first.
-/// Distinct AC from `TopMerchantsCard` — a list of individual rows, not a
-/// rollup. Merchant labels use `merchantName ?? descriptionText` (§2.4).
+/// `RecentTransactionsCard`'s badge dictionary — `uniquingKeysWith` first
+/// wins because duplicate ids exist on two-device stores (the ledger's own
+/// guard, mirrored here rather than assumed away).
+enum RecentBadges {
+  static func lookup(_ categories: [CategoryBadge]) -> [UUID: CategoryBadge] {
+    Dictionary(categories.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+  }
+}
+
+/// Card 7 (v5 `nomi-ui-refresh` §Home): the 5 most recent rows across all
+/// accounts, newest first. Distinct AC from `TopMerchantsCard` — a list of
+/// individual rows, not a rollup. Merchant labels use `merchantName ??
+/// descriptionText` (§2.4). Rows now carry a 32pt `NomiCategoryBadge` (grey
+/// `questionmark` when the row has no matching badge) and are tappable,
+/// opening the transaction sheet via `onSelect`.
 public struct RecentTransactionsCard: View {
   public let transactions: [NomiCore.Transaction]
+  public let badges: [UUID: CategoryBadge]
+  public let onSelect: ((UUID) -> Void)?
 
-  public init(transactions: [NomiCore.Transaction]) {
+  public init(transactions: [NomiCore.Transaction], badges: [UUID: CategoryBadge] = [:], onSelect: ((UUID) -> Void)? = nil) {
     self.transactions = transactions
+    self.badges = badges
+    self.onSelect = onSelect
   }
 
   private var recent: [NomiCore.Transaction] {
@@ -56,23 +72,30 @@ public struct RecentTransactionsCard: View {
   }
 
   private func row(for transaction: NomiCore.Transaction) -> some View {
-    HStack(spacing: NomiSpacing.xs) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(transaction.merchantName ?? transaction.descriptionText)
-          .nomiTextStyle(.body)
-          .foregroundStyle(NomiColor.textPrimary)
-          .lineLimit(1)
-        Text(NomiFormatters.dayMonthAdaptive(transaction.date, relativeTo: Date()))
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.textTertiary)
+    let badge = transaction.categoryID.flatMap { badges[$0] }
+    return Button {
+      onSelect?(transaction.id)
+    } label: {
+      HStack(spacing: NomiSpacing.xs) {
+        NomiCategoryBadge(symbolName: badge?.symbolName ?? "questionmark", paletteSlot: badge?.paletteSlot, size: 32)
+        VStack(alignment: .leading, spacing: 2) {
+          Text(transaction.merchantName ?? transaction.descriptionText)
+            .nomiTextStyle(.body)
+            .foregroundStyle(NomiColor.textPrimary)
+            .lineLimit(1)
+          Text(NomiFormatters.dayMonthAdaptive(transaction.date, relativeTo: Date()))
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.textTertiary)
+        }
+        Spacer(minLength: NomiSpacing.xs)
+        Text(
+          Self.amountText(minor: transaction.amountMinor, direction: transaction.direction, currencyCode: transaction.currencyCode)
+        )
+          .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 14))
+          .foregroundStyle(transaction.direction == .credit ? NomiColor.creditText : NomiColor.debitText)
       }
-      Spacer(minLength: NomiSpacing.xs)
-      Text(
-        Self.amountText(minor: transaction.amountMinor, direction: transaction.direction, currencyCode: transaction.currencyCode)
-      )
-        .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 14))
-        .foregroundStyle(transaction.direction == .credit ? NomiColor.creditText : NomiColor.debitText)
     }
+    .buttonStyle(.plain)
   }
 
   static func amountText(minor: Int, direction: Direction, currencyCode: String = "INR") -> String {

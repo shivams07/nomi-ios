@@ -8,11 +8,11 @@ final class DashboardWiringTests: XCTestCase {
     XCTAssertFalse(DashboardWiring.accountsIncludeArchived)
   }
 
-  func testBudgetModuleIsHiddenWhenNoBudgetsExist() {
-    XCTAssertFalse(DashboardWiring.shouldShowBudgetModule([]))
+  func testBudgetModuleIsPromptWhenNoBudgetsExist() {
+    XCTAssertEqual(DashboardWiring.budgetModule([]), .prompt)
   }
 
-  func testBudgetModuleShowsWhenAtLeastOneBudgetExists() {
+  func testBudgetModuleIsRemainingWithTotalsWhenBudgetsExist() {
     let item = BudgetProgress(
       id: UUID(),
       categoryName: "Food & Dining",
@@ -22,22 +22,18 @@ final class DashboardWiringTests: XCTestCase {
       fraction: 0.2,
       periodKey: "2026-08"
     )
-    XCTAssertTrue(DashboardWiring.shouldShowBudgetModule([item]))
+    guard case .remaining(let totals) = DashboardWiring.budgetModule([item]) else {
+      return XCTFail("a non-empty list must yield .remaining")
+    }
+    XCTAssertEqual(totals, BudgetTotals.compute([item]))
   }
 
-  func testBudgetLineFormatsSpentOfBudget() {
-    let item = BudgetProgress(
-      id: UUID(),
-      categoryName: "Food & Dining",
-      paletteSlot: 0,
-      budgetMinor: 5000_00,
-      spentMinor: 1000_00,
-      fraction: 0.2,
-      periodKey: "2026-08"
-    )
-    let line = BudgetProgressCard.line(for: item)
-    XCTAssertTrue(line.contains("of"))
-    XCTAssertTrue(line.contains("₹"))
+  func testRecentBadgesLookupKeepsFirstOfDuplicateIDs() {
+    let id = UUID()
+    let first = CategoryBadge(id: id, name: "Food", symbolName: "fork.knife", paletteSlot: 0)
+    let second = CategoryBadge(id: id, name: "Food Dup", symbolName: "cart", paletteSlot: 1)
+    let lookup = RecentBadges.lookup([first, second])
+    XCTAssertEqual(lookup[id]?.name, "Food")
   }
 
   // MARK: - F2: the recent card does not read the whole ledger
