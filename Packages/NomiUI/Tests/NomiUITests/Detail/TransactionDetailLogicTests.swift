@@ -98,4 +98,44 @@ final class TransactionDetailLogicTests: XCTestCase {
   func testNoteToSaveTreatsWhitespaceOnlyAsNoNote() {
     XCTAssertNil(TransactionDetailLogic.noteToSave(from: "   \n  "))
   }
+
+  // MARK: - M4: SuggestionRow
+
+  func testIsShownFalseForNilSuggestion() {
+    XCTAssertFalse(SuggestionRow.isShown(suggestion: nil, currentCategoryID: UUID(), categorySource: .rule))
+  }
+
+  func testIsShownFalseWhenCategorySourceIsManual() {
+    let suggestion = CategorySuggestion(categoryID: UUID(), reason: .merchantHistory(matches: 4))
+    XCTAssertFalse(SuggestionRow.isShown(suggestion: suggestion, currentCategoryID: UUID(), categorySource: .manual))
+  }
+
+  func testIsShownFalseWhenSuggestedIDEqualsCurrent() {
+    let categoryID = UUID()
+    let suggestion = CategorySuggestion(categoryID: categoryID, reason: .merchantHistory(matches: 4))
+    XCTAssertFalse(SuggestionRow.isShown(suggestion: suggestion, currentCategoryID: categoryID, categorySource: .rule))
+  }
+
+  func testIsShownTrueOtherwise() {
+    let suggestion = CategorySuggestion(categoryID: UUID(), reason: .merchantHistory(matches: 4))
+    XCTAssertTrue(SuggestionRow.isShown(suggestion: suggestion, currentCategoryID: nil, categorySource: .none))
+  }
+
+  func testReasonTextForMerchantHistory() {
+    let text = SuggestionRow.reasonText(
+      reason: .merchantHistory(matches: 4), merchantLabel: "Swiggy", categoryName: "Food & Dining")
+    XCTAssertEqual(text, "You filed Swiggy as Food & Dining 4 times")
+  }
+
+  func testReasonTextForMerchantHistorySingularMatch() {
+    let text = SuggestionRow.reasonText(
+      reason: .merchantHistory(matches: 1), merchantLabel: "Swiggy", categoryName: "Food & Dining")
+    XCTAssertEqual(text, "You filed Swiggy as Food & Dining 1 time")
+  }
+
+  func testReasonTextForRule() {
+    let text = SuggestionRow.reasonText(
+      reason: .rule(ruleID: UUID()), merchantLabel: "Swiggy", categoryName: "Food & Dining")
+    XCTAssertEqual(text, "Matches your rule for Swiggy")
+  }
 }

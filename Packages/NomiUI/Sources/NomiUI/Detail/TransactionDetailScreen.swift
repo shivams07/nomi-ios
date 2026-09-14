@@ -10,11 +10,24 @@ import UIKit
 import AppKit
 #endif
 
-/// The transaction detail screen (fix-plan unit 1). Pushed from `LedgerScreen`
-/// via `NavigationLink(value: transaction.id)` / `.navigationDestination(for:
-/// UUID.self)`, so it takes an id rather than the row itself and reads the row,
-/// categories and accounts back out through `@Query` — the container reaches
-/// it because it is pushed inside the Ledger tab's own `NavigationStack`.
+/// `LedgerScreen`'s `.sheet(item:)` identity — a bare `UUID` isn't
+/// `Identifiable`, and wrapping it here (rather than conforming `UUID`
+/// itself, which this module doesn't own) keeps the presentation type
+/// specific to this one sheet.
+public struct PresentedTransaction: Identifiable, Hashable, Sendable {
+  public let id: UUID
+
+  public init(id: UUID) {
+    self.id = id
+  }
+}
+
+/// The transaction detail screen. v5 (`nomi-ui-refresh`, M4): presented as
+/// the shared bottom-sheet style from `LedgerScreen` (`.sheet(item:)`,
+/// `PresentedTransaction`), not pushed — it takes an id rather than the row
+/// itself and reads the row, categories and accounts back out through
+/// `@Query`; `.sheet(item:)` applies its own `.modelContainer` (see
+/// `LedgerScreen`'s note), which is what makes that `@Query` safe here.
 ///
 /// Closes three dead ends the review queue had no exit from: assigning a
 /// category or account to *any* row (not just ones a rule already touched),
@@ -24,13 +37,15 @@ import AppKit
 /// an `.alert`, a deliberate departure from `AccountRenameSheet`/
 /// `RuleEditorSheet`'s inline error text, because this screen can fail in more
 /// places (four independent store calls, not one) and a swallowed failure here
-/// means the user thinks their edit or delete took effect when it didn't.
+/// means the user thinks their edit or delete took effect when it didn't. The
+/// one deliberate exception is the suggestion read below.
 public struct TransactionDetailScreen: View {
   public let transactionID: UUID
   public let transactionStore: TransactionStore
   public let editor: TransactionEditing
   public let categoryStore: CategoryStore
   public let accountStore: AccountStore
+  public let suggester: (any CategorySuggesting)?
 
   @Query private var matches: [NomiCore.Transaction]
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
@@ -43,7 +58,9 @@ public struct TransactionDetailScreen: View {
   @State private var isAccountPickerPresented = false
   @State private var isDatePickerPresented = false
   @State private var isConfirmingDelete = false
+  @State private var isEditExpanded = false
   @State private var errorMessage: String?
+  @State private var suggestion: CategorySuggestion?
 
   @State private var amountText = ""
   @State private var editedDate = Date()
@@ -56,13 +73,15 @@ public struct TransactionDetailScreen: View {
     transactionStore: TransactionStore,
     editor: TransactionEditing,
     categoryStore: CategoryStore,
-    accountStore: AccountStore
+    accountStore: AccountStore,
+    suggester: (any CategorySuggesting)? = nil
   ) {
     self.transactionID = transactionID
     self.transactionStore = transactionStore
     self.editor = editor
     self.categoryStore = categoryStore
     self.accountStore = accountStore
+    self.suggester = suggester
     _matches = Query(filter: #Predicate<NomiCore.Transaction> { $0.id == transactionID })
   }
 
@@ -85,42 +104,54 @@ public struct TransactionDetailScreen: View {
     return formatter.currencySymbol
   }
 
+  private func categoryName(for transaction: NomiCore.Transaction) -> String? {
+    transaction.categoryID.flatMap { id in categories.first { $0.id == id }?.name }
+  }
+
+  private func isSuggestionShown(for transaction: NomiCore.Transaction) -> Bool {
+    SuggestionRow.isShown(
+      suggestion: suggestion, currentCategoryID: transaction.categoryID, categorySource: transaction.categorySource)
+  }
+
   public var body: some View {
     Group {
       if let transaction {
-        List {
-          headerSection(transaction)
-          categorySection(transaction)
-          accountSection(transaction)
-          editSection
-          sourceSection(transaction)
-          if transaction.upiKindRaw != nil {
-            upiSection(transaction)
-          }
-          if TransactionDetailLogic.availableActions(needsReview: transaction.needsReview).contains(.markReviewed) {
-            Section {
-              Button("Mark reviewed") { markReviewed() }
+        ScrollView {
+          VStack(spacing: NomiSpacing.md) {
+            topRow
+            headerSection(transaction)
+            if isSuggestionShown(for: transaction), let suggestion {
+              suggestionPanel(transaction: transaction, suggestion: suggestion)
             }
-            .listRowBackground(NomiColor.surfaceRaised)
+            rowsSection(transaction, suggestionShown: isSuggestionShown(for: transaction))
+            if TransactionDetailLogic.availableActions(needsReview: transaction.needsReview).contains(.markReviewed) {
+              markReviewedRow
+            }
+            if isEditExpanded {
+              editSection
+              sourceSection(transaction)
+              if transaction.upiKindRaw != nil {
+                upiSection(transaction)
+              }
+            }
           }
-          Section {
-            Button("Delete", role: .destructive) { isConfirmingDelete = true }
-          }
-          .listRowBackground(NomiColor.surfaceRaised)
+          .padding(NomiSpacing.screenGutter)
         }
-        .scrollContentBackground(.hidden)
-        .background(NomiColor.surfaceCanvas)
-        .onAppear { prefillEditIfNeeded(transaction) }
+        .onAppear {
+          prefillEditIfNeeded(transaction)
+          refreshSuggestion()
+        }
       } else {
-        // Reached for a beat after `delete()` pops this screen — the `@Query`
-        // above updates before the pop animation finishes — and, defensively,
-        // for an id that no longer matches any row.
+        // Reached for a beat after `delete()` dismisses this sheet — the
+        // `@Query` above updates before the dismiss animation finishes — and,
+        // defensively, for an id that no longer matches any row.
         ProgressView()
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .background(NomiColor.surfaceCanvas)
       }
     }
-    .navigationTitle("Transaction")
+    .background(NomiColor.surfaceCanvas)
+    .nomiSheet()
     .confirmationDialog(
       "Delete this transaction?", isPresented: $isConfirmingDelete, titleVisibility: .visible
     ) {
@@ -151,85 +182,203 @@ public struct TransactionDetailScreen: View {
     )
   }
 
+  // MARK: - Top row
+
+  private var topRow: some View {
+    HStack {
+      circleButton(systemName: "xmark") { dismiss() }
+      Spacer()
+      circleButton(systemName: "pencil") { isEditExpanded.toggle() }
+      circleButton(systemName: "trash") { isConfirmingDelete = true }
+    }
+  }
+
+  private func circleButton(systemName: String, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Image(systemName: systemName)
+        .foregroundStyle(NomiColor.textSecondary)
+        .frame(width: 32, height: 32)
+        .background(NomiColor.glassFill)
+        .clipShape(Circle())
+    }
+    .buttonStyle(.plain)
+  }
+
   // MARK: - Header
 
   private func headerSection(_ transaction: NomiCore.Transaction) -> some View {
-    Section {
-      VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-        Text(transaction.merchantName ?? transaction.descriptionText)
+    VStack(spacing: NomiSpacing.xs) {
+      let category = transaction.categoryID.flatMap { id in categories.first { $0.id == id } }
+      NomiCategoryBadge(symbolName: category?.symbolName ?? "questionmark", paletteSlot: category?.paletteSlot, size: 56)
+      Text(
+        TransactionRow.title(
+          merchantName: transaction.merchantName, descriptionText: transaction.descriptionText,
+          categoryName: categoryName(for: transaction))
+      )
+        .nomiTextStyle(.title)
+        .foregroundStyle(NomiColor.textPrimary)
+      Text(
+        TransactionRow.amountText(
+          minor: transaction.amountMinor, direction: transaction.direction, currencyCode: transaction.currencyCode)
+      )
+        .nomiTextStyle(.displayValue)
+        .foregroundStyle(transaction.direction == .credit ? NomiColor.creditText : NomiColor.debitText)
+      // U24: shown only when present — a note is a fact about the row, not a
+      // flag, so it sits with the header rather than in `flagReasons`.
+      if let note = transaction.note {
+        Text(note)
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.textSecondary)
+      }
+      ForEach(
+        TransactionDetailLogic.flagReasons(
+          accountID: transaction.accountID, needsReview: transaction.needsReview, mergedCount: transaction.mergedCount
+        ), id: \.self
+      ) { reason in
+        Text(reason)
+          .nomiTextStyle(.caption)
+          .foregroundStyle(CategoryPalette.other)
+      }
+    }
+    .frame(maxWidth: .infinity)
+    .multilineTextAlignment(.center)
+  }
+
+  // MARK: - Suggestion panel
+
+  private func suggestionPanel(transaction: NomiCore.Transaction, suggestion: CategorySuggestion) -> some View {
+    let category = categories.first { $0.id == suggestion.categoryID }
+    let categoryName = category?.name ?? "Uncategorized"
+    let merchantLabel = transaction.merchantName ?? transaction.descriptionText
+    return VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+      Text("✦ Suggested category")
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.textTertiary)
+      HStack(spacing: NomiSpacing.xs) {
+        NomiCategoryBadge(symbolName: category?.symbolName ?? "questionmark", paletteSlot: category?.paletteSlot, size: 32)
+        Text(categoryName)
           .nomiTextStyle(.body)
           .foregroundStyle(NomiColor.textPrimary)
-        Text(
-          TransactionRow.amountText(
-            minor: transaction.amountMinor, direction: transaction.direction, currencyCode: transaction.currencyCode)
-        )
-          .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 20))
-          .foregroundStyle(transaction.direction == .credit ? NomiColor.creditText : NomiColor.debitText)
-        Text(NomiFormatters.dayMonthYear.string(from: transaction.date))
-          .nomiTextStyle(.caption)
+      }
+      Text(SuggestionRow.reasonText(reason: suggestion.reason, merchantLabel: merchantLabel, categoryName: categoryName))
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.textTertiary)
+      HStack(spacing: NomiSpacing.xs) {
+        pillButton(title: "Change category", background: NomiColor.surface) {
+          pendingCategorySelection = transaction.categoryID
+          isCategoryPickerPresented = true
+        }
+        pillButton(title: "Apply", background: NomiColor.accent) {
+          updateCategory(to: suggestion.categoryID)
+        }
+      }
+    }
+    .padding(NomiSpacing.cardPadding)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(NomiColor.surfaceRow)
+    .overlay(
+      RoundedRectangle(cornerRadius: NomiRadius.inset, style: NomiRadius.cardSheetStyle)
+        .stroke(NomiColor.glassHairline, lineWidth: 1)
+    )
+    .nomiCornerRadius(NomiRadius.inset)
+  }
+
+  private func pillButton(title: String, background: Color, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Text(title)
+        .nomiTextStyle(.body)
+        .foregroundStyle(Color.white)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, NomiSpacing.xs)
+        .background(background)
+        .clipShape(Capsule(style: .continuous))
+    }
+    .buttonStyle(.plain)
+  }
+
+  // MARK: - Rows
+
+  private func rowsSection(_ transaction: NomiCore.Transaction, suggestionShown: Bool) -> some View {
+    VStack(spacing: NomiSpacing.xs) {
+      // Hidden while the suggestion panel shows — the panel already carries
+      // the category badge and name.
+      if !suggestionShown {
+        categoryRow(transaction)
+      }
+      accountRow(transaction)
+      dateRow
+    }
+  }
+
+  private func detailRow<Content: View>(action: @escaping () -> Void, @ViewBuilder content: () -> Content) -> some View {
+    Button(action: action) {
+      content()
+        .padding(NomiSpacing.cardPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(NomiColor.surfaceRow)
+        .nomiCornerRadius(NomiRadius.inset)
+    }
+    .buttonStyle(.plain)
+  }
+
+  private func categoryRow(_ transaction: NomiCore.Transaction) -> some View {
+    let category = transaction.categoryID.flatMap { id in categories.first { $0.id == id } }
+    return detailRow {
+      pendingCategorySelection = transaction.categoryID
+      isCategoryPickerPresented = true
+    } content: {
+      HStack(spacing: NomiSpacing.xs) {
+        NomiCategoryBadge(symbolName: category?.symbolName ?? "questionmark", paletteSlot: category?.paletteSlot, size: 32)
+        Text(category?.name ?? "Uncategorized")
+          .foregroundStyle(NomiColor.textPrimary)
+        Spacer()
+        Image(systemName: "chevron.right").foregroundStyle(NomiColor.textTertiary)
+      }
+    }
+  }
+
+  private func accountRow(_ transaction: NomiCore.Transaction) -> some View {
+    let name = transaction.accountID.flatMap { id in accounts.first { $0.id == id }?.displayName } ?? "Unassigned"
+    return detailRow {
+      isAccountPickerPresented = true
+    } content: {
+      HStack {
+        Text(name).foregroundStyle(NomiColor.textPrimary)
+        Spacer()
+        Image(systemName: "chevron.right").foregroundStyle(NomiColor.textTertiary)
+      }
+    }
+  }
+
+  /// Opening the date picker also expands the edit section — that's where
+  /// "Save changes" lives, and there is no other way to commit a date pick.
+  private var dateRow: some View {
+    detailRow {
+      isEditExpanded = true
+      isDatePickerPresented = true
+    } content: {
+      HStack {
+        Image(systemName: "calendar").foregroundStyle(NomiColor.textSecondary)
+        Spacer()
+        Text(NomiFormatters.dayMonthYear.string(from: editedDate))
           .foregroundStyle(NomiColor.textTertiary)
-        // U24: shown only when present — a note is a fact about the row,
-        // not a flag, so it sits with the date rather than in `flagReasons`.
-        if let note = transaction.note {
-          Text(note)
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.textSecondary)
-        }
-        ForEach(
-          TransactionDetailLogic.flagReasons(
-            accountID: transaction.accountID, needsReview: transaction.needsReview,
-            mergedCount: transaction.mergedCount
-          ), id: \.self
-        ) { reason in
-          Text(reason)
-            .nomiTextStyle(.caption)
-            .foregroundStyle(CategoryPalette.other)
-        }
-      }
-      .padding(.vertical, NomiSpacing.xxs)
-    }
-    .listRowBackground(NomiColor.surfaceRaised)
-  }
-
-  // MARK: - Category / Account
-
-  private func categorySection(_ transaction: NomiCore.Transaction) -> some View {
-    Section("Category") {
-      let name = transaction.categoryID.flatMap { id in categories.first { $0.id == id }?.name } ?? "Uncategorized"
-      Button {
-        pendingCategorySelection = transaction.categoryID
-        isCategoryPickerPresented = true
-      } label: {
-        HStack {
-          Text(name).foregroundStyle(NomiColor.textPrimary)
-          Spacer()
-          Image(systemName: "chevron.right").foregroundStyle(NomiColor.textTertiary)
-        }
       }
     }
-    .listRowBackground(NomiColor.surfaceRaised)
   }
 
-  private func accountSection(_ transaction: NomiCore.Transaction) -> some View {
-    Section("Account") {
-      let name = transaction.accountID.flatMap { id in accounts.first { $0.id == id }?.displayName } ?? "Unassigned"
-      Button {
-        isAccountPickerPresented = true
-      } label: {
-        HStack {
-          Text(name).foregroundStyle(NomiColor.textPrimary)
-          Spacer()
-          Image(systemName: "chevron.right").foregroundStyle(NomiColor.textTertiary)
-        }
-      }
-    }
-    .listRowBackground(NomiColor.surfaceRaised)
+  private var markReviewedRow: some View {
+    Button("Mark reviewed") { markReviewed() }
+      .foregroundStyle(NomiColor.textPrimary)
+      .frame(maxWidth: .infinity)
+      .padding(NomiSpacing.cardPadding)
+      .background(NomiColor.surfaceRow)
+      .nomiCornerRadius(NomiRadius.inset)
   }
 
-  // MARK: - Edit
+  // MARK: - Edit (pencil-toggled)
 
   private var editSection: some View {
-    Section("Edit") {
+    VStack(alignment: .leading, spacing: NomiSpacing.sm) {
       HStack(spacing: NomiSpacing.xxs) {
         Text(currencySymbol).foregroundStyle(NomiColor.textPrimary)
         TextField("0", text: $amountText)
@@ -241,28 +390,24 @@ public struct TransactionDetailScreen: View {
             if sanitized != newValue { amountText = sanitized }
           }
       }
-      Button {
-        isDatePickerPresented = true
-      } label: {
-        HStack {
-          Text("Date").foregroundStyle(NomiColor.textPrimary)
-          Spacer()
-          Text(NomiFormatters.dayMonthYear.string(from: editedDate))
-            .foregroundStyle(NomiColor.textTertiary)
-        }
-      }
       TextField("Description", text: $editedDescription)
       TextField("Note", text: $editedNote)
       Button("Save changes") { saveEdit() }
         .disabled(!canSaveEdit)
     }
-    .listRowBackground(NomiColor.surfaceRaised)
+    .padding(NomiSpacing.cardPadding)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(NomiColor.surfaceRow)
+    .nomiCornerRadius(NomiRadius.inset)
   }
 
   // MARK: - Source
 
   private func sourceSection(_ transaction: NomiCore.Transaction) -> some View {
-    Section("Source") {
+    VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+      Text("Source")
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.textTertiary)
       Text(transaction.source.rawValue.capitalized)
         .foregroundStyle(NomiColor.textPrimary)
       ForEach(TransactionDetailLogic.sourceSummary(refs: transaction.sourceRefs), id: \.self) { line in
@@ -277,16 +422,19 @@ public struct TransactionDetailScreen: View {
         .font(.system(.caption, design: .monospaced))
         .foregroundStyle(NomiColor.textSecondary)
     }
-    .listRowBackground(NomiColor.surfaceRaised)
+    .padding(NomiSpacing.cardPadding)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(NomiColor.surfaceRow)
+    .nomiCornerRadius(NomiRadius.inset)
   }
 
   // MARK: - UPI
 
-  /// M6: replaces the three plain caption lines (merchant/VPA/kind) "Source"
-  /// used to carry — `merchantName` is already the header's title, so it
-  /// isn't repeated here.
   private func upiSection(_ transaction: NomiCore.Transaction) -> some View {
-    Section("UPI") {
+    VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+      Text("UPI")
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.textTertiary)
       if let kindRaw = transaction.upiKindRaw {
         Text(UPIDisplay.kindLabel(kindRaw) ?? kindRaw.capitalized)
           .foregroundStyle(NomiColor.textPrimary)
@@ -306,7 +454,10 @@ public struct TransactionDetailScreen: View {
         }
       }
     }
-    .listRowBackground(NomiColor.surfaceRaised)
+    .padding(NomiSpacing.cardPadding)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(NomiColor.surfaceRow)
+    .nomiCornerRadius(NomiRadius.inset)
   }
 
   // MARK: - Actions
@@ -332,9 +483,25 @@ public struct TransactionDetailScreen: View {
     editedNote = transaction.note ?? ""
   }
 
+  /// The suggestion read is a `do`/`catch` to `nil` — an assist that fails is
+  /// an assist that is absent, and this is the one place in this screen a
+  /// swallowed error is correct: the panel just doesn't show, no `.alert`.
+  private func refreshSuggestion() {
+    guard let suggester else {
+      suggestion = nil
+      return
+    }
+    do {
+      suggestion = try suggester.suggestion(for: transactionID)
+    } catch {
+      suggestion = nil
+    }
+  }
+
   private func updateCategory(to categoryID: UUID) {
     do {
       try transactionStore.setCategory(transactionID, to: categoryID)
+      refreshSuggestion()
     } catch {
       errorMessage = "Could not update the category."
     }
@@ -468,60 +635,57 @@ extension TransactionDetailPreviewFixtures {
 
 #Preview("Transaction detail — USD edit field, dark") {
   let transactions = PreviewData.transactions + [TransactionDetailPreviewFixtures.usd]
-  NavigationStack {
-    TransactionDetailScreen(
-      transactionID: TransactionDetailPreviewFixtures.usd.id,
-      transactionStore: FakeTransactionStore(transactions: transactions),
-      editor: FakeTransactionEditor(transactions: transactions),
-      categoryStore: FakeCategoryStore(),
-      accountStore: FakeAccountStore()
-    )
-  }
+  TransactionDetailScreen(
+    transactionID: TransactionDetailPreviewFixtures.usd.id,
+    transactionStore: FakeTransactionStore(transactions: transactions),
+    editor: FakeTransactionEditor(transactions: transactions),
+    categoryStore: FakeCategoryStore(),
+    accountStore: FakeAccountStore()
+  )
   .modelContainer(LedgerPreviewSupport.makeContainer(transactions: transactions))
   .preferredColorScheme(.dark)
 }
 
 #Preview("Transaction detail — flagged email row, dark") {
   let transaction = PreviewData.transactions.first { $0.needsReview }!
-  NavigationStack {
-    TransactionDetailScreen(
-      transactionID: transaction.id,
-      transactionStore: FakeTransactionStore(),
-      editor: FakeTransactionEditor(),
-      categoryStore: FakeCategoryStore(),
-      accountStore: FakeAccountStore()
-    )
-  }
+  TransactionDetailScreen(
+    transactionID: transaction.id,
+    transactionStore: FakeTransactionStore(),
+    editor: FakeTransactionEditor(),
+    categoryStore: FakeCategoryStore(),
+    accountStore: FakeAccountStore()
+  )
   .modelContainer(LedgerPreviewSupport.makeContainer())
   .preferredColorScheme(.dark)
 }
 
 #Preview("Transaction detail — merged row, dark") {
   let transaction = PreviewData.transactions.first { $0.mergedCount > 1 }!
-  NavigationStack {
-    TransactionDetailScreen(
-      transactionID: transaction.id,
-      transactionStore: FakeTransactionStore(),
-      editor: FakeTransactionEditor(),
-      categoryStore: FakeCategoryStore(),
-      accountStore: FakeAccountStore()
-    )
-  }
+  TransactionDetailScreen(
+    transactionID: transaction.id,
+    transactionStore: FakeTransactionStore(),
+    editor: FakeTransactionEditor(),
+    categoryStore: FakeCategoryStore(),
+    accountStore: FakeAccountStore()
+  )
   .modelContainer(LedgerPreviewSupport.makeContainer())
   .preferredColorScheme(.dark)
 }
 
-#Preview("Transaction detail — manual row, dark") {
+/// The `.manual` row carries a real suggestion from the fake suggester —
+/// proving the panel stays hidden because of `categorySource`, not merely
+/// because nothing was suggested.
+#Preview("Transaction detail — manual row, suggestion still hidden, dark") {
   let transactions = PreviewData.transactions + [TransactionDetailPreviewFixtures.manual]
-  NavigationStack {
-    TransactionDetailScreen(
-      transactionID: TransactionDetailPreviewFixtures.manual.id,
-      transactionStore: FakeTransactionStore(transactions: transactions),
-      editor: FakeTransactionEditor(transactions: transactions),
-      categoryStore: FakeCategoryStore(),
-      accountStore: FakeAccountStore()
-    )
-  }
+  let suggested = PreviewData.categories.first { $0.id != TransactionDetailPreviewFixtures.manual.categoryID }!
+  TransactionDetailScreen(
+    transactionID: TransactionDetailPreviewFixtures.manual.id,
+    transactionStore: FakeTransactionStore(transactions: transactions),
+    editor: FakeTransactionEditor(transactions: transactions),
+    categoryStore: FakeCategoryStore(),
+    accountStore: FakeAccountStore(),
+    suggester: FakeCategorySuggester(suggestion: CategorySuggestion(categoryID: suggested.id, reason: .merchantHistory(matches: 4)))
+  )
   .modelContainer(LedgerPreviewSupport.makeContainer(transactions: transactions))
   .preferredColorScheme(.dark)
 }
@@ -531,30 +695,59 @@ extension TransactionDetailPreviewFixtures {
 /// cover "row without".
 #Preview("Transaction detail — with a note, dark") {
   let transactions = PreviewData.transactions + [TransactionDetailPreviewFixtures.noted]
-  NavigationStack {
-    TransactionDetailScreen(
-      transactionID: TransactionDetailPreviewFixtures.noted.id,
-      transactionStore: FakeTransactionStore(transactions: transactions),
-      editor: FakeTransactionEditor(transactions: transactions),
-      categoryStore: FakeCategoryStore(),
-      accountStore: FakeAccountStore()
-    )
-  }
+  TransactionDetailScreen(
+    transactionID: TransactionDetailPreviewFixtures.noted.id,
+    transactionStore: FakeTransactionStore(transactions: transactions),
+    editor: FakeTransactionEditor(transactions: transactions),
+    categoryStore: FakeCategoryStore(),
+    accountStore: FakeAccountStore()
+  )
   .modelContainer(LedgerPreviewSupport.makeContainer(transactions: transactions))
+  .preferredColorScheme(.dark)
+}
+
+/// M4: `FakeCategorySuggester` returning a real suggestion for a non-manual
+/// row — the panel shows, with both pills.
+#Preview("Transaction detail — suggestion shown, dark") {
+  let transaction = PreviewData.transactions.first { $0.categorySource != .manual }!
+  let suggested = PreviewData.categories.first { $0.id != transaction.categoryID }!
+  TransactionDetailScreen(
+    transactionID: transaction.id,
+    transactionStore: FakeTransactionStore(),
+    editor: FakeTransactionEditor(),
+    categoryStore: FakeCategoryStore(),
+    accountStore: FakeAccountStore(),
+    suggester: FakeCategorySuggester(suggestion: CategorySuggestion(categoryID: suggested.id, reason: .rule(ruleID: UUID())))
+  )
+  .modelContainer(LedgerPreviewSupport.makeContainer())
+  .preferredColorScheme(.dark)
+}
+
+/// M4: no suggester at all (the default every other preview above already
+/// uses) — named explicitly for the "without one" done-when, same rule
+/// `Dashboard — no recurring store` follows in `DashboardView.swift`.
+#Preview("Transaction detail — no suggestion, dark") {
+  let transaction = PreviewData.transactions.first { $0.categorySource != .manual }!
+  TransactionDetailScreen(
+    transactionID: transaction.id,
+    transactionStore: FakeTransactionStore(),
+    editor: FakeTransactionEditor(),
+    categoryStore: FakeCategoryStore(),
+    accountStore: FakeAccountStore()
+  )
+  .modelContainer(LedgerPreviewSupport.makeContainer())
   .preferredColorScheme(.dark)
 }
 
 #Preview("Transaction detail — accessibility 3, dark") {
   let transaction = PreviewData.transactions.first { $0.mergedCount == 1 && !$0.needsReview }!
-  NavigationStack {
-    TransactionDetailScreen(
-      transactionID: transaction.id,
-      transactionStore: FakeTransactionStore(),
-      editor: FakeTransactionEditor(),
-      categoryStore: FakeCategoryStore(),
-      accountStore: FakeAccountStore()
-    )
-  }
+  TransactionDetailScreen(
+    transactionID: transaction.id,
+    transactionStore: FakeTransactionStore(),
+    editor: FakeTransactionEditor(),
+    categoryStore: FakeCategoryStore(),
+    accountStore: FakeAccountStore()
+  )
   .modelContainer(LedgerPreviewSupport.makeContainer())
   .environment(\.dynamicTypeSize, .accessibility3)
   .preferredColorScheme(.dark)

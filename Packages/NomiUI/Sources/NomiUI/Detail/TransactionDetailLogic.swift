@@ -62,3 +62,31 @@ public enum UPIDisplay {
     }
   }
 }
+
+/// UI refresh (v5) M4: whether the suggestion panel shows, and its two
+/// captions. `CategorySuggesting.suggestion(for:)`'s own doc comment already
+/// promises `nil` for a `.manual` row or a candidate matching the current
+/// category — this mirrors that contract at the UI layer anyway, the same
+/// way `NeedsYouCard` mirrors `DashboardWiring.needsYouIsTappable` rather
+/// than trusting the read it was handed stayed valid until render.
+public enum SuggestionRow {
+  public static func isShown(suggestion: CategorySuggestion?, currentCategoryID: UUID?, categorySource: CategorySource) -> Bool {
+    guard let suggestion else { return false }
+    guard categorySource != .manual else { return false }
+    return suggestion.categoryID != currentCategoryID
+  }
+
+  /// The panel's third line: "You filed Swiggy as Food & Dining 4 times" or
+  /// "Matches your rule for Swiggy". `merchantLabel` is always the row's own
+  /// merchant/description label — the screen has no access to a rule's glob
+  /// pattern (no `RuleStore` in this unit's init), so the rule caption names
+  /// the transaction, not the pattern that matched it.
+  public static func reasonText(reason: CategorySuggestion.Reason, merchantLabel: String, categoryName: String) -> String {
+    switch reason {
+    case .merchantHistory(let matches):
+      return "You filed \(merchantLabel) as \(categoryName) \(matches) time\(matches == 1 ? "" : "s")"
+    case .rule:
+      return "Matches your rule for \(merchantLabel)"
+    }
+  }
+}

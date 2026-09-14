@@ -42,6 +42,7 @@ public struct LedgerScreen: View {
   public let categoryStore: CategoryStore
   public let accountStore: AccountStore
   public let editor: TransactionEditing
+  public let suggester: (any CategorySuggesting)?
 
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
   @Query private var accounts: [NomiCore.Account]
@@ -50,18 +51,26 @@ public struct LedgerScreen: View {
   @State private var stepsBack = 0
   @State private var now = Date()
   @State private var searchText = ""
+  @State private var presented: PresentedTransaction?
+
+  /// A sheet does not inherit the root's `modelContainer` — the detail
+  /// screen's own `@Query` would trap at runtime (not in CI, which never
+  /// builds a container in the first place) without this.
+  @Environment(\.modelContext) private var modelContext
 
   public init(
     transactionStore: TransactionStore,
     categoryStore: CategoryStore,
     accountStore: AccountStore,
     editor: TransactionEditing,
-    initialChip: LedgerChipSelection = .all
+    initialChip: LedgerChipSelection = .all,
+    suggester: (any CategorySuggesting)? = nil
   ) {
     self.transactionStore = transactionStore
     self.categoryStore = categoryStore
     self.accountStore = accountStore
     self.editor = editor
+    self.suggester = suggester
     self._selection = State(initialValue: initialChip)
   }
 
@@ -146,7 +155,8 @@ public struct LedgerScreen: View {
           categoryNamesByID: categoryNamesByID,
           categoryPaletteSlotByID: categoryPaletteSlotByID,
           categorySymbolNameByID: categorySymbolNameByID,
-          accountNamesByID: accountNamesByID
+          accountNamesByID: accountNamesByID,
+          onSelectTransaction: { id in presented = PresentedTransaction(id: id) }
         )
         .id(queryKey)
 
@@ -158,14 +168,16 @@ public struct LedgerScreen: View {
     // Sets `now` once per appearance rather than every `dayHeader` call —
     // day headers read it from here, not from a fresh `Date()` in `body`.
     .onAppear { now = Date() }
-    .navigationDestination(for: UUID.self) { transactionID in
+    .sheet(item: $presented) { presented in
       TransactionDetailScreen(
-        transactionID: transactionID,
+        transactionID: presented.id,
         transactionStore: transactionStore,
         editor: editor,
         categoryStore: categoryStore,
-        accountStore: accountStore
+        accountStore: accountStore,
+        suggester: suggester
       )
+      .modelContainer(modelContext.container)
     }
   }
 
@@ -259,6 +271,7 @@ private struct LedgerTransactionList: View {
   let categoryPaletteSlotByID: [UUID: Int]
   let categorySymbolNameByID: [UUID: String]
   let accountNamesByID: [UUID: String]
+  let onSelectTransaction: (UUID) -> Void
 
   @Query private var transactions: [NomiCore.Transaction]
 
@@ -273,7 +286,8 @@ private struct LedgerTransactionList: View {
     categoryNamesByID: [UUID: String],
     categoryPaletteSlotByID: [UUID: Int],
     categorySymbolNameByID: [UUID: String],
-    accountNamesByID: [UUID: String]
+    accountNamesByID: [UUID: String],
+    onSelectTransaction: @escaping (UUID) -> Void
   ) {
     self.filter = filter
     self.now = now
@@ -282,6 +296,7 @@ private struct LedgerTransactionList: View {
     self.categoryPaletteSlotByID = categoryPaletteSlotByID
     self.categorySymbolNameByID = categorySymbolNameByID
     self.accountNamesByID = accountNamesByID
+    self.onSelectTransaction = onSelectTransaction
     // Only `since` is pushed into the `@Query` itself — see
     // `LedgerFilterPredicate`'s note on why the chip/search criteria are
     // applied below instead, in `filtered`.
@@ -369,7 +384,9 @@ private struct LedgerTransactionList: View {
     let barColor = slot.map(paletteSlot) ?? CategoryPalette.other
     let fraction = LedgerMagnitude.fraction(amountMinor: transaction.amountMinor, maxAmountMinor: maxAmountMinor)
 
-    return NavigationLink(value: transaction.id) {
+    return Button {
+      onSelectTransaction(transaction.id)
+    } label: {
       VStack(alignment: .leading, spacing: 0) {
         TransactionRow(
           transaction: transaction,
@@ -389,7 +406,7 @@ private struct LedgerTransactionList: View {
       }
       .padding(.horizontal, NomiSpacing.sm)
       .background(NomiColor.surfaceRow)
-      .nomiCornerRadius(NomiRadius.tile)
+      .nomiCornerRadius(NomiRadius.inset)
     }
     .buttonStyle(.plain)
     .padding(.horizontal, NomiSpacing.screenGutter)
@@ -433,6 +450,12 @@ private struct LedgerTransactionList: View {
 
 // MARK: - Previews
 
+/// M4: the canonical preview for verifying the row-tap → sheet wiring — tap
+/// any row and the detail sheet should open populated, proving
+/// `.modelContainer(modelContext.container)` actually reaches the sheet's own
+/// `@Query` rather than trapping at runtime the way an uninherited container
+/// would (CI cannot catch that; only opening this preview and tapping a row
+/// can).
 #Preview("Ledger — populated, dark") {
   NomiTabShell {
     NavigationStack {
