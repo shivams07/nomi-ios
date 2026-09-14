@@ -1,13 +1,35 @@
 import NomiCore
+import SwiftData
 import XCTest
 
 @testable import NomiApp
 
 /// The India default set is *content*, and content is exactly what a compiler
-/// cannot check. `DefaultCategorySeed.apply` touches `@Model` and can never be
-/// executed here (see `InMemoryModelContainer`'s note in NomiCore); the specs
-/// it inserts can, and this is all of what the U8 block spells out about them.
+/// cannot check. Most of this file asserts the specs, which need no container;
+/// the one test of `DefaultCategorySeed.apply` builds one, which XCTest can and
+/// swift-testing cannot (see `InMemoryModelContainer`'s note in NomiCore).
 final class DefaultCategorySeedTests: XCTestCase {
+
+  /// W1-1. `ReferenceDataReconciler` keeps the earliest-created copy of a
+  /// duplicated id, so a seeded row must say when it was created. An undated
+  /// one is stamped by the reconciler instead — a pass later, and at the time
+  /// of that pass rather than of the seed.
+  @MainActor
+  func testASeededCategoryCarriesItsCreationDate() throws {
+    let container = try ModelContainer(
+      for: NomiModelContainer.schema,
+      configurations: [
+        ModelConfiguration(
+          schema: NomiModelContainer.schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+      ])
+    let context = container.mainContext
+
+    try DefaultCategorySeed.apply(in: context)
+
+    let seeded = try context.fetch(FetchDescriptor<NomiCore.Category>())
+    XCTAssertEqual(seeded.count, DefaultCategorySeed.specs.count)
+    XCTAssertTrue(seeded.allSatisfy { $0.createdAt != nil })
+  }
 
   /// The fourteen, verbatim from the design's U8 block, in its order.
   private static let expectedNames = [

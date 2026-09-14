@@ -75,8 +75,14 @@ public struct NomiAppScene: Scene {
         // so the common case — nothing changed — costs one status query and
         // no re-render.
         Task { await environment.storageMonitor.refresh() }
-      case .background, .inactive:
+      case .background:
         Task { await environment.sync.didEnterBackground() }
+      case .inactive:
+        // Not a backgrounding (M10). Control Center, the notification shade and
+        // the app switcher all pass through `.inactive` with the app still on
+        // screen. Treating it as `.background` submitted background tasks and
+        // cancelled the foreground sync every time the user pulled a shade down.
+        break
       @unknown default:
         break
       }
@@ -132,13 +138,17 @@ struct RootContainerView: View {
   /// project can verify** — CI does not run the app and no one here has two
   /// devices — so it is an addition to the launch and foreground reconciles,
   /// never a replacement for them. If it never fires, nothing is lost.
+  ///
+  /// Each notification only *reports* a change; the coordinator coalesces a
+  /// burst into one reconcile (M10). No cache invalidation here: a reconcile
+  /// that changed something drops the cache through its own write path, and
+  /// one that changed nothing has nothing to invalidate.
   private func observeRemoteChanges() async {
     let notifications = NotificationCenter.default.notifications(
       named: .NSPersistentStoreRemoteChange
     )
     for await _ in notifications {
-      await environment.sync.reconcile()
-      environment.cache.invalidate()
+      await environment.sync.remoteChangeObserved()
     }
   }
 }

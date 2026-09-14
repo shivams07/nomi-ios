@@ -29,35 +29,91 @@ public actor AppSyncCoordinator {
   /// away.
   static let backfillMonths = 6
 
+  /// A foreground reconciles only when the last reconcile is at least this old
+  /// (M10). The sync still runs on every foreground.
+  static let foregroundReconcileInterval: TimeInterval = 10 * 60
+
+  /// How long after the *last* remote-change notification the reconcile runs.
+  static let remoteChangeDebounce: TimeInterval = 2
+
   private let mail: MailStack
   private let pipeline: IngestPipeline
+  private let referenceData: (any ReferenceDataReconciling)?
   private let submitter: any BackgroundTaskSubmitting
+  private let now: @Sendable () -> Date
+  private let pause: @Sendable (TimeInterval) async throws -> Void
   private var isSyncing = false
-  private var foregroundTask: Task<Void, Never>?
+  private(set) var foregroundTask: Task<Void, Never>?
+  private(set) var remoteChangeTask: Task<Void, Never>?
+  private var lastReconcileAt: Date?
 
+  /// `referenceData` is optional only so the coordinator tests that never touch
+  /// reference rows need no container. `AppEnvironment` always passes one.
+  ///
+  /// `sleep` is the remote-change debounce's wait, injectable for the same
+  /// reason `now` is: a test that has to wait out two real seconds is a test
+  /// that is slow when it passes and flaky when CI is loaded.
   public init(
     mail: MailStack,
     pipeline: IngestPipeline,
-    submitter: any BackgroundTaskSubmitting = SystemBackgroundTaskSubmitter()
+    referenceData: (any ReferenceDataReconciling)? = nil,
+    submitter: any BackgroundTaskSubmitting = SystemBackgroundTaskSubmitter(),
+    now: @escaping @Sendable () -> Date = { Date() },
+    sleep: @escaping @Sendable (TimeInterval) async throws -> Void = {
+      try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000))
+    }
   ) {
     self.mail = mail
     self.pipeline = pipeline
+    self.referenceData = referenceData
     self.submitter = submitter
+    self.now = now
+    self.pause = sleep
   }
 
   // MARK: - Reconcile
 
   /// R5's mandatory pass. CloudKit forbids unique constraints, so two devices
-  /// can each create a locally-unique row for the same transaction and sync
-  /// merges them into two rows.
+  /// can each create a locally-unique row for the same transaction — or insert
+  /// the same seeded category — and sync merges them into two rows.
   ///
-  /// "Mandatory, not defensive" is the design's wording, and it is why this is
-  /// called on launch and on every foreground rather than only when something
-  /// looks wrong: the corruption arrives while the app is *not* running, and
-  /// nothing about it is visible until someone reads a total.
+  /// "Mandatory, not defensive" is the design's wording: the corruption arrives
+  /// while the app is *not* running, and nothing about it is visible until
+  /// someone reads a total. So it runs on launch unconditionally, on a
+  /// foreground that is ten minutes clear of the last one, and after a burst
+  /// of remote changes settles — not on every foreground and every
+  /// notification, which was a full-table scan each (M10).
+  ///
+  /// Transactions first, then reference data, so both share this scheduling.
   @discardableResult
   public func reconcile() async -> ReconcileResult {
-    (try? await pipeline.reconcile()) ?? .empty
+    lastReconcileAt = now()
+    let result = (try? await pipeline.reconcile()) ?? .empty
+    if let referenceData {
+      // Swallowed for the same reason the pipeline's error is: nobody awaits a
+      // reconcile, and the next one retries.
+      await MainActor.run { _ = try? referenceData.run() }
+    }
+    return result
+  }
+
+  /// `NSPersistentStoreRemoteChange` arrived.
+  ///
+  /// Coalesced: one reconcile, `remoteChangeDebounce` after the **last** call.
+  /// A CloudKit import posts these in bursts, and each used to be its own
+  /// full scan. Every call cancels the reconcile the previous one scheduled and
+  /// schedules its own.
+  public func remoteChangeObserved() {
+    remoteChangeTask?.cancel()
+    remoteChangeTask = Task { [weak self, pause = self.pause] in
+      do {
+        try await pause(AppSyncCoordinator.remoteChangeDebounce)
+      } catch {
+        return  // superseded by a later notification
+      }
+      guard let self, !Task.isCancelled else { return }
+      await self.reconcile()
+    }
   }
 
   // MARK: - Foreground / background
@@ -75,16 +131,25 @@ public actor AppSyncCoordinator {
   /// What *is* implemented is the lifecycle the IDLE loop would hang off: sync
   /// on activate, stop on background. IDLE would start and stop on these same
   /// two calls.
+  ///
+  /// Always syncs. Reconciles first only when the last reconcile is at least
+  /// `foregroundReconcileInterval` old — whoever ran it: launch, a foreground,
+  /// or a remote change.
   public func didBecomeActive() {
     foregroundTask?.cancel()
+    let reconcileIsDue = lastReconcileAt.map {
+      now().timeIntervalSince($0) >= Self.foregroundReconcileInterval
+    } ?? true
     foregroundTask = Task { [weak self] in
       guard let self else { return }
-      await self.reconcile()
+      if reconcileIsDue {
+        await self.reconcile()
+      }
       await self.syncIfIdle()
     }
   }
 
-  /// `scenePhase` left `.active`.
+  /// `scenePhase` became `.background`. Not `.inactive`: see `NomiAppScene`.
   ///
   /// The in-flight sync is cancelled rather than left to finish. iOS gives a
   /// backgrounding app seconds, not minutes, and a sync killed mid-batch by the
