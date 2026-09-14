@@ -1,8 +1,10 @@
 import Foundation
 import NomiCore
 
-/// The single write path. Every `Transaction` in this app is created, merged or
-/// recategorized here and nowhere else.
+/// The single ingest write path. Every `Transaction` an ingester produces is
+/// created or merged here and nowhere else. Rule create, edit and delete are
+/// not: `SwiftDataRuleStore` drives that pass on the main context, through the
+/// same `RuleEngine` calls.
 ///
 /// Serialization is the point, and `actor` alone does not provide it: Swift
 /// actors are *reentrant*, so a second `ingest` can start while the first is
@@ -142,72 +144,6 @@ public actor IngestPipeline {
     try await commit(plan)
 
     return IngestBatchResult(created: created, merged: merged, flagged: flagged)
-  }
-
-  // MARK: - Rule lifecycle
-
-  /// On rule create or edit: re-apply across the whole ledger where
-  /// `categorySource != .manual`. This is what makes a new rule retroactive
-  /// without a re-import.
-  @discardableResult
-  public func reapplyRules() async throws -> RuleApplyResult {
-    await acquire()
-    defer { release() }
-    return try await performReapplyRules()
-  }
-
-  private func performReapplyRules() async throws -> RuleApplyResult {
-    let rules = RuleEngine.precedenceOrdered(try await store.rules())
-    let rows = try await store.rulePassCandidates()
-    let timestamp = now()
-
-    var updates: [TransactionSnapshot] = []
-    var affected: Set<UUID> = []
-    var matched = 0
-    var recategorized = 0
-
-    for row in rows {
-      guard row.categorySource != .manual else { continue }
-      guard
-        RuleEngine.firstMatch(normalizedDescription: row.normalizedDescription, in: rules) != nil
-      else { continue }
-      matched += 1
-
-      guard var next = RuleEngine.apply(rules, to: row) else { continue }
-      if next.categoryID != row.categoryID { recategorized += 1 }
-      next.updatedAt = timestamp
-      note(&affected, row.categoryID, next.categoryID)
-      updates.append(next)
-    }
-
-    try await commit(CommitPlan(updates: updates, affectedCategoryIDs: affected))
-    return RuleApplyResult(matched: matched, recategorized: recategorized)
-  }
-
-  /// On rule delete: no re-evaluation at all. `appliedRuleID` is nulled where
-  /// it pointed at this rule; `categoryID` and `categorySource` are untouched.
-  @discardableResult
-  public func ruleDeleted(_ ruleID: UUID) async throws -> Int {
-    await acquire()
-    defer { release() }
-    return try await performRuleDeleted(ruleID)
-  }
-
-  private func performRuleDeleted(_ ruleID: UUID) async throws -> Int {
-    let rows = try await store.rows(appliedRuleID: ruleID)
-    let timestamp = now()
-
-    var updates: [TransactionSnapshot] = []
-    for row in rows {
-      guard var next = RuleEngine.clearingProvenance(of: ruleID, from: row) else { continue }
-      next.updatedAt = timestamp
-      updates.append(next)
-    }
-
-    // No category moved, so no budget can have moved: the affected set is
-    // empty and the observer gets an empty batch rather than a wrong one.
-    try await commit(CommitPlan(updates: updates))
-    return updates.count
   }
 
   // MARK: - R5 reconcile

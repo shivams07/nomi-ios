@@ -15,9 +15,19 @@ import SwiftData
 @ModelActor
 public actor SwiftDataPipelineStore: PipelineStore {
 
+  /// Every `ModelContext.fetch` this store has made, so a test can assert how
+  /// many round trips a call cost (M10). Both shapes of `duplicateGroups`
+  /// return the same groups; only the count tells them apart.
+  ///
+  /// The design asked for a counting `ModelContext`. It is not `open`, so it
+  /// cannot be subclassed from here; this is the `RuleEngine.orderingCount`
+  /// affordance instead. Actor-isolated, so unlike that one it needs no
+  /// `nonisolated(unsafe)` and one store's count never includes another's.
+  private(set) var fetchCount = 0
+
   public func rules() async throws -> [RuleSnapshot] {
     let descriptor = FetchDescriptor<Rule>(predicate: #Predicate<Rule> { $0.isEnabled })
-    return try modelContext.fetch(descriptor).map(RuleSnapshot.init)
+    return try fetch(descriptor).map(RuleSnapshot.init)
   }
 
   public func mergeCandidates(
@@ -35,31 +45,37 @@ public actor SwiftDataPipelineStore: PipelineStore {
           && $0.date <= upper
       }
     )
-    return try modelContext.fetch(descriptor).map(TransactionSnapshot.init)
+    return try fetch(descriptor).map(TransactionSnapshot.init)
   }
 
-  public func rulePassCandidates() async throws -> [TransactionSnapshot] {
-    let manual = CategorySource.manual.rawValue
-    let descriptor = FetchDescriptor<Transaction>(
-      predicate: #Predicate<Transaction> { $0.categorySourceRaw != manual }
-    )
-    return try modelContext.fetch(descriptor).map(TransactionSnapshot.init)
-  }
-
-  public func rows(appliedRuleID: UUID) async throws -> [TransactionSnapshot] {
-    let target: UUID? = appliedRuleID
-    let descriptor = FetchDescriptor<Transaction>(
-      predicate: #Predicate<Transaction> { $0.appliedRuleID == target }
-    )
-    return try modelContext.fetch(descriptor).map(TransactionSnapshot.init)
-  }
-
+  /// Two passes, so a reconcile over a clean ledger does not snapshot it.
+  ///
+  /// The first fetches only `id` and `dedupeKey` and groups them; the second
+  /// fetches in full just the rows whose key appeared more than once. On a
+  /// ledger with no duplicates, the ordinary case, the second fetch never
+  /// happens. SwiftData has no GROUP BY, so the narrow pass still reads every
+  /// row — what it no longer does is materialise and snapshot every row (M10).
+  ///
+  /// Grouped again after the full fetch, not trusted from the first pass:
+  /// another context can delete a row between the two, and a group of one is
+  /// not a duplicate.
   public func duplicateGroups() async throws -> [[TransactionSnapshot]] {
-    // A full scan, deliberately. This runs on launch and on remote-change
-    // notifications, not per row, and SwiftData has no GROUP BY to lean on.
-    let all = try modelContext.fetch(FetchDescriptor<Transaction>())
+    var narrow = FetchDescriptor<Transaction>()
+    narrow.propertiesToFetch = [\.id, \.dedupeKey]
+
+    var idsByKey: [String: [UUID]] = [:]
+    for row in try fetch(narrow) where !row.dedupeKey.isEmpty {
+      idsByKey[row.dedupeKey, default: []].append(row.id)
+    }
+
+    let duplicatedIDs = idsByKey.values.filter { $0.count > 1 }.flatMap { $0 }
+    guard !duplicatedIDs.isEmpty else { return [] }
+
+    let full = FetchDescriptor<Transaction>(
+      predicate: #Predicate<Transaction> { duplicatedIDs.contains($0.id) }
+    )
     var byKey: [String: [TransactionSnapshot]] = [:]
-    for row in all where !row.dedupeKey.isEmpty {
+    for row in try fetch(full) {
       byKey[row.dedupeKey, default: []].append(TransactionSnapshot(row))
     }
     return Array(byKey.values.filter { $0.count > 1 })
@@ -88,7 +104,13 @@ public actor SwiftDataPipelineStore: PipelineStore {
       predicate: #Predicate<Transaction> { $0.id == id }
     )
     descriptor.fetchLimit = 1
-    return try modelContext.fetch(descriptor).first
+    return try fetch(descriptor).first
+  }
+
+  /// The only call site of `modelContext.fetch`, so `fetchCount` cannot miss one.
+  private func fetch<Model: PersistentModel>(_ descriptor: FetchDescriptor<Model>) throws -> [Model] {
+    fetchCount += 1
+    return try modelContext.fetch(descriptor)
   }
 }
 

@@ -236,8 +236,6 @@ struct EmptyPipelineStore: PipelineStore {
     dateRange: ClosedRange<Date>
   ) async throws -> [TransactionSnapshot] { [] }
 
-  func rulePassCandidates() async throws -> [TransactionSnapshot] { [] }
-  func rows(appliedRuleID: UUID) async throws -> [TransactionSnapshot] { [] }
   func duplicateGroups() async throws -> [[TransactionSnapshot]] { [] }
   func apply(_ plan: CommitPlan) async throws {}
 }
