@@ -5,20 +5,26 @@ import SwiftUI
 /// from `BudgetsLogic.swift` (M3) so the ring/pace line here can never
 /// disagree with the Budgets screen's own gauge and pace cards.
 ///
+/// Not `public` — same as `DashboardCard` next door — because its `state`
+/// takes `DashboardWiring.BudgetModuleState`, and `DashboardWiring` is
+/// deliberately internal (it is wiring, not API). Only `DashboardView`
+/// constructs this, in the same module, so `public` would just be a type
+/// error waiting to happen (and was: it failed CI once already).
+///
 /// `DashboardView` wraps the whole card in `NavigationLink(value:
 /// DashboardRoute.budgets)` — that link, not this file, is the "whole card is
 /// a NavigationLink" contract, since `DashboardRoute` and the gate that
 /// checks for it both live in `DashboardView.swift`.
-public struct RemainingBudgetCard: View {
-  public let state: DashboardWiring.BudgetModuleState
-  public let referenceDate: Date
+struct RemainingBudgetCard: View {
+  let state: DashboardWiring.BudgetModuleState
+  let referenceDate: Date
 
-  public init(state: DashboardWiring.BudgetModuleState, referenceDate: Date = Date()) {
+  init(state: DashboardWiring.BudgetModuleState, referenceDate: Date = Date()) {
     self.state = state
     self.referenceDate = referenceDate
   }
 
-  public var body: some View {
+  var body: some View {
     DashboardCard {
       switch state {
       case .remaining(let totals):
