@@ -1,4 +1,5 @@
 import NomiCore
+import SwiftData
 import XCTest
 
 @testable import NomiApp
@@ -300,6 +301,38 @@ final class InsightsAggregatorTests: XCTestCase {
     XCTAssertEqual(slices.first?.paletteSlot, 6)
   }
 
+  /// UI refresh P1. The chip row draws each slice's own glyph, so the slice has
+  /// to carry it. "fork.knife" is neither `CategoryRef`'s default nor
+  /// `Category`'s, so a builder that dropped the field cannot pass by accident.
+  func testASliceCarriesItsCategorysSymbol() {
+    let food = UUID()
+    let slices = InsightsAggregator.byCategory(
+      [row(1_000, .debit, on: date(2026, 4, 1), category: food)],
+      categories: [food: CategoryRef(id: food, name: "Food & Dining", symbolName: "fork.knife", paletteSlot: 0)],
+      debitTotal: 1_000
+    )
+
+    XCTAssertEqual(slices.map(\.symbolName), ["fork.knife"])
+  }
+
+  /// The sentinel has no `Category` row, so there is no symbol to read. It
+  /// resolves to "questionmark", the same fallback `TransactionRow` draws.
+  func testTheUncategorizedSliceCarriesTheQuestionmarkSymbol() {
+    let food = UUID()
+    let slices = InsightsAggregator.byCategory(
+      [
+        row(2_000, .debit, on: date(2026, 4, 1), category: food),
+        row(1_000, .debit, on: date(2026, 4, 1)),
+      ],
+      categories: [food: CategoryRef(id: food, name: "Food & Dining", symbolName: "fork.knife", paletteSlot: 0)],
+      debitTotal: 3_000
+    )
+
+    let uncategorized = slices.first { $0.id == NomiCore.Category.uncategorizedID }
+    XCTAssertEqual(uncategorized?.symbolName, "questionmark")
+    XCTAssertEqual(slices.first { $0.id == food }?.symbolName, "fork.knife", "and only the sentinel")
+  }
+
   func testZeroSpendProducesZeroSharesRatherThanNaN() {
     let slices = InsightsAggregator.byCategory(
       [row(0, .debit, on: date(2026, 4, 1))],
@@ -500,6 +533,19 @@ final class InsightsAggregatorTests: XCTestCase {
     XCTAssertEqual(progress.first?.categoryName, "Groceries")
   }
 
+  /// UI refresh P1. The per-category budget card draws the category's glyph.
+  func testBudgetProgressCarriesItsCategorysSymbol() {
+    let food = UUID()
+    let progress = InsightsAggregator.budgetProgress(
+      budgets: [BudgetRef(categoryID: food, amountMinor: 10_000, isEnabled: true)],
+      rows: [row(3_000, .debit, on: date(2026, 4, 1), category: food)],
+      categories: [food: CategoryRef(id: food, name: "Food & Dining", symbolName: "fork.knife", paletteSlot: 0)],
+      periodKey: "2026-04"
+    )
+
+    XCTAssertEqual(progress.map(\.symbolName), ["fork.knife"])
+  }
+
   /// W1-13 (M3). A dollar charge filed under a budgeted category is not that
   /// many paise of spend — and `BudgetAlertEvaluator` would fire on it. Fails on
   /// `main`.
@@ -588,5 +634,48 @@ final class InsightsAggregatorTests: XCTestCase {
     )
 
     XCTAssertEqual(progress.map(\.categoryName), ["Alpha", "Beta"])
+  }
+}
+
+/// UI refresh P1, the half the tests above cannot reach. `CategoryRef` defaults
+/// `symbolName`, so if `SwiftDataInsightsStore.categoryMap()` stopped passing the
+/// row's value every aggregator test would still pass and the dashboard would
+/// draw "questionmark" for every category. The P1 grep gate counts
+/// `CategorySlice(`/`BudgetProgress(` sites only, so it would not see it either.
+///
+/// Real container, so XCTest and `@MainActor`, like `RecentTransactionsTests`.
+@MainActor
+final class InsightsStoreSymbolNameTests: XCTestCase {
+
+  func testTheStoreCarriesEachCategorysOwnSymbolIntoSlicesAndBudgets() throws {
+    let schema = Schema([
+      Transaction.self, NomiCore.Category.self, Budget.self, BudgetAlertLog.self,
+      Rule.self, Account.self, AccountBinding.self, ColumnMappingRecord.self,
+    ])
+    let container = try ModelContainer(
+      for: schema,
+      configurations: [
+        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+      ])
+    let context = container.mainContext
+
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Asia/Kolkata") ?? .current
+    let inApril = calendar.date(from: DateComponents(year: 2026, month: 4, day: 2, hour: 12))!
+
+    let food = NomiCore.Category(name: "Food & Dining", symbolName: "fork.knife", paletteSlot: 0)
+    context.insert(food)
+    context.insert(Budget(categoryID: food.id, amountMinor: 10_000))
+    context.insert(Transaction(date: inApril, amountMinor: 3_000, categoryID: food.id))
+    try context.save()
+
+    let store = SwiftDataInsightsStore(
+      context: context, cache: InsightsCache(), calendar: calendar, now: { inApril })
+
+    let slices = try store.insights(for: .month(year: 2026, month: 4)).byCategory
+    XCTAssertEqual(slices.map(\.symbolName), ["fork.knife"])
+
+    let budgets = try store.budgetProgress(year: 2026, month: 4)
+    XCTAssertEqual(budgets.map(\.symbolName), ["fork.knife"])
   }
 }

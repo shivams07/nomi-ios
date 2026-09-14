@@ -37,6 +37,7 @@ public final class FakeInsightsStore: InsightsStore {
       return CategorySlice(
         id: categoryID,
         name: category?.name ?? "Uncategorized",
+        symbolName: category?.symbolName ?? "questionmark",
         paletteSlot: category?.paletteSlot ?? 6,
         totalMinor: total,
         share: debit > 0 ? Double(total) / Double(debit) : 0
@@ -129,6 +130,7 @@ public final class FakeInsightsStore: InsightsStore {
       return BudgetProgress(
         id: budget.categoryID,
         categoryName: category?.name ?? "Uncategorized",
+        symbolName: category?.symbolName ?? "questionmark",
         paletteSlot: category?.paletteSlot ?? 6,
         budgetMinor: budget.amountMinor,
         spentMinor: spent,
