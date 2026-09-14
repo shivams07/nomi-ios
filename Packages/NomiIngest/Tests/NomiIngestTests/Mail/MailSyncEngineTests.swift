@@ -373,7 +373,9 @@ final class MailSyncEngineTests: XCTestCase {
   /// transactions silently, which is the one failure mode here that nobody would
   /// ever notice (§2.17).
   func testTheWindowsTileTheWholeSpanAndOverlapRatherThanRiskAGap() {
-    let calendar = Calendar(identifier: .gregorian)
+    // The engine's calendar, not the runner's. Written with the runner's zone,
+    // this passed on CI only because CI runs in UTC.
+    let calendar = MailSyncEngine.searchCalendar
     let now = Date(timeIntervalSince1970: 1_787_000_000)
     let windows = MailSyncEngine.monthlyWindows(months: 6, endingAt: now)
 
@@ -397,6 +399,32 @@ final class MailSyncEngineTests: XCTestCase {
     XCTAssertEqual(
       MailSyncEngine.monthlyWindows(months: 0, endingAt: Date()).count, 1,
       "months <= 0 is a caller error; scanning today beats scanning nothing")
+  }
+
+  /// M1. `IMAPCommand.imapDate` renders every search date in UTC, and the
+  /// windows were cut in the device's zone. In IST, midnight tomorrow is 18:30
+  /// UTC *today*, so the last window's `BEFORE` named today's date — and a
+  /// first sync or backfill missed every message that had arrived today, which
+  /// is the mail the user is looking at while they wait.
+  ///
+  /// The device zone is forced to IST for the length of the test: CI runs in
+  /// UTC, where a device-zone cut and a UTC cut agree and this would prove
+  /// nothing. `XCTest` runs a class's tests serially, and the zone is restored
+  /// before the next one starts.
+  func testTheLastWindowEndsOnTheNextDayAsIMAPWillRenderItInAnIndianTimeZone() throws {
+    let previous = NSTimeZone.default
+    NSTimeZone.default = TimeZone(identifier: "Asia/Kolkata")!
+    defer { NSTimeZone.default = previous }
+    XCTAssertEqual(
+      Calendar(identifier: .gregorian).timeZone.identifier, "Asia/Kolkata",
+      "the zone override did not reach a new calendar, so this test cannot show the bug on this runner")
+
+    // 2026-09-11 23:30 IST, which is 18:00 UTC the same day.
+    let now = Date(timeIntervalSince1970: 1_789_149_600)
+    let windows = MailSyncEngine.monthlyWindows(months: 6, endingAt: now)
+    let last = try XCTUnwrap(windows.last)
+
+    XCTAssertEqual(IMAPCommand.imapDate(last.before), "12-Sep-2026")
   }
 
   // MARK: - Batching (§2.17)
