@@ -1,7 +1,10 @@
 import SwiftUI
 
-/// The app's root chrome. Renders the glow-orb atmosphere ONCE behind the tab
-/// content — never per card, never per row — and a floating glass tab bar.
+/// The app's root chrome. Content sits directly on the navy-black canvas
+/// behind a floating glass tab bar. v5 (`nomi-ui-refresh`) removes the two
+/// glow-orb circles that used to render once behind the tab content.
+/// `NomiGlow` itself stays, its one remaining consumer is the tab-bar `+`
+/// (wired in `ui-root-wiring`, not here).
 public struct NomiTabShell<Content: View>: View {
   public let content: Content
 
@@ -12,7 +15,6 @@ public struct NomiTabShell<Content: View>: View {
   public var body: some View {
     ZStack {
       NomiColor.surfaceCanvas.ignoresSafeArea()
-      NomiGlowOrbs()
       content
     }
     .background(NomiColor.surfaceCanvas)
@@ -35,7 +37,7 @@ public struct NomiFloatingTabBarBackground: View {
   }
 }
 
-#Preview("Tab shell — glow orbs once behind content") {
+#Preview("Tab shell — card stack on the v5 navy-black ground") {
   NomiTabShell {
     ScrollView {
       VStack(spacing: NomiSpacing.sm) {
