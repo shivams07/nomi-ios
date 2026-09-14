@@ -31,6 +31,7 @@ public struct CategoriesScreen: View {
   @State private var editingCategory: NomiCore.Category?
   @State private var isCreating = false
   @State private var deleteErrorMessage: String?
+  @State private var pendingDeletion: NomiCore.Category?
 
   public init(categoryStore: CategoryStore) {
     self.categoryStore = categoryStore
@@ -76,6 +77,22 @@ public struct CategoriesScreen: View {
         Text(deleteErrorMessage ?? "")
       }
     )
+    .confirmationDialog(
+      "Delete \(pendingDeletion?.name ?? "category")?",
+      isPresented: Binding(
+        get: { pendingDeletion != nil },
+        set: { if !$0 { pendingDeletion = nil } }
+      ),
+      titleVisibility: .visible,
+      presenting: pendingDeletion,
+      actions: { category in
+        Button("Delete", role: .destructive) { confirmDelete(category) }
+        Button("Cancel", role: .cancel) { pendingDeletion = nil }
+      },
+      message: { _ in
+        Text("Its rules and budget will be deleted too. This can't be undone.")
+      }
+    )
   }
 
   private func row(for category: NomiCore.Category) -> some View {
@@ -105,12 +122,17 @@ public struct CategoriesScreen: View {
         deleteErrorMessage = "\(category.name) is a system category and can't be deleted."
         continue
       }
-      do {
-        try categoryStore.delete(category.id)
-      } catch {
-        deleteErrorMessage = "Couldn't delete \(category.name)."
-      }
+      pendingDeletion = category
     }
+  }
+
+  private func confirmDelete(_ category: NomiCore.Category) {
+    do {
+      try categoryStore.delete(category.id)
+    } catch {
+      deleteErrorMessage = "Couldn't delete \(category.name)."
+    }
+    pendingDeletion = nil
   }
 }
 
@@ -131,12 +153,33 @@ public struct CategoriesScreen: View {
   .preferredColorScheme(.dark)
 }
 
+/// `pendingDeletion` is `private` to `CategoriesScreen`, so there is no way to
+/// force it open from outside for a canvas preview. The dialog itself is a
+/// plain view modifier, so it is previewed in isolation instead, with a
+/// `.constant(true)` presentation binding standing in for the real one —
+/// wording kept verbatim from `CategoriesScreen`'s own dialog.
+#Preview("Categories — delete confirmation, dark") {
+  Color.clear
+    .confirmationDialog(
+      "Delete Transport?",
+      isPresented: .constant(true),
+      titleVisibility: .visible
+    ) {
+      Button("Delete", role: .destructive) {}
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("Its rules and budget will be deleted too. This can't be undone.")
+    }
+    .background(NomiColor.surfaceCanvas)
+    .preferredColorScheme(.dark)
+}
+
 private struct CategoriesScreenDeleteFailure: Error {}
 
-/// Delete always throws, so swiping to delete a non-system category in the
-/// canvas exercises the `deleteErrorMessage` alert this unit added — the
-/// UI-side `CategoryDeletion.isDeletable` gate only covers the system-category
-/// case, not a genuine store failure like this one.
+/// Delete always throws, so swiping to delete a non-system category and
+/// confirming the dialog in the canvas exercises the `deleteErrorMessage`
+/// alert — the UI-side `CategoryDeletion.isDeletable` gate only covers the
+/// system-category case, not a genuine store failure like this one.
 @MainActor
 private final class AlwaysFailingCategoryStore: CategoryStore {
   func create(name: String, symbolName: String, paletteSlot: Int) throws -> NomiCore.Category {

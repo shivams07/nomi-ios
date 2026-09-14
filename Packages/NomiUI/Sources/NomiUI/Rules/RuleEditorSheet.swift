@@ -80,8 +80,16 @@ struct RuleEditorSheet: View {
             .disabled(!canSave)
         }
       }
-      .onChange(of: pattern) { _, newValue in updateMatchCount(newValue) }
-      .onAppear { updateMatchCount(pattern) }
+      .task(id: pattern) {
+        // Debounced (L2): a fast typist would otherwise fire `preview(pattern:)`
+        // once per keystroke. `.task(id:)` cancels the previous sleep the
+        // moment `pattern` changes again, so only the settled value ever
+        // reaches the store — including the very first, undebounced render,
+        // which is what used to need a separate `.onAppear` call.
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        guard !Task.isCancelled else { return }
+        updateMatchCount(pattern)
+      }
     }
   }
 
