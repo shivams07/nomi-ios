@@ -91,6 +91,7 @@ struct BudgetEditorSheet: View {
         }
       }
     }
+    .nomiSheet(detents: [.medium])
   }
 
   private var amountField: some View {
@@ -146,4 +147,20 @@ struct BudgetEditorSheet: View {
     currentAmountMinor: 5000_00
   )
   .preferredColorScheme(.dark)
+}
+
+/// `.constant(true)` presentation, same idiom as `LedgerScreen`'s
+/// confirmation-dialog previews — shows the `nomiSheet(detents: [.medium])`
+/// `.medium` detent and radius atop a real background, not the bare form.
+#Preview("Budget editor — presented as a sheet, dark") {
+  NomiColor.surfaceCanvas
+    .sheet(isPresented: .constant(true)) {
+      BudgetEditorSheet(
+        budgetStore: FakeBudgetStore(),
+        category: EntryRulesPreviewSupport.makeCategories().first,
+        availableCategories: [],
+        currentAmountMinor: 5000_00
+      )
+    }
+    .preferredColorScheme(.dark)
 }
