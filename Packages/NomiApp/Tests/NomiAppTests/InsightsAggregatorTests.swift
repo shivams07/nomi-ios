@@ -340,7 +340,7 @@ final class InsightsAggregatorTests: XCTestCase {
       row(900, .debit, on: date(2026, 4, 2), normalized: "UBER TRIP", merchant: "Uber"),
     ]
 
-    let merchants = InsightsAggregator.topMerchants(debits, limit: 5)
+    let merchants = InsightsAggregator.topMerchants(debits, categories: [:], limit: 5)
 
     XCTAssertEqual(merchants.map(\.label), ["Swiggy", "Uber"])
     XCTAssertEqual(merchants.map(\.totalMinor), [1_000, 900])
@@ -349,6 +349,7 @@ final class InsightsAggregatorTests: XCTestCase {
   func testMerchantFallsBackToDescriptionWhenThereIsNoMerchantName() {
     let merchants = InsightsAggregator.topMerchants(
       [row(100, .debit, on: date(2026, 4, 1), normalized: "N", merchant: nil, description: "RAW NARRATION")],
+      categories: [:],
       limit: 5
     )
     XCTAssertEqual(merchants.first?.label, "RAW NARRATION")
@@ -358,7 +359,49 @@ final class InsightsAggregatorTests: XCTestCase {
     let debits = (1...9).map {
       row($0 * 100, .debit, on: date(2026, 4, 1), normalized: "M\($0)", merchant: "M\($0)")
     }
-    XCTAssertEqual(InsightsAggregator.topMerchants(debits, limit: 5).count, 5)
+    XCTAssertEqual(InsightsAggregator.topMerchants(debits, categories: [:], limit: 5).count, 5)
+  }
+
+  /// W1-13 (M8). A manual entry saved with no description was listed with a
+  /// blank label. Its category is the next best name — the same fallback order
+  /// `TransactionRow.title` gives the row itself. Through `insights`, so the
+  /// category map is proven to reach `topMerchants`.
+  func testABlankDescriptionIsLabelledByItsCategory() {
+    let food = UUID()
+    let insights = InsightsAggregator.insights(
+      period: .month(year: 2026, month: 4),
+      rows: [row(700, .debit, on: date(2026, 4, 1), category: food, normalized: "", merchant: nil, description: "")],
+      categories: [food: CategoryRef(id: food, name: "Groceries", paletteSlot: 4)],
+      priorRows: nil,
+      calendar: calendar
+    )
+
+    XCTAssertEqual(insights.topMerchants.map(\.label), ["Groceries"])
+  }
+
+  /// Every blank description normalises to the same empty string, whatever its
+  /// category. Keyed on that alone, blank rows in three categories would roll up
+  /// into one entry wearing whichever category came first.
+  func testBlankDescriptionsInDifferentCategoriesAreSeparateEntries() {
+    let food = UUID()
+    let rent = UUID()
+    let insights = InsightsAggregator.insights(
+      period: .month(year: 2026, month: 4),
+      rows: [
+        row(700, .debit, on: date(2026, 4, 1), category: food, normalized: "", merchant: nil, description: ""),
+        row(5_000, .debit, on: date(2026, 4, 2), category: rent, normalized: "", merchant: nil, description: ""),
+        row(100, .debit, on: date(2026, 4, 3), normalized: "", merchant: nil, description: ""),
+      ],
+      categories: [
+        food: CategoryRef(id: food, name: "Groceries", paletteSlot: 4),
+        rent: CategoryRef(id: rent, name: "Rent", paletteSlot: 3),
+      ],
+      priorRows: nil,
+      calendar: calendar
+    )
+
+    XCTAssertEqual(insights.topMerchants.map(\.label), ["Rent", "Groceries", "Manual entry"])
+    XCTAssertEqual(insights.topMerchants.map(\.totalMinor), [5_000, 700, 100])
   }
 
   // MARK: - Trend
@@ -375,6 +418,22 @@ final class InsightsAggregatorTests: XCTestCase {
     XCTAssertEqual(buckets.count, 2)
     XCTAssertEqual(buckets.map(\.debitMinor), [1_000, 2_000])
     XCTAssertEqual(buckets.map(\.creditMinor), [0, 50_000])
+  }
+
+  /// W1-13 (M3). The trend card is a rupee chart, and a USD row's `amountMinor`
+  /// is cents. `insights` has filtered since U18; `trend` never did. A month
+  /// whose only rows are foreign has no bucket, as a month with no rows never
+  /// did. Fails on `main`.
+  func testAForeignDebitContributesNothingToAnyTrendBucket() {
+    let rows = [
+      row(1_000, .debit, on: date(2026, 4, 2)),
+      row(1_299, .debit, on: date(2026, 4, 3), currency: "USD"),
+      row(4_999, .debit, on: date(2026, 5, 3), currency: "USD"),
+    ]
+
+    let buckets = InsightsAggregator.trend(rows: rows, calendar: calendar)
+
+    XCTAssertEqual(buckets.map(\.debitMinor), [1_000])
   }
 
   // MARK: - Accounts
@@ -439,6 +498,32 @@ final class InsightsAggregatorTests: XCTestCase {
     XCTAssertEqual(progress.first?.fraction ?? 0, 0.4, accuracy: 0.0001)
     XCTAssertEqual(progress.first?.periodKey, "2026-04")
     XCTAssertEqual(progress.first?.categoryName, "Groceries")
+  }
+
+  /// W1-13 (M3). A dollar charge filed under a budgeted category is not that
+  /// many paise of spend — and `BudgetAlertEvaluator` would fire on it. Fails on
+  /// `main`.
+  func testAForeignDebitContributesNothingToAnyBudgetSpend() {
+    let food = UUID()
+    let travel = UUID()
+    let rows = [
+      row(3_000, .debit, on: date(2026, 4, 1), category: food),
+      row(1_299, .debit, on: date(2026, 4, 2), category: food, currency: "USD"),
+      row(50_000, .debit, on: date(2026, 4, 3), category: travel, currency: "USD"),
+    ]
+
+    let progress = InsightsAggregator.budgetProgress(
+      budgets: [
+        BudgetRef(categoryID: food, amountMinor: 10_000, isEnabled: true),
+        BudgetRef(categoryID: travel, amountMinor: 10_000, isEnabled: true),
+      ],
+      rows: rows,
+      categories: [:],
+      periodKey: "2026-04"
+    )
+
+    XCTAssertEqual(progress.first(where: { $0.id == food })?.spentMinor, 3_000)
+    XCTAssertEqual(progress.first(where: { $0.id == travel })?.spentMinor, 0)
   }
 
   /// Unclamped. `BudgetAlertEvaluator` reads `> 1` as over budget, and

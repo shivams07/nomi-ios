@@ -101,6 +101,26 @@ final class RecurringStoreTests: XCTestCase {
     XCTAssertTrue(try store.recurringSeries().isEmpty)
   }
 
+  /// W1-13 (M3). A dollar subscription is still a subscription, but its amount
+  /// is cents and every figure on the insights screens is rupees. Excluded in
+  /// the fetch, as credits are, so the detector never sees it.
+  func testAForeignRunIsNotReported() throws {
+    let (store, context, _) = try makeStore()
+    for days in [60, 30, 0] {
+      context.insert(
+        Transaction(
+          date: date(daysAgo: days),
+          descriptionText: "SPOTIFY USA",
+          merchantName: "Spotify",
+          normalizedDescription: "SPOTIFY USA",
+          amountMinor: 1_199,
+          currencyCode: "USD"))
+    }
+    try context.save()
+
+    XCTAssertTrue(try store.recurringSeries().isEmpty)
+  }
+
   func testAnEmptyLedgerIsAnEmptyAnswerNotAnError() throws {
     let (store, _, _) = try makeStore()
 
