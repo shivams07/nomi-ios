@@ -2,22 +2,37 @@ import NomiCore
 import NomiPreview
 import SwiftUI
 
+/// The two destinations Home's own cards link to. The screens themselves
+/// (`BudgetsScreen`, `SubscriptionsScreen`) and the `navigationDestination`
+/// that resolves this route are `ui-root-wiring`'s (M6) job — until that
+/// merges, `NavigationLink(value:)` sites built from this render disabled on
+/// device, which is why every preview below wraps in a `NavigationStack`.
+public enum DashboardRoute: Hashable, Sendable {
+  case budgets
+  case subscriptions
+}
+
 /// Small, testable wiring rules that would otherwise be buried inside
 /// `DashboardView.body` where XCTest cannot reach them. Kept together so the
-/// AC-mandated behaviour (archived exclusion, budget-module absence) reads as
+/// AC-mandated behaviour (archived exclusion, budget-module state) reads as
 /// a policy, not an accident of how the view happens to be written.
 enum DashboardWiring {
   /// The accounts card never sees archived accounts — done-when: "Archived
   /// accounts are excluded from the accounts card."
   static let accountsIncludeArchived = false
 
-  /// Done-when: "a preview with zero budgets renders NO budget module at
-  /// all... an absent view and not a hidden one." `DashboardView` acts on
-  /// this with `if DashboardWiring.shouldShowBudgetModule(...)`, never
-  /// `.hidden()` or `.opacity(0)`, so a `false` here means the module is
-  /// never constructed.
-  static func shouldShowBudgetModule(_ items: [BudgetProgress]) -> Bool {
-    !items.isEmpty
+  /// v5 (`nomi-ui-refresh`): the empty-budgets case is a visible prompt card
+  /// now, not a hidden module — `budgetModule(_:)` replaces the old
+  /// `shouldShowBudgetModule` boolean gate with the two states
+  /// `RemainingBudgetCard` actually renders.
+  enum BudgetModuleState: Equatable {
+    case prompt
+    case remaining(BudgetTotals.Totals)
+  }
+
+  static func budgetModule(_ items: [BudgetProgress]) -> BudgetModuleState {
+    guard let totals = BudgetTotals.compute(items) else { return .prompt }
+    return .remaining(totals)
   }
 
   /// `RecentTransactionsCard` shows five rows and trims to five itself; the
@@ -113,10 +128,11 @@ enum DashboardWiring {
   }
 }
 
-/// The home screen (U9). Composes the period selector and every dashboard
-/// card, reading exclusively through `InsightsStore` and
-/// `MailConnectionService` — never `NomiIngest`, which `NomiUI` cannot import
-/// at all (enforced by the package graph, not by discipline).
+/// The home screen (U9; v5 `nomi-ui-refresh` §Home, M2). Composes the period
+/// selector and every dashboard card, reading exclusively through
+/// `InsightsStore` and `MailConnectionService` — never `NomiIngest`, which
+/// `NomiUI` cannot import at all (enforced by the package graph, not by
+/// discipline).
 public struct DashboardView: View {
   public let insightsStore: InsightsStore
   public let mailConnectionService: MailConnectionService?
@@ -141,6 +157,12 @@ public struct DashboardView: View {
   /// supplies this from `RootView`.
   public let onOpenReviewQueue: (() -> Void)?
 
+  /// v5 (`nomi-ui-refresh`, M2). `nil` — same default-so-every-call-site-
+  /// compiles rule as `onOpenReviewQueue` — leaves `RecentTransactionsCard`'s
+  /// rows non-interactive. `ui-root-wiring` (M6) supplies this, opening the
+  /// transaction sheet.
+  public let onSelectTransaction: ((UUID) -> Void)?
+
   @State private var basis: PeriodBasis = .calendarMonth
   @State private var anchor: Date = Date()
   @State private var mailState: MailConnectionState = .disconnected
@@ -157,6 +179,7 @@ public struct DashboardView: View {
     recurringStore: RecurringInsightsStore? = nil,
     refreshToken: Int = 0,
     onOpenReviewQueue: (() -> Void)? = nil,
+    onSelectTransaction: ((UUID) -> Void)? = nil,
     basis: PeriodBasis = .calendarMonth,
     anchor: Date = Date()
   ) {
@@ -165,6 +188,7 @@ public struct DashboardView: View {
     self.recurringStore = recurringStore
     self.refreshToken = refreshToken
     self.onOpenReviewQueue = onOpenReviewQueue
+    self.onSelectTransaction = onSelectTransaction
     _basis = State(initialValue: basis)
     _anchor = State(initialValue: anchor)
   }
@@ -202,26 +226,31 @@ public struct DashboardView: View {
   }
 
   public var body: some View {
-    ScrollView {
+    let insightsResult = insights
+    return ScrollView {
       VStack(alignment: .leading, spacing: NomiSpacing.cardToCard) {
         SyncStatusRow(state: mailState)
         periodSelector
-        switch insights {
+        switch insightsResult {
         case .loaded(let insights):
-          HeroTotalCard(insights: insights)
-          SpendPerDayChartCard(byDay: insights.byDay)
-          CategoryBreakdownCard(slices: insights.byCategory)
+          HeroTotalCard(insights: insights, periodLabel: DashboardPeriod.label(for: period))
           budgetModule
-          recentTransactionsModule
-          TopMerchantsCard(merchants: insights.topMerchants)
+          CategoryChipRow(slices: insights.byCategory)
           NeedsYouCard(
             needsReviewCount: insights.needsReviewCount, uncategorizedCount: insights.uncategorizedCount,
             onTap: onOpenReviewQueue
           )
+          recentTransactionsModule(categories: insights.categories)
         case .failed:
           FailedLoadCaption { retryToken += 1 }
         }
         upcomingModule
+        switch insightsResult {
+        case .loaded(let insights):
+          TopMerchantsCard(merchants: insights.topMerchants)
+        case .failed:
+          EmptyView()
+        }
         accountsModule
       }
       .padding(.horizontal, NomiSpacing.screenGutter)
@@ -238,10 +267,11 @@ public struct DashboardView: View {
   @ViewBuilder
   private var budgetModule: some View {
     switch budgetProgress {
-    case .loaded(let items) where DashboardWiring.shouldShowBudgetModule(items):
-      BudgetProgressCard(items: items)
-    case .loaded:
-      EmptyView()
+    case .loaded(let items):
+      NavigationLink(value: DashboardRoute.budgets) {
+        RemainingBudgetCard(state: DashboardWiring.budgetModule(items), referenceDate: anchor)
+      }
+      .buttonStyle(.plain)
     case .failed:
       FailedLoadCaption { retryToken += 1 }
     case nil:
@@ -254,10 +284,14 @@ public struct DashboardView: View {
   }
 
   @ViewBuilder
-  private var recentTransactionsModule: some View {
+  private func recentTransactionsModule(categories: [CategoryBadge]) -> some View {
     switch recentTransactions {
     case .loaded(let transactions):
-      RecentTransactionsCard(transactions: transactions)
+      RecentTransactionsCard(
+        transactions: transactions,
+        badges: RecentBadges.lookup(categories),
+        onSelect: onSelectTransaction
+      )
     case .failed:
       FailedLoadCaption { retryToken += 1 }
     }
@@ -269,7 +303,10 @@ public struct DashboardView: View {
   private var upcomingModule: some View {
     switch recurringSeries {
     case .loaded(let series):
-      UpcomingCard(series: series)
+      NavigationLink(value: DashboardRoute.subscriptions) {
+        UpcomingCard(series: series)
+      }
+      .buttonStyle(.plain)
     case .failed:
       FailedLoadCaption { retryToken += 1 }
     case nil:
@@ -341,15 +378,19 @@ extension DashboardView: Equatable {
 }
 
 #Preview("Dashboard — default, dark") {
-  NomiTabShell {
-    DashboardView(insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService())
+  NavigationStack {
+    NomiTabShell {
+      DashboardView(insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService())
+    }
   }
   .preferredColorScheme(.dark)
 }
 
 #Preview("Dashboard — accessibility 3, dark") {
-  NomiTabShell {
-    DashboardView(insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService())
+  NavigationStack {
+    NomiTabShell {
+      DashboardView(insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService())
+    }
   }
   .environment(\.dynamicTypeSize, .accessibility3)
   .preferredColorScheme(.dark)
@@ -359,47 +400,57 @@ extension DashboardView: Equatable {
 /// `onOpenReviewQueue` actually reaches `NeedsYouCard`, not just that card's
 /// own preview in isolation.
 #Preview("Dashboard — needs-you card tappable, dark") {
-  NomiTabShell {
-    DashboardView(
-      insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService(),
-      onOpenReviewQueue: {}
-    )
+  NavigationStack {
+    NomiTabShell {
+      DashboardView(
+        insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService(),
+        onOpenReviewQueue: {}
+      )
+    }
   }
   .preferredColorScheme(.dark)
 }
 
 #Preview("Dashboard — thin state, under 10 transactions, dark") {
-  NomiTabShell {
-    DashboardView(
-      insightsStore: FakeInsightsStore(transactions: Array(PreviewData.transactions.prefix(6)), budgets: []),
-      mailConnectionService: FakeMailConnectionService()
-    )
+  NavigationStack {
+    NomiTabShell {
+      DashboardView(
+        insightsStore: FakeInsightsStore(transactions: Array(PreviewData.transactions.prefix(6)), budgets: []),
+        mailConnectionService: FakeMailConnectionService()
+      )
+    }
   }
   .preferredColorScheme(.dark)
 }
 
-#Preview("Dashboard — zero budgets, module absent, dark") {
-  NomiTabShell {
-    DashboardView(insightsStore: FakeInsightsStore(budgets: []), mailConnectionService: FakeMailConnectionService())
+#Preview("Dashboard — zero budgets, prompt card, dark") {
+  NavigationStack {
+    NomiTabShell {
+      DashboardView(insightsStore: FakeInsightsStore(budgets: []), mailConnectionService: FakeMailConnectionService())
+    }
   }
   .preferredColorScheme(.dark)
 }
 
 #Preview("Dashboard — financial year basis, budget caption, dark") {
-  NomiTabShell {
-    DashboardView(
-      insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService(),
-      basis: .financialYear
-    )
+  NavigationStack {
+    NomiTabShell {
+      DashboardView(
+        insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService(),
+        basis: .financialYear
+      )
+    }
   }
   .preferredColorScheme(.dark)
 }
 
 #Preview("Dashboard — failed load, dark") {
-  NomiTabShell {
-    DashboardView(
-      insightsStore: FailingInsightsStorePreviewFixture(), mailConnectionService: FakeMailConnectionService()
-    )
+  NavigationStack {
+    NomiTabShell {
+      DashboardView(
+        insightsStore: FailingInsightsStorePreviewFixture(), mailConnectionService: FakeMailConnectionService()
+      )
+    }
   }
   .preferredColorScheme(.dark)
 }
@@ -408,11 +459,13 @@ extension DashboardView: Equatable {
 /// wiring, not just `UpcomingCard`'s own previews, which never touch
 /// `DashboardView.recurringSeries` or `upcomingModule` at all.
 #Preview("Dashboard — upcoming card populated, dark") {
-  NomiTabShell {
-    DashboardView(
-      insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService(),
-      recurringStore: FakeRecurringStore()
-    )
+  NavigationStack {
+    NomiTabShell {
+      DashboardView(
+        insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService(),
+        recurringStore: FakeRecurringStore()
+      )
+    }
   }
   .preferredColorScheme(.dark)
 }
@@ -422,8 +475,10 @@ extension DashboardView: Equatable {
 /// same rule as the zero-budgets preview above, named explicitly rather than
 /// left as an unlabelled side effect of every other preview's default.
 #Preview("Dashboard — no recurring store, upcoming card absent, dark") {
-  NomiTabShell {
-    DashboardView(insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService())
+  NavigationStack {
+    NomiTabShell {
+      DashboardView(insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService())
+    }
   }
   .preferredColorScheme(.dark)
 }

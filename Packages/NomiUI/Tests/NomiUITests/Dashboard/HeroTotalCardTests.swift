@@ -8,32 +8,30 @@ final class HeroTotalCardTests: XCTestCase {
     XCTAssertNil(HeroDelta.compute(current: 1000, prior: nil))
   }
 
-  func testDeltaIsNilWhenPriorIsZero() {
-    XCTAssertNil(HeroDelta.compute(current: 1000, prior: 0))
+  /// v5: a zero prior is a real prior — the delta is the whole current
+  /// figure, not `nil`.
+  func testZeroPriorIsARealPriorNotNil() {
+    let delta = HeroDelta.compute(current: 1000, prior: 0)
+    XCTAssertEqual(delta?.deltaMinor, 1000)
+    XCTAssertEqual(delta?.isIncrease, true)
   }
 
   func testDeltaFlagsIncreaseWhenCurrentExceedsPrior() {
     let delta = HeroDelta.compute(current: 1200, prior: 1000)
     XCTAssertEqual(delta?.isIncrease, true)
-    XCTAssertEqual(delta?.percent ?? 0, 0.2, accuracy: 0.0001)
+    XCTAssertEqual(delta?.deltaMinor, 200)
   }
 
   func testDeltaFlagsDecreaseWhenCurrentIsBelowPrior() {
     let delta = HeroDelta.compute(current: 800, prior: 1000)
     XCTAssertEqual(delta?.isIncrease, false)
-    XCTAssertEqual(delta?.percent ?? 0, -0.2, accuracy: 0.0001)
+    XCTAssertEqual(delta?.deltaMinor, -200)
   }
 
   func testDeltaEqualToPriorCountsAsIncrease() {
     let delta = HeroDelta.compute(current: 1000, prior: 1000)
     XCTAssertEqual(delta?.isIncrease, true)
-    XCTAssertEqual(delta?.percent ?? -1, 0, accuracy: 0.0001)
-  }
-
-  func testPercentTextRoundsToWholeNumber() {
-    XCTAssertEqual(HeroDelta.percentText(0.2), "20%")
-    XCTAssertEqual(HeroDelta.percentText(-0.2), "20%")
-    XCTAssertEqual(HeroDelta.percentText(0.005), "1%")
+    XCTAssertEqual(delta?.deltaMinor, 0)
   }
 
   func testReduceMotionRendersFinalValueImmediately() {
@@ -71,5 +69,32 @@ final class HeroTotalCardTests: XCTestCase {
       tiles.first { $0.title == "Expenses" }?.amountText,
       NomiFormatters.amountString(minor: 42_318_00)
     )
+  }
+
+  private func day(_ offset: Int) -> Date {
+    Date(timeIntervalSince1970: TimeInterval(offset * 86_400))
+  }
+
+  func testSparklineLastPointEqualsSumOfByDay() {
+    let byDay = [
+      DayBucket(id: day(0), debitMinor: 100),
+      DayBucket(id: day(1), debitMinor: 250),
+      DayBucket(id: day(2), debitMinor: 50),
+    ]
+    XCTAssertEqual(HeroSparkline.points(byDay: byDay).last, 400)
+  }
+
+  func testSparklineIsEmptyWithFewerThanTwoBuckets() {
+    XCTAssertTrue(HeroSparkline.points(byDay: [DayBucket(id: day(0), debitMinor: 100)]).isEmpty)
+    XCTAssertTrue(HeroSparkline.points(byDay: []).isEmpty)
+  }
+
+  func testSparklineSortsUnsortedInputByDay() {
+    let byDay = [
+      DayBucket(id: day(2), debitMinor: 50),
+      DayBucket(id: day(0), debitMinor: 100),
+      DayBucket(id: day(1), debitMinor: 250),
+    ]
+    XCTAssertEqual(HeroSparkline.points(byDay: byDay), [100, 350, 400])
   }
 }
