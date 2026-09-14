@@ -74,13 +74,29 @@ public enum PeriodBasis: String, Sendable, Codable, CaseIterable {
 public struct CategorySlice: Sendable, Identifiable {
   public let id: UUID
   public let name: String
+  /// `Category.symbolName`. "questionmark" for the Uncategorized sentinel and
+  /// for the folded Other slice.
+  ///
+  /// The init default exists so NomiUI's own constructions (folds, previews,
+  /// tests) compile unchanged. Every NomiApp and NomiPreview site passes it
+  /// explicitly: a default is exactly how a production site ships
+  /// "questionmark" for every category without anything failing.
+  public let symbolName: String
   public let paletteSlot: Int
   public let totalMinor: Int
   public let share: Double
 
-  public init(id: UUID, name: String, paletteSlot: Int, totalMinor: Int, share: Double) {
+  public init(
+    id: UUID,
+    name: String,
+    symbolName: String = "questionmark",
+    paletteSlot: Int,
+    totalMinor: Int,
+    share: Double
+  ) {
     self.id = id
     self.name = name
+    self.symbolName = symbolName
     self.paletteSlot = paletteSlot
     self.totalMinor = totalMinor
     self.share = share
@@ -201,6 +217,10 @@ public struct AccountSummary: Sendable, Identifiable {
 public struct BudgetProgress: Sendable, Identifiable {
   public let id: UUID
   public let categoryName: String
+  /// `Category.symbolName`, "questionmark" when the budget's category is not
+  /// found. Defaulted for the same reason, and under the same rule, as
+  /// `CategorySlice.symbolName`.
+  public let symbolName: String
   public let paletteSlot: Int
   public let budgetMinor: Int
   public let spentMinor: Int
@@ -210,6 +230,7 @@ public struct BudgetProgress: Sendable, Identifiable {
   public init(
     id: UUID,
     categoryName: String,
+    symbolName: String = "questionmark",
     paletteSlot: Int,
     budgetMinor: Int,
     spentMinor: Int,
@@ -218,6 +239,7 @@ public struct BudgetProgress: Sendable, Identifiable {
   ) {
     self.id = id
     self.categoryName = categoryName
+    self.symbolName = symbolName
     self.paletteSlot = paletteSlot
     self.budgetMinor = budgetMinor
     self.spentMinor = spentMinor

@@ -62,11 +62,16 @@ public struct LedgerRow: Sendable, Equatable, Identifiable {
 public struct CategoryRef: Sendable, Equatable {
   public let id: UUID
   public let name: String
+  /// Defaulted so the pure tests that never read it stay short.
+  /// `SwiftDataInsightsStore.categoryMap()` passes the row's own value, and
+  /// `InsightsAggregatorTests` holds that through a real container.
+  public let symbolName: String
   public let paletteSlot: Int
 
-  public init(id: UUID, name: String, paletteSlot: Int) {
+  public init(id: UUID, name: String, symbolName: String = "questionmark", paletteSlot: Int) {
     self.id = id
     self.name = name
+    self.symbolName = symbolName
     self.paletteSlot = paletteSlot
   }
 }
@@ -241,6 +246,7 @@ public enum InsightsAggregator {
         return CategorySlice(
           id: categoryID,
           name: category?.name ?? "Uncategorized",
+          symbolName: category?.symbolName ?? "questionmark",
           paletteSlot: category?.paletteSlot ?? 6,
           totalMinor: total,
           share: debitTotal > 0 ? Double(total) / Double(debitTotal) : 0
@@ -403,6 +409,7 @@ public enum InsightsAggregator {
         return BudgetProgress(
           id: budget.categoryID,
           categoryName: category?.name ?? "Uncategorized",
+          symbolName: category?.symbolName ?? "questionmark",
           paletteSlot: category?.paletteSlot ?? 6,
           budgetMinor: budget.amountMinor,
           spentMinor: spent,
