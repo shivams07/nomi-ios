@@ -156,17 +156,8 @@ public struct TransactionRow: View {
     return size.width
   }
 
-  private var iconTint: Color {
-    categoryPaletteSlot.map(paletteSlot) ?? CategoryPalette.other
-  }
-
   private var iconTile: some View {
-    Image(systemName: categorySymbolName ?? "questionmark")
-      .font(.system(size: 14))
-      .foregroundStyle(iconTint)
-      .frame(width: 32, height: 32)
-      .background(iconTint.opacity(0.16))
-      .nomiCornerRadius(NomiRadius.tile)
+    NomiCategoryBadge(symbolName: categorySymbolName ?? "questionmark", paletteSlot: categoryPaletteSlot, size: 32)
   }
 
   /// Same capsule shape as `mergeFlag` — glass fill, no new token.
