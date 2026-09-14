@@ -195,6 +195,43 @@ struct RecurrenceDetectorTests {
     #expect(RecurrenceDetector.series(in: rows, now: date(daysAfterAnchor: 61), calendar: calendar).count == 1)
   }
 
+  // MARK: - Category (UI refresh P2)
+
+  /// The newest row decides, the same rule as `label`. The older rows carry a
+  /// different id, and the input is handed over newest-first, so a detector
+  /// that read the first row it was given, or the oldest, cannot pass.
+  @Test func aRunWhoseNewestRowIsCategorisedYieldsThatID() throws {
+    let earlier = UUID()
+    let newest = UUID()
+    let rows = [
+      row(daysAfterAnchor: 60, category: newest),
+      row(daysAfterAnchor: 30, category: earlier),
+      row(daysAfterAnchor: 0, category: earlier),
+    ]
+
+    let found = try #require(
+      RecurrenceDetector.series(in: rows, now: date(daysAfterAnchor: 61), calendar: calendar).first)
+
+    #expect(found.categoryID == newest)
+    #expect(found.category == nil, "the badge is the store's to resolve; the detector never names a @Model")
+  }
+
+  /// Not a majority, not "the last one that had a category". The user left the
+  /// newest charge uncategorised, and that is what the run reads as.
+  @Test func anUncategorisedNewestRowYieldsNilEvenWhenOlderRowsAreCategorised() throws {
+    let food = UUID()
+    let rows = [
+      row(daysAfterAnchor: 0, category: food),
+      row(daysAfterAnchor: 30, category: food),
+      row(daysAfterAnchor: 60, category: nil),
+    ]
+
+    let found = try #require(
+      RecurrenceDetector.series(in: rows, now: date(daysAfterAnchor: 61), calendar: calendar).first)
+
+    #expect(found.categoryID == nil)
+  }
+
   // MARK: -
 
   /// 5 January 2026, 10:00 IST. Fixed rather than `Date()` so a run at any hour
@@ -217,7 +254,8 @@ struct RecurrenceDetectorTests {
     description: String = "NETFLIX",
     merchant: String? = "Netflix",
     hour: Int = 10,
-    minute: Int = 0
+    minute: Int = 0,
+    category: UUID? = nil
   ) -> RecurrenceRow {
     RecurrenceRow(
       date: date(daysAfterAnchor: days, hour: hour, minute: minute),
@@ -225,7 +263,8 @@ struct RecurrenceDetectorTests {
       directionRaw: direction.rawValue,
       normalizedDescription: description,
       merchantName: merchant,
-      descriptionText: description
+      descriptionText: description,
+      categoryID: category
     )
   }
 }

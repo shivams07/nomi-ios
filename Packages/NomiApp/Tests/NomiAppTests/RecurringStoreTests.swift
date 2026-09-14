@@ -127,6 +127,56 @@ final class RecurringStoreTests: XCTestCase {
     XCTAssertTrue(try store.recurringSeries().isEmpty)
   }
 
+  // MARK: - Category badge (UI refresh P2)
+
+  /// The Subscriptions row draws the category glyph in its hue. Every field is
+  /// a non-default value, so a badge built from `Category`'s defaults, or with
+  /// two fields swapped, fails.
+  func testTheSeriesCategoryCarriesTheRowsNameSymbolAndSlot() throws {
+    let (store, context, _) = try makeStore()
+    let streaming = insertCategory(name: "Streaming", symbolName: "tv", paletteSlot: 4, into: context)
+    insertRun(daysAgo: [60, 30, 0], category: streaming.id, into: context)
+
+    let series = try XCTUnwrap(try store.recurringSeries().first)
+
+    XCTAssertEqual(series.categoryID, streaming.id)
+    XCTAssertEqual(
+      series.category,
+      RecurringSeries.CategoryBadge(id: streaming.id, name: "Streaming", symbolName: "tv", paletteSlot: 4))
+  }
+
+  /// A category existing in the store must not leak onto a run that has none.
+  func testARunWithNoCategoryHasNoBadge() throws {
+    let (store, context, _) = try makeStore()
+    _ = insertCategory(name: "Streaming", symbolName: "tv", paletteSlot: 4, into: context)
+    insertRun(daysAgo: [60, 30, 0], into: context)
+
+    let series = try XCTUnwrap(try store.recurringSeries().first)
+
+    XCTAssertNil(series.categoryID)
+    XCTAssertNil(series.category)
+  }
+
+  /// The `Category` fetch sits inside the `.recurring` cache entry, not beside
+  /// it. That makes an unannounced rename invisible until a write clears the
+  /// cache, which is exactly what every other aggregate does: the cached badge
+  /// keeps the old name, and `WriteCoordinator` is what brings in the new one.
+  func testARenameReachesTheBadgeOnTheNextWriteAndNotBefore() throws {
+    let (store, context, cache) = try makeStore()
+    let streaming = insertCategory(name: "Streaming", symbolName: "tv", paletteSlot: 4, into: context)
+    insertRun(daysAgo: [60, 30, 0], category: streaming.id, into: context)
+    XCTAssertEqual(try store.recurringSeries().first?.category?.name, "Streaming")
+    let missesAfterFirst = cache.missCount
+
+    streaming.name = "Entertainment"
+    try context.save()
+    XCTAssertEqual(try store.recurringSeries().first?.category?.name, "Streaming", "still the cached answer")
+    XCTAssertEqual(cache.missCount, missesAfterFirst, "and no second fetch of anything")
+
+    WriteCoordinator(cache: cache).didWrite()
+    XCTAssertEqual(try store.recurringSeries().first?.category?.name, "Entertainment")
+  }
+
   // MARK: -
 
   /// A fixed instant - 24 April 2026, 08:36 IST - paired with a fixed IST
@@ -145,7 +195,7 @@ final class RecurringStoreTests: XCTestCase {
     calendar.date(byAdding: .day, value: -days, to: reference)!
   }
 
-  private func insertRun(daysAgo days: [Int], into context: ModelContext) {
+  private func insertRun(daysAgo days: [Int], category: UUID? = nil, into context: ModelContext) {
     for day in days {
       context.insert(
         Transaction(
@@ -153,9 +203,22 @@ final class RecurringStoreTests: XCTestCase {
           descriptionText: "NETFLIX SUBSCRIPTION",
           merchantName: "Netflix",
           normalizedDescription: "NETFLIX",
-          amountMinor: 49900))
+          amountMinor: 49900,
+          categoryID: category))
     }
     try? context.save()
+  }
+
+  private func insertCategory(
+    name: String,
+    symbolName: String,
+    paletteSlot: Int,
+    into context: ModelContext
+  ) -> NomiCore.Category {
+    let category = NomiCore.Category(name: name, symbolName: symbolName, paletteSlot: paletteSlot)
+    context.insert(category)
+    try? context.save()
+    return category
   }
 
   private func makeStore() throws -> (SwiftDataRecurringStore, ModelContext, InsightsCache) {

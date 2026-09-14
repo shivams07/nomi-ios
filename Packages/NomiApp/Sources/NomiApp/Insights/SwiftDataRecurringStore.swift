@@ -76,12 +76,37 @@ public final class SwiftDataRecurringStore: RecurringInsightsStore {
       )
       descriptor.includePendingChanges = true
 
-      return RecurrenceDetector.series(
+      let detected = RecurrenceDetector.series(
         in: try context.fetch(descriptor).map { RecurrenceRow($0) },
         now: moment,
         calendar: calendar
       )
+      // UI refresh P2. One `Category` fetch, inside this cache entry rather than
+      // beside it, so a rename is a write and the next read re-resolves the
+      // badge. Mapping after detection keeps the detector pure and leaves the
+      // sort it guarantees untouched.
+      let badges = try categoryBadges()
+      return detected.map { series in
+        series.attaching(series.categoryID.flatMap { badges[$0] })
+      }
     }
+  }
+
+  /// `uniquingKeysWith`, as `SwiftDataInsightsStore.categoryMap()` does and for
+  /// its reason: `Category` syncs through CloudKit with no cross-device
+  /// uniqueness, and `uniqueKeysWithValues` traps on a duplicate id.
+  private func categoryBadges() throws -> [UUID: RecurringSeries.CategoryBadge] {
+    let categories = try context.fetch(FetchDescriptor<NomiCore.Category>())
+    return Dictionary(
+      categories.map {
+        (
+          $0.id,
+          RecurringSeries.CategoryBadge(
+            id: $0.id, name: $0.name, symbolName: $0.symbolName, paletteSlot: $0.paletteSlot)
+        )
+      },
+      uniquingKeysWith: { first, _ in first }
+    )
   }
 }
 
@@ -95,7 +120,8 @@ extension RecurrenceRow {
       directionRaw: transaction.directionRaw,
       normalizedDescription: transaction.normalizedDescription,
       merchantName: transaction.merchantName,
-      descriptionText: transaction.descriptionText
+      descriptionText: transaction.descriptionText,
+      categoryID: transaction.categoryID
     )
   }
 }
