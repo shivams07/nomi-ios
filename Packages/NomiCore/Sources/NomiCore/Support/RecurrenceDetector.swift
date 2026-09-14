@@ -15,6 +15,8 @@ public struct RecurrenceRow: Sendable, Equatable {
   public let normalizedDescription: String
   public let merchantName: String?
   public let descriptionText: String
+  /// UI refresh P2. Read for the newest row only; see `RecurringSeries.categoryID`.
+  public let categoryID: UUID?
 
   public init(
     date: Date,
@@ -22,7 +24,8 @@ public struct RecurrenceRow: Sendable, Equatable {
     directionRaw: String,
     normalizedDescription: String,
     merchantName: String?,
-    descriptionText: String
+    descriptionText: String,
+    categoryID: UUID? = nil
   ) {
     self.date = date
     self.amountMinor = amountMinor
@@ -30,6 +33,7 @@ public struct RecurrenceRow: Sendable, Equatable {
     self.normalizedDescription = normalizedDescription
     self.merchantName = merchantName
     self.descriptionText = descriptionText
+    self.categoryID = categoryID
   }
 
   public var isDebit: Bool { directionRaw == Direction.debit.rawValue }
@@ -59,13 +63,43 @@ public struct RecurringSeries: Sendable, Identifiable, Equatable {
   public let lastDate: Date
   public let nextExpected: Date
 
+  /// The newest row's category — the same "current name" rule as `label`, so a
+  /// run the user re-filed last month reads under the category they chose last.
+  /// Not a majority over the run: an uncategorised newest row is `nil` even when
+  /// every older row is categorised. Set by the detector.
+  public let categoryID: UUID?
+
+  /// Resolved by the store from `categoryID`. Always `nil` from the detector,
+  /// which never names a `@Model`; `nil` for an uncategorised run; and `nil`
+  /// when `categoryID` names a category that no longer exists.
+  public let category: CategoryBadge?
+
+  /// What a row needs to draw the category tile, and nothing else.
+  public struct CategoryBadge: Sendable, Equatable {
+    public let id: UUID
+    public let name: String
+    public let symbolName: String
+    public let paletteSlot: Int
+
+    public init(id: UUID, name: String, symbolName: String, paletteSlot: Int) {
+      self.id = id
+      self.name = name
+      self.symbolName = symbolName
+      self.paletteSlot = paletteSlot
+    }
+  }
+
+  /// `categoryID` and `category` default to `nil` so every construction that
+  /// predates them (NomiUI's card, previews and tests) compiles unchanged.
   public init(
     id: String,
     label: String,
     amountMinor: Int,
     occurrences: Int,
     lastDate: Date,
-    nextExpected: Date
+    nextExpected: Date,
+    categoryID: UUID? = nil,
+    category: CategoryBadge? = nil
   ) {
     self.id = id
     self.label = label
@@ -73,6 +107,23 @@ public struct RecurringSeries: Sendable, Identifiable, Equatable {
     self.occurrences = occurrences
     self.lastDate = lastDate
     self.nextExpected = nextExpected
+    self.categoryID = categoryID
+    self.category = category
+  }
+
+  /// The store's one-line way to attach a badge without re-listing every field.
+  /// Everything else, `categoryID` included, is carried across unchanged.
+  public func attaching(_ badge: CategoryBadge?) -> RecurringSeries {
+    RecurringSeries(
+      id: id,
+      label: label,
+      amountMinor: amountMinor,
+      occurrences: occurrences,
+      lastDate: lastDate,
+      nextExpected: nextExpected,
+      categoryID: categoryID,
+      category: badge
+    )
   }
 }
 
@@ -185,7 +236,8 @@ public enum RecurrenceDetector {
       amountMinor: medianAmount,
       occurrences: rows.count,
       lastDate: newest.date,
-      nextExpected: nextExpected
+      nextExpected: nextExpected,
+      categoryID: newest.categoryID
     )
   }
 

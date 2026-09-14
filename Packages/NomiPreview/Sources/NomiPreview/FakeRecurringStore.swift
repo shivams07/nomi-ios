@@ -29,12 +29,31 @@ public final class FakeRecurringStore: RecurringInsightsStore {
 
   /// Three subscriptions at the amounts and cadences the detector is tuned for.
   ///
+  /// Two carry a category badge and the third does not, so the card and the
+  /// Subscriptions screen preview both the category tile and the monogram
+  /// fallback (UI refresh P2). The badges repeat the id, name, symbol and slot
+  /// of two `PreviewData.categories` rows, spelled out rather than read from
+  /// there: those are `@Model` instances, and this `nonisolated` constant must
+  /// not reach into them.
+  ///
   /// `nonisolated` because `init` names it as a default argument, and default
   /// arguments are evaluated at the call site rather than inside the actor.
   /// Without it the reference is a warning today and an error under the Swift 6
   /// language mode. Safe: `RecurringSeries` is `Sendable` and this is a `let`.
   nonisolated public static let sampleSeries: [RecurringSeries] = {
     let day: TimeInterval = 86_400
+    let bills = RecurringSeries.CategoryBadge(
+      id: UUID(uuidString: "00000000-0000-0000-0000-000000000103")!,
+      name: "Bills & Utilities",
+      symbolName: "bolt",
+      paletteSlot: 3
+    )
+    let shopping = RecurringSeries.CategoryBadge(
+      id: UUID(uuidString: "00000000-0000-0000-0000-000000000101")!,
+      name: "Shopping",
+      symbolName: "bag",
+      paletteSlot: 1
+    )
     return [
       RecurringSeries(
         id: "NETFLIX",
@@ -42,7 +61,9 @@ public final class FakeRecurringStore: RecurringInsightsStore {
         amountMinor: 64900,
         occurrences: 6,
         lastDate: Date(timeIntervalSinceNow: -27 * day),
-        nextExpected: Date(timeIntervalSinceNow: 3 * day)
+        nextExpected: Date(timeIntervalSinceNow: 3 * day),
+        categoryID: bills.id,
+        category: bills
       ),
       RecurringSeries(
         id: "SPOTIFY INDIA",
@@ -50,8 +71,11 @@ public final class FakeRecurringStore: RecurringInsightsStore {
         amountMinor: 11900,
         occurrences: 4,
         lastDate: Date(timeIntervalSinceNow: -21 * day),
-        nextExpected: Date(timeIntervalSinceNow: 9 * day)
+        nextExpected: Date(timeIntervalSinceNow: 9 * day),
+        categoryID: shopping.id,
+        category: shopping
       ),
+      // No badge: the monogram path.
       RecurringSeries(
         id: "CULT FIT MEMBERSHIP",
         label: "Cult.fit",
