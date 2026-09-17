@@ -7,7 +7,7 @@ import SwiftUI
 /// composes them."
 ///
 /// **Not a `TabView`, deliberately.** U5 shipped the chrome this app is meant
-/// to wear — `NomiTabShell` (glow orbs once, behind everything) and
+/// to wear — `NomiTabShell` (the navy-black canvas behind everything) and
 /// `NomiFloatingTabBarBackground` (the floating glass pill). A `TabView` draws
 /// its own opaque bar and pins content above it; getting U5's bar to sit over
 /// that means hiding the system one and fighting its safe-area insets. A
@@ -27,6 +27,22 @@ struct RootView: View {
   @State private var ledgerInitialChip: LedgerChipSelection = .all
   @State private var backfillProgress: BackfillProgress?
   @State private var backfillUnfinished = false
+  @State private var presentedTransaction: PresentedTransaction?
+
+  /// Shared by the Dashboard's Upcoming card and its `SubscriptionsScreen`
+  /// destination below — one call site instead of two, so both agree on the
+  /// same cache-backed construction.
+  private var recurringStore: SwiftDataRecurringStore {
+    SwiftDataRecurringStore(context: environment.container.mainContext, cache: environment.cache)
+  }
+
+  /// `LedgerScreen`'s own row-tap sheet and the Home recent-row sheet below
+  /// both edit through the same coordinator — one call site instead of two,
+  /// same "cheap to rebuild, still stateless" reasoning the ledger case
+  /// already applies to this construction.
+  private var transactionEditor: SwiftDataTransactionEditor {
+    SwiftDataTransactionEditor(context: environment.container.mainContext, coordinator: environment.coordinator)
+  }
 
   var body: some View {
     NomiTabShell {
@@ -75,6 +91,20 @@ struct RootView: View {
       )
       .modelContainer(environment.container)
     }
+    .sheet(item: $presentedTransaction) { presented in
+      // Home's recent-row tap, opened the same way `LedgerScreen`'s own row
+      // tap already does — same reason as the entry sheet above: a new
+      // presentation context needs its own `.modelContainer`.
+      TransactionDetailScreen(
+        transactionID: presented.id,
+        transactionStore: environment.transactionStore,
+        editor: transactionEditor,
+        categoryStore: environment.categoryStore,
+        accountStore: environment.accountStore,
+        suggester: environment.categorySuggester
+      )
+      .modelContainer(environment.container)
+    }
   }
 
   @ViewBuilder
@@ -91,10 +121,7 @@ struct RootView: View {
           // and `SwiftDataRecurringStore` already share `environment.cache`,
           // so constructing this here costs nothing beyond the call and
           // shares that cache like every other store does.
-          recurringStore: SwiftDataRecurringStore(
-            context: environment.container.mainContext,
-            cache: environment.cache
-          ),
+          recurringStore: recurringStore,
           // Stored and never read by the screen — see `DashboardView`'s note.
           // It is what makes SwiftUI re-invoke `body` after a write, and it is
           // only doing that job because it *changes*: passing a literal here
@@ -103,9 +130,18 @@ struct RootView: View {
           onOpenReviewQueue: {
             ledgerInitialChip = .needsReview
             selection = .ledger
-          }
+          },
+          onSelectTransaction: { id in presentedTransaction = PresentedTransaction(id: id) }
         )
         .navigationTitle("Home")
+        .navigationDestination(for: DashboardRoute.self) { route in
+          switch route {
+          case .budgets:
+            BudgetsScreen(budgetStore: environment.budgetStore, insightsStore: environment.insightsStore)
+          case .subscriptions:
+            SubscriptionsScreen(recurringStore: recurringStore)
+          }
+        }
         .toolbar {
           ToolbarItem(placement: .primaryAction) {
             // Accounts hangs off Dashboard, per §2.18. A toolbar link rather
@@ -135,11 +171,9 @@ struct RootView: View {
           // 3 and 5a have all merged. Cheap to rebuild on every `destination`
           // evaluation: it is a stateless wrapper over the same context and
           // coordinator every other store already shares.
-          editor: SwiftDataTransactionEditor(
-            context: environment.container.mainContext,
-            coordinator: environment.coordinator
-          ),
-          initialChip: ledgerInitialChip
+          editor: transactionEditor,
+          initialChip: ledgerInitialChip,
+          suggester: environment.categorySuggester
         )
         // `LedgerScreen` is a tab-root screen and sets no title of its own —
         // same as `DashboardView`, and the same reason Dashboard and Reports
@@ -272,6 +306,11 @@ struct NomiFloatingTabBar: View {
         .foregroundStyle(NomiColor.textPrimary)
         .frame(width: 44, height: 44)
         .background(Circle().fill(NomiColor.accent))
+        // v5 (`nomi-ui-refresh`): the glow modifier's one surviving
+        // consumer, now that the hero card and the tab-content glow orbs are
+        // both gone — this button neither scrolls nor sits inside anything
+        // that does, so the "never a ledger row" rule doesn't apply here.
+        .nomiGlow()
     }
     .buttonStyle(.plain)
     .frame(maxWidth: .infinity)
