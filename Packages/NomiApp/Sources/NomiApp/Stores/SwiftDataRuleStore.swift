@@ -77,12 +77,13 @@ public final class SwiftDataRuleStore: RuleStore {
   /// `RulesScreen` sorts by `priority`, so the new rule also appears at the top
   /// of the list where the user is looking. Drag-to-reorder overrides both.
   @discardableResult
-  public func create(pattern: String, categoryID: UUID) throws -> RuleApplyResult {
+  public func create(pattern: String, categoryID: UUID, scope: RuleScope) throws -> RuleApplyResult {
     let existing = try context.fetch(FetchDescriptor<Rule>())
     let rule = Rule(
       pattern: pattern,
       categoryID: categoryID,
-      priority: (existing.map(\.priority).min() ?? 1) - 1
+      priority: (existing.map(\.priority).min() ?? 1) - 1,
+      scope: scope
     )
     context.insert(rule)
     try context.save()
@@ -90,12 +91,30 @@ public final class SwiftDataRuleStore: RuleStore {
   }
 
   @discardableResult
-  public func update(_ id: UUID, pattern: String, categoryID: UUID) throws -> RuleApplyResult {
+  public func update(_ id: UUID, pattern: String, categoryID: UUID, scope: RuleScope) throws -> RuleApplyResult {
     guard let rule = try rule(id: id) else { return RuleApplyResult(matched: 0, recategorized: 0) }
     rule.pattern = pattern
     rule.categoryID = categoryID
+    rule.scope = scope
     try context.save()
     return try reapply()
+  }
+
+  /// Scope alone, then the same retroactive pass `update` runs.
+  ///
+  /// The pass is not optional here even though `setEnabled`'s is. Disabling a
+  /// rule only ever removes future matches, so there is nothing to revisit;
+  /// widening a scope *adds* rows that already exist and would otherwise stay
+  /// uncategorised until the next time they happened to be re-imported.
+  ///
+  /// The counts the pass returns are dropped rather than returned, because the
+  /// contract has nothing to hand them to — the caller is a row action, not
+  /// the editor. `reapply` still writes them and still `didWrite`s.
+  public func setScope(_ id: UUID, _ scope: RuleScope) throws {
+    guard let rule = try rule(id: id) else { return }
+    rule.scope = scope
+    try context.save()
+    _ = try reapply()
   }
 
   /// Deleting a rule re-evaluates nothing. `appliedRuleID` is cleared where it
@@ -194,10 +213,19 @@ public final class SwiftDataRuleStore: RuleStore {
   ///
   /// The pattern is uppercased first: `normalizedDescription` is uppercase, so
   /// a lowercase pattern previewed as zero and then matched nothing forever.
-  public func preview(pattern: String) throws -> Int {
+  ///
+  /// **The scope is applied after the prefix narrowing, in Swift** (§W2-5), for
+  /// the same reason the glob is: `candidateRows` exists to keep the fetch
+  /// small, and it can only narrow on what SQLite can answer. Folding the
+  /// scope into the `#Predicate` as well would be a second, larger predicate
+  /// per keystroke to skip rows the filter below already skips for free.
+  public func preview(pattern: String, scope: RuleScope) throws -> Int {
     let uppercased = pattern.uppercased()
     return try candidateRows(matching: uppercased, includeManual: true)
-      .filter { globMatches(pattern: uppercased, value: $0.normalizedDescription) }
+      .filter { row in
+        scope.admits(direction: row.direction, accountID: row.accountID, amountMinor: row.amountMinor)
+          && globMatches(pattern: uppercased, value: row.normalizedDescription)
+      }
       .count
   }
 
@@ -228,8 +256,7 @@ public final class SwiftDataRuleStore: RuleStore {
 
     for row in rows {
       let snapshot = TransactionSnapshot(row)
-      guard RuleEngine.firstMatch(normalizedDescription: snapshot.normalizedDescription, in: rules) != nil
-      else { continue }
+      guard RuleEngine.firstMatch(row: snapshot, in: rules) != nil else { continue }
       matched += 1
 
       guard let next = RuleEngine.apply(rules, to: snapshot) else { continue }

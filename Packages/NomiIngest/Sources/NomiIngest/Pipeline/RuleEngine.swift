@@ -56,12 +56,42 @@ public enum RuleEngine {
   /// by `normalizeDescription`, `globMatches` is case-sensitive, and nothing
   /// uppercases what the user typed - so a rule typed as `*swiggy*` matched
   /// nothing, ever, with no error and no empty-preview warning to say so.
+  ///
+  /// **A scope is an AND with the pattern** (§W2-5). It is checked first: four
+  /// field comparisons are cheaper than walking a glob, and a rule the scope
+  /// rejects can never match however well the pattern fits.
+  public static func firstMatch(
+    row: TransactionSnapshot,
+    in orderedRules: [RuleSnapshot]
+  ) -> RuleSnapshot? {
+    orderedRules.first { rule in
+      rule.isEnabled
+        && rule.scope.admits(
+          direction: row.direction, accountID: row.accountID, amountMinor: row.amountMinor)
+        && globMatches(pattern: rule.pattern.uppercased(), value: row.normalizedDescription)
+    }
+  }
+
+  /// Pattern only — and therefore **scoped rules never match here**.
+  ///
+  /// For the one caller that is holding a description and not a row:
+  /// `SwiftDataCategorySuggester.fromRules`, which suggests a category for a
+  /// row the user is looking at. A scope cannot be evaluated without the row's
+  /// direction, account and amount, so this cannot decide a scoped rule, and
+  /// it declines to guess.
+  ///
+  /// Skipping them is the conservative half of that choice. Offering a
+  /// suggestion from a rule that would not actually fire teaches the user a
+  /// rule works when it does not; withholding one costs a suggestion they can
+  /// still make by hand. When that caller can build a `TransactionSnapshot` it
+  /// should move to `firstMatch(row:)` and this overload should go — it exists
+  /// for a caller's shape, not for a behaviour anyone wants.
   public static func firstMatch(
     normalizedDescription: String,
     in orderedRules: [RuleSnapshot]
   ) -> RuleSnapshot? {
     orderedRules.first { rule in
-      rule.isEnabled
+      rule.isEnabled && rule.scope.isAny
         && globMatches(pattern: rule.pattern.uppercased(), value: normalizedDescription)
     }
   }
@@ -79,11 +109,7 @@ public enum RuleEngine {
     to row: TransactionSnapshot
   ) -> TransactionSnapshot? {
     guard row.categorySource != .manual else { return nil }
-    guard
-      let match = firstMatch(normalizedDescription: row.normalizedDescription, in: orderedRules)
-    else {
-      return nil
-    }
+    guard let match = firstMatch(row: row, in: orderedRules) else { return nil }
 
     var updated = row
     updated.categoryID = match.categoryID

@@ -274,4 +274,59 @@ final class DefaultRuleSeedTests: XCTestCase {
       ])
     return container.mainContext
   }
+
+  // MARK: - Scope (W2-5)
+
+  /// Every seeded rule is unscoped.
+  ///
+  /// The specs carry no scope and `apply` constructs `Rule` without one, so
+  /// this is true by construction today — which is precisely why it is worth a
+  /// test. A scope added to one spec later would narrow a rule that fires on
+  /// every install, and nothing else in the suite would notice: the two
+  /// categorisation tests above build their snapshots from `specs` by hand and
+  /// would inherit the same scope on both sides of the comparison.
+  func testEverySeededRuleIsUnscoped() throws {
+    let context = try makeContext()
+    try DefaultRuleSeed.apply(in: context)
+
+    let stored = try context.fetch(FetchDescriptor<Rule>())
+    XCTAssertFalse(stored.isEmpty, "the seed must actually have inserted something")
+    for rule in stored {
+      XCTAssertEqual(rule.scope, .any, rule.pattern)
+      XCTAssertNil(rule.directionRaw, rule.pattern)
+      XCTAssertNil(rule.accountID, rule.pattern)
+      XCTAssertNil(rule.minAmountMinor, rule.pattern)
+      XCTAssertNil(rule.maxAmountMinor, rule.pattern)
+    }
+  }
+
+  /// And an unscoped seeded rule still matches through the row-aware path, not
+  /// only through the pattern-only one the tests above use.
+  func testASeededRuleStillMatchesWhenEvaluatedAgainstAWholeRow() {
+    let rules = RuleEngine.precedenceOrdered(
+      specs.map {
+        RuleSnapshot(
+          id: $0.id, pattern: $0.pattern, categoryID: $0.categoryID, priority: $0.priority,
+          isEnabled: true, createdAt: Date(timeIntervalSince1970: 0))
+      })
+
+    let narration = "UPI/P2M/412345678901/SWIGGY/HDFC/Order"
+    let row = TransactionSnapshot(
+      date: Date(timeIntervalSince1970: 0),
+      descriptionText: narration,
+      normalizedDescription: normalizeDescription(narration),
+      amountMinor: 45_900,
+      directionRaw: Direction.debit.rawValue,
+      sourceRaw: IngestSource.email.rawValue,
+      dedupeKey: "seed-scope-1",
+      createdAt: Date(timeIntervalSince1970: 0),
+      updatedAt: Date(timeIntervalSince1970: 0))
+
+    XCTAssertNotNil(RuleEngine.firstMatch(row: row, in: rules), "the seed must match this at all")
+    XCTAssertEqual(
+      RuleEngine.firstMatch(row: row, in: rules)?.categoryID,
+      RuleEngine.firstMatch(normalizedDescription: row.normalizedDescription, in: rules)?
+        .categoryID,
+      "an unscoped rule set answers the same either way")
+  }
 }

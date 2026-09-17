@@ -14,6 +14,12 @@ public struct RuleSnapshot: Sendable, Equatable, Identifiable {
   public let categoryID: UUID
   public let priority: Int
   public let isEnabled: Bool
+
+  /// The conditions the row must satisfy on top of the pattern (§W2-5).
+  ///
+  /// Defaulted in the initialiser so that every existing construction site —
+  /// and there are a lot of them in tests — keeps meaning what it meant.
+  public let scope: RuleScope
   public let createdAt: Date
 
   public init(
@@ -22,6 +28,7 @@ public struct RuleSnapshot: Sendable, Equatable, Identifiable {
     categoryID: UUID,
     priority: Int,
     isEnabled: Bool,
+    scope: RuleScope = .any,
     createdAt: Date
   ) {
     self.id = id
@@ -29,6 +36,7 @@ public struct RuleSnapshot: Sendable, Equatable, Identifiable {
     self.categoryID = categoryID
     self.priority = priority
     self.isEnabled = isEnabled
+    self.scope = scope
     self.createdAt = createdAt
   }
 }
