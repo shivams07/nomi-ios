@@ -41,6 +41,16 @@ final class UpcomingCardTests: XCTestCase {
     XCTAssertTrue(UpcomingRows.soonest([]).isEmpty)
   }
 
+  /// M5. A series with no `category` (the detector's own default, and the
+  /// third of `FakeRecurringStore.sampleSeries`) renders through the
+  /// monogram path rather than `NomiCategoryBadge` — the pure rule
+  /// `SubscriptionBadge.resolve` decides, shared with `SubscriptionsScreen`.
+  func testSeriesWithoutCategoryRendersTheMonogramPath() {
+    let series = makeSeries(id: "NOBADGE", daysFromNow: 2)
+
+    XCTAssertEqual(SubscriptionBadge.resolve(series), .monogram("N"))
+  }
+
   // MARK: -
 
   private func makeSeries(id: String, daysFromNow: Int) -> RecurringSeries {

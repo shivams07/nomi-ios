@@ -41,9 +41,14 @@ public struct UpcomingCard: View {
   public var body: some View {
     DashboardCard {
       VStack(alignment: .leading, spacing: NomiSpacing.sm) {
-        Text("Upcoming")
-          .nomiTextStyle(.title)
-          .foregroundStyle(NomiColor.textPrimary)
+        HStack {
+          Text("Upcoming")
+            .nomiTextStyle(.title)
+            .foregroundStyle(NomiColor.textPrimary)
+          Spacer()
+          Image(systemName: "chevron.right")
+            .foregroundStyle(NomiColor.textTertiary)
+        }
         if upcoming.isEmpty {
           Text("Nothing recurring yet")
             .nomiTextStyle(.caption)
@@ -61,6 +66,7 @@ public struct UpcomingCard: View {
 
   private func row(for item: RecurringSeries) -> some View {
     HStack(spacing: NomiSpacing.xs) {
+      badge(for: item)
       VStack(alignment: .leading, spacing: 2) {
         Text(item.label)
           .nomiTextStyle(.body)
@@ -74,6 +80,27 @@ public struct UpcomingCard: View {
       Text(NomiFormatters.amountString(minor: item.amountMinor))
         .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 14))
         .foregroundStyle(NomiColor.debitText)
+    }
+  }
+
+  /// 40pt, per `NomiCategoryBadge`'s own doc comment — the category badge
+  /// when `RecurringSeries.category` is set, else the monogram fallback
+  /// (`SubscriptionBadge`, shared with `SubscriptionsScreen` since both draw
+  /// the same rule for the same reason; UI refresh M5).
+  @ViewBuilder
+  private func badge(for item: RecurringSeries) -> some View {
+    switch SubscriptionBadge.resolve(item) {
+    case .category(let category):
+      NomiCategoryBadge(symbolName: category.symbolName, paletteSlot: category.paletteSlot, size: 40)
+    case .monogram(let letter):
+      Circle()
+        .fill(NomiColor.glassFill)
+        .frame(width: 40, height: 40)
+        .overlay(
+          Text(letter)
+            .nomiTextStyle(.body)
+            .foregroundStyle(Color.white)
+        )
     }
   }
 }
