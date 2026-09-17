@@ -164,11 +164,11 @@ final class DefaultRuleSeedTests: XCTestCase {
       specs.map {
         RuleSnapshot(
           id: $0.id, pattern: $0.pattern, categoryID: $0.categoryID, priority: $0.priority,
-          isEnabled: true, createdAt: Date(timeIntervalSince1970: 0))
+          isEnabled: true, scope: .any, createdAt: Date(timeIntervalSince1970: 0))
       })
 
     for (narration, ordinal) in cases {
-      let match = RuleEngine.firstMatch(
+      let match = RuleEngine.firstMatchIgnoringScope(
         normalizedDescription: normalizeDescription(narration), in: rules)
       XCTAssertEqual(
         match?.categoryID, DefaultCategorySeed.seedID(ordinal),
@@ -187,10 +187,10 @@ final class DefaultRuleSeedTests: XCTestCase {
       specs.map {
         RuleSnapshot(
           id: $0.id, pattern: $0.pattern, categoryID: $0.categoryID, priority: $0.priority,
-          isEnabled: true, createdAt: Date(timeIntervalSince1970: 0))
+          isEnabled: true, scope: .any, createdAt: Date(timeIntervalSince1970: 0))
       })
 
-    let match = RuleEngine.firstMatch(
+    let match = RuleEngine.firstMatchIgnoringScope(
       normalizedDescription: normalizeDescription("IMPS/P2A/BHARAT XYZ"), in: rules)
     XCTAssertNil(match, "a narration nothing describes must stay uncategorised")
   }
@@ -308,7 +308,7 @@ final class DefaultRuleSeedTests: XCTestCase {
       specs.map {
         RuleSnapshot(
           id: $0.id, pattern: $0.pattern, categoryID: $0.categoryID, priority: $0.priority,
-          isEnabled: true, createdAt: Date(timeIntervalSince1970: 0))
+          isEnabled: true, scope: .any, createdAt: Date(timeIntervalSince1970: 0))
       })
 
     let narration = "UPI/P2M/412345678901/SWIGGY/HDFC/Order"
@@ -326,7 +326,7 @@ final class DefaultRuleSeedTests: XCTestCase {
     XCTAssertNotNil(RuleEngine.firstMatch(row: row, in: rules), "the seed must match this at all")
     XCTAssertEqual(
       RuleEngine.firstMatch(row: row, in: rules)?.categoryID,
-      RuleEngine.firstMatch(normalizedDescription: row.normalizedDescription, in: rules)?
+      RuleEngine.firstMatchIgnoringScope(normalizedDescription: row.normalizedDescription, in: rules)?
         .categoryID,
       "an unscoped rule set answers the same either way")
   }

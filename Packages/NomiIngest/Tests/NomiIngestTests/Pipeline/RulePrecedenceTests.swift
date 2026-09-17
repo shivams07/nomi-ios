@@ -31,7 +31,7 @@ final class RulePrecedenceTests: XCTestCase {
       Fixture.rule(pattern: "*SWIGGY*", categoryID: shopping, priority: 5),
       Fixture.rule(pattern: "*SWIGGY*", categoryID: food, priority: 1),
     ])
-    let match = RuleEngine.firstMatch(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules)
+    let match = RuleEngine.firstMatchIgnoringScope(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules)
     XCTAssertEqual(match?.categoryID, food)
   }
 
@@ -42,7 +42,7 @@ final class RulePrecedenceTests: XCTestCase {
       pattern: "*SWIGGY*", categoryID: shopping, priority: 0, createdAt: "2026-06-01")
 
     for ordering in [[older, newer], [newer, older]] {
-      let match = RuleEngine.firstMatch(
+      let match = RuleEngine.firstMatchIgnoringScope(
         normalizedDescription: "SWIGGY ORDER", in: RuleEngine.precedenceOrdered(ordering))
       XCTAssertEqual(match?.id, older.id)
     }
@@ -60,7 +60,7 @@ final class RulePrecedenceTests: XCTestCase {
 
     let permutations = [[a, b, c], [c, b, a], [b, c, a], [a, c, b], [c, a, b], [b, a, c]]
     let winners = permutations.compactMap {
-      RuleEngine.firstMatch(
+      RuleEngine.firstMatchIgnoringScope(
         normalizedDescription: "SWIGGY ORDER", in: RuleEngine.precedenceOrdered($0))?.id
     }
 
@@ -73,7 +73,7 @@ final class RulePrecedenceTests: XCTestCase {
     let rules = RuleEngine.precedenceOrdered([
       Fixture.rule(pattern: "*SWIGGY*", categoryID: food, priority: 0, isEnabled: false)
     ])
-    XCTAssertNil(RuleEngine.firstMatch(normalizedDescription: "SWIGGY ORDER", in: rules))
+    XCTAssertNil(RuleEngine.firstMatchIgnoringScope(normalizedDescription: "SWIGGY ORDER", in: rules))
   }
 
   // MARK: - The case bug
@@ -88,7 +88,7 @@ final class RulePrecedenceTests: XCTestCase {
       Fixture.rule(pattern: "*swiggy*", categoryID: food)
     ])
 
-    let match = RuleEngine.firstMatch(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules)
+    let match = RuleEngine.firstMatchIgnoringScope(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules)
 
     XCTAssertEqual(match?.categoryID, food)
   }
@@ -99,7 +99,7 @@ final class RulePrecedenceTests: XCTestCase {
         Fixture.rule(pattern: pattern, categoryID: food)
       ])
       XCTAssertEqual(
-        RuleEngine.firstMatch(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules)?.categoryID,
+        RuleEngine.firstMatchIgnoringScope(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules)?.categoryID,
         food, pattern)
     }
   }
@@ -109,7 +109,7 @@ final class RulePrecedenceTests: XCTestCase {
     let rules = RuleEngine.precedenceOrdered([
       Fixture.rule(pattern: "*zomato*", categoryID: food)
     ])
-    XCTAssertNil(RuleEngine.firstMatch(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules))
+    XCTAssertNil(RuleEngine.firstMatchIgnoringScope(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules))
   }
 
   // MARK: - B5: the rule set is ordered once per pass, not once per row
@@ -123,10 +123,10 @@ final class RulePrecedenceTests: XCTestCase {
       Fixture.rule(pattern: "*SWIGGY*", categoryID: food, priority: 1),
     ]
     XCTAssertEqual(
-      RuleEngine.firstMatch(normalizedDescription: "SWIGGY ORDER", in: unordered)?.categoryID,
+      RuleEngine.firstMatchIgnoringScope(normalizedDescription: "SWIGGY ORDER", in: unordered)?.categoryID,
       shopping)
     XCTAssertEqual(
-      RuleEngine.firstMatch(
+      RuleEngine.firstMatchIgnoringScope(
         normalizedDescription: "SWIGGY ORDER", in: RuleEngine.precedenceOrdered(unordered)
       )?.categoryID,
       food)
@@ -192,7 +192,7 @@ final class RulePrecedenceTests: XCTestCase {
     let rows = await store.allRows
     XCTAssertEqual(rows.count, 40)
     for row in rows {
-      let expected = RuleEngine.firstMatch(
+      let expected = RuleEngine.firstMatchIgnoringScope(
         normalizedDescription: row.normalizedDescription, in: ordered)
       XCTAssertNotNil(expected, "every row must match something, or this compares nil to nil")
       XCTAssertEqual(row.appliedRuleID, expected?.id, row.normalizedDescription)
@@ -444,7 +444,7 @@ final class RulePrecedenceTests: XCTestCase {
     XCTAssertEqual(RuleEngine.firstMatch(row: row, in: rules)?.categoryID, food)
     XCTAssertEqual(
       RuleEngine.firstMatch(row: row, in: rules)?.id,
-      RuleEngine.firstMatch(normalizedDescription: row.normalizedDescription, in: rules)?.id)
+      RuleEngine.firstMatchIgnoringScope(normalizedDescription: row.normalizedDescription, in: rules)?.id)
   }
 
   /// Precedence does not stop at a rule the scope rejects — it passes over it.
@@ -474,17 +474,20 @@ final class RulePrecedenceTests: XCTestCase {
       "and the same row with the same pattern is assigned when the scope admits it")
   }
 
-  /// The pattern-only overload cannot evaluate a scope, so it declines every
-  /// scoped rule. `SwiftDataCategorySuggester` is its only caller — see the
-  /// note on `RuleEngine.firstMatch(normalizedDescription:in:)`.
-  func testThePatternOnlyOverloadNeverReturnsAScopedRule() {
+  /// `firstMatchIgnoringScope` declines every scoped rule rather than guessing
+  /// at a condition it has no facts for.
+  ///
+  /// It has no production caller — the suggester moved to `firstMatch(row:)`
+  /// with this unit — but the precedence tests above still use it, so what it
+  /// does with a scoped rule has to be pinned rather than assumed.
+  func testTheScopeIgnoringHelperNeverReturnsAScopedRule() {
     let scopedRule = scoped(RuleScope(direction: .debit), categoryID: shopping, priority: 0)
     let unscopedRule = scoped(.any, categoryID: food, priority: 1)
     let description = swiggyRow().normalizedDescription
 
-    XCTAssertNil(RuleEngine.firstMatch(normalizedDescription: description, in: [scopedRule]))
+    XCTAssertNil(RuleEngine.firstMatchIgnoringScope(normalizedDescription: description, in: [scopedRule]))
     XCTAssertEqual(
-      RuleEngine.firstMatch(
+      RuleEngine.firstMatchIgnoringScope(
         normalizedDescription: description,
         in: RuleEngine.precedenceOrdered([scopedRule, unscopedRule]))?.categoryID,
       food,

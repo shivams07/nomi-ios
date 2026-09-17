@@ -72,21 +72,19 @@ public enum RuleEngine {
     }
   }
 
-  /// Pattern only — and therefore **scoped rules never match here**.
+  /// Pattern precedence alone, against a rule set that has no scopes in it.
   ///
-  /// For the one caller that is holding a description and not a row:
-  /// `SwiftDataCategorySuggester.fromRules`, which suggests a category for a
-  /// row the user is looking at. A scope cannot be evaluated without the row's
-  /// direction, account and amount, so this cannot decide a scoped rule, and
-  /// it declines to guess.
+  /// **No production caller, and the name is the reason.** Every path that
+  /// decides a category — ingest, the retroactive pass, manual entry, the
+  /// suggester — holds a whole row and uses `firstMatch(row:)`. This is for
+  /// tests that are about precedence rather than scoping, where building a
+  /// `TransactionSnapshot` per case would add noise and prove nothing.
   ///
-  /// Skipping them is the conservative half of that choice. Offering a
-  /// suggestion from a rule that would not actually fire teaches the user a
-  /// rule works when it does not; withholding one costs a suggestion they can
-  /// still make by hand. When that caller can build a `TransactionSnapshot` it
-  /// should move to `firstMatch(row:)` and this overload should go — it exists
-  /// for a caller's shape, not for a behaviour anyone wants.
-  public static func firstMatch(
+  /// It skips scoped rules rather than guessing at a condition it has no facts
+  /// for. A name that said `firstMatch` would make that silence look like a
+  /// match failure; this one makes a caller that reaches for it say what it is
+  /// giving up.
+  public static func firstMatchIgnoringScope(
     normalizedDescription: String,
     in orderedRules: [RuleSnapshot]
   ) -> RuleSnapshot? {
