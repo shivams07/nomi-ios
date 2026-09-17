@@ -218,6 +218,25 @@ public struct AccountSummary: Sendable, Identifiable {
   public let transactionCount: Int
   public let trackingSince: Date?
   public let isArchived: Bool
+  /// `Account.openingBalanceMinor`, read back rather than re-derived.
+  ///
+  /// It is already folded into `trackedBalanceMinor`, so this is not here to
+  /// be added to anything — it is here because an edit form has to seed the
+  /// field with the value already stored. `AccountStore.update(...)` takes
+  /// `openingBalanceMinor` on every call and *clears* it when nil, with no
+  /// unchanged sentinel, so a sheet that cannot read the current value sends
+  /// nil and wipes it the next time the user saves any other field.
+  ///
+  /// `nil` means the user never stated one and is distinct from `0`, which is
+  /// a user saying the account opened empty. A form must show those
+  /// differently: blank, not "0".
+  ///
+  /// Defaulted for the same reason as `AccountRef.openingBalanceMinor` — the
+  /// previews and logic tests that are not about it stay short — and held
+  /// against the aggregator's real construction by
+  /// `testAnOpeningBalanceIsReadableBackOffTheSummary`, so the default cannot
+  /// quietly become the aggregator dropping it.
+  public let openingBalanceMinor: Int?
 
   public init(
     id: UUID,
@@ -228,7 +247,8 @@ public struct AccountSummary: Sendable, Identifiable {
     trackedBalanceMinor: Int,
     transactionCount: Int,
     trackingSince: Date?,
-    isArchived: Bool
+    isArchived: Bool,
+    openingBalanceMinor: Int? = nil
   ) {
     self.id = id
     self.displayName = displayName
@@ -239,6 +259,7 @@ public struct AccountSummary: Sendable, Identifiable {
     self.transactionCount = transactionCount
     self.trackingSince = trackingSince
     self.isArchived = isArchived
+    self.openingBalanceMinor = openingBalanceMinor
   }
 }
 

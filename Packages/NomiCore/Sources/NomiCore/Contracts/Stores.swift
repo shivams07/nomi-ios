@@ -20,8 +20,22 @@ public protocol CategoryStore: AnyObject {
 
 @MainActor
 public protocol RuleStore: AnyObject {
-  @discardableResult func create(pattern: String, categoryID: UUID) throws -> RuleApplyResult
-  @discardableResult func update(_ id: UUID, pattern: String, categoryID: UUID) throws -> RuleApplyResult
+  @discardableResult func create(pattern: String, categoryID: UUID, scope: RuleScope) throws -> RuleApplyResult
+  @discardableResult func update(_ id: UUID, pattern: String, categoryID: UUID, scope: RuleScope) throws -> RuleApplyResult
+
+  /// Change only the scope, leaving the pattern and the category alone.
+  ///
+  /// Separate from `update` for the reason `setEnabled` is: `update` is the
+  /// editor saving a whole rule and re-applying across the ledger for the
+  /// counts it shows. Narrowing a scope from a row swipe is not that, and
+  /// routing it through `update` would make every caller supply a pattern and
+  /// a category it has no opinion about.
+  ///
+  /// It *does* re-apply, unlike `setEnabled`. Widening a scope makes a rule
+  /// fire on rows it previously skipped, and those rows exist now — there is
+  /// no "next pass" that would pick them up, because ingest only revisits what
+  /// it is re-importing.
+  func setScope(_ id: UUID, _ scope: RuleScope) throws
 
   /// Turn a rule off without deleting it, and back on again.
   ///
@@ -46,7 +60,36 @@ public protocol RuleStore: AnyObject {
   /// persists.
   func delete(_ id: UUID) throws
   func reorder(_ orderedIDs: [UUID]) throws
-  func preview(pattern: String) throws -> Int
+
+  /// How many rows this pattern *and* scope would match, for the editor's live
+  /// count. The scope is applied on top of the pattern, so narrowing a scope
+  /// can only ever lower the number.
+  func preview(pattern: String, scope: RuleScope) throws -> Int
+}
+
+/// The unscoped spellings, kept so that every caller that has no opinion about
+/// scope reads as it did before §W2-5.
+///
+/// These are an extension rather than default arguments on the requirements
+/// because Swift does not allow a default value in a protocol requirement. The
+/// consequence is worth stating: they are statically dispatched, so a conformer
+/// cannot override `create(pattern:categoryID:)` alone and have it called
+/// through the protocol. That is the intent — there is one implementation of
+/// each behaviour, and it is the scoped one.
+extension RuleStore {
+  @discardableResult
+  public func create(pattern: String, categoryID: UUID) throws -> RuleApplyResult {
+    try create(pattern: pattern, categoryID: categoryID, scope: .any)
+  }
+
+  @discardableResult
+  public func update(_ id: UUID, pattern: String, categoryID: UUID) throws -> RuleApplyResult {
+    try update(id, pattern: pattern, categoryID: categoryID, scope: .any)
+  }
+
+  public func preview(pattern: String) throws -> Int {
+    try preview(pattern: pattern, scope: .any)
+  }
 }
 
 @MainActor

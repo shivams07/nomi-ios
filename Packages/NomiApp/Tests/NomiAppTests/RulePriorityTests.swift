@@ -390,4 +390,199 @@ final class RulePriorityTests: XCTestCase {
     try fake.setEnabled(rule.id, true)
     XCTAssertTrue(try XCTUnwrap(fake.rules.first).isEnabled)
   }
+
+  // MARK: - W2-5: scope narrows the preview, and the retroactive pass honours it
+
+  /// Rows that differ in exactly the three facts a scope reads.
+  ///
+  /// `seedTransactions` above is deliberately left alone: its rows all take the
+  /// `Transaction` defaults (amount 0, debit, no account), which is fine for a
+  /// pattern count and cannot distinguish one scope from another.
+  private func seedScopedTransactions(in context: ModelContext) throws -> (hdfc: UUID, icici: UUID) {
+    let hdfc = UUID()
+    let icici = UUID()
+    let rows: [(String, Int, Direction, UUID?)] = [
+      ("UPI/PM/SWIGGY/HDFC", 20_000, .debit, hdfc),
+      ("UPI/PM/SWIGGY/ICICI", 20_000, .debit, icici),
+      ("UPI/PM/SWIGGY/REFUND", 20_000, .credit, hdfc),
+      ("UPI/PM/SWIGGY/BIG", 500_000, .debit, hdfc),
+      ("UPI/PM/SWIGGY/UNOWNED", 20_000, .debit, nil),
+      ("POS SWIGGY INSTAMART", 20_000, .debit, hdfc),
+    ]
+    for (index, row) in rows.enumerated() {
+      context.insert(
+        Transaction(
+          descriptionText: row.0,
+          normalizedDescription: row.0,
+          amountMinor: row.1,
+          directionRaw: row.2.rawValue,
+          accountID: row.3,
+          dedupeKey: "s\(index)"))
+    }
+    try context.save()
+    return (hdfc, icici)
+  }
+
+  /// The B5 agreement, extended to the scope: a narrowed fetch plus a scope
+  /// filter must return exactly what a full scan filtered the same way returns.
+  ///
+  /// Both fetch paths are covered on purpose — `UPI/PM*` takes the prefix
+  /// narrowing and `*SWIGGY*` forces the full scan — because the scope is
+  /// applied *after* the narrowing, and a narrowing that dropped a row the
+  /// scope would have admitted is exactly the bug this asserts against.
+  func testPreviewWithAScopeMatchesAFullScanFilteredTheSameWay() throws {
+    let (store, context) = try makeStore()
+    let (hdfc, _) = try seedScopedTransactions(in: context)
+
+    let scopes: [RuleScope] = [
+      .any,
+      RuleScope(direction: .credit),
+      RuleScope(direction: .debit),
+      RuleScope(accountID: hdfc),
+      RuleScope(minAmountMinor: 100_000),
+      RuleScope(maxAmountMinor: 100_000),
+      RuleScope(minAmountMinor: 10_000, maxAmountMinor: 30_000),
+      RuleScope(direction: .debit, accountID: hdfc, minAmountMinor: 10_000, maxAmountMinor: 30_000),
+    ]
+
+    for pattern in ["UPI/PM*", "*SWIGGY*", "*"] {
+      for scope in scopes {
+        let all = try context.fetch(FetchDescriptor<Transaction>())
+        let expected = all.filter { row in
+          scope.admits(
+            direction: row.direction, accountID: row.accountID, amountMinor: row.amountMinor)
+            && globMatches(pattern: pattern.uppercased(), value: row.normalizedDescription)
+        }.count
+
+        XCTAssertEqual(
+          try store.preview(pattern: pattern, scope: scope), expected, "\(pattern) \(scope)")
+      }
+    }
+  }
+
+  /// A scope can only ever lower the count, never raise it.
+  func testANarrowerScopePreviewsNoMoreRowsThanTheUnscopedPattern() throws {
+    let (store, context) = try makeStore()
+    let (hdfc, _) = try seedScopedTransactions(in: context)
+
+    let unscoped = try store.preview(pattern: "*SWIGGY*")
+    XCTAssertGreaterThan(unscoped, 0, "the fixture must actually contain matches")
+
+    for scope in [
+      RuleScope(direction: .credit), RuleScope(accountID: hdfc),
+      RuleScope(minAmountMinor: 100_000),
+    ] {
+      let scoped = try store.preview(pattern: "*SWIGGY*", scope: scope)
+      XCTAssertLessThan(scoped, unscoped, "\(scope) must exclude something")
+      XCTAssertGreaterThan(scoped, 0, "\(scope) must not exclude everything")
+    }
+  }
+
+  /// `preview(pattern:)` is the extension forwarding to `.any`. If it ever
+  /// stopped doing that, every existing caller would silently change meaning.
+  func testTheUnscopedPreviewSpellingIsTheSameCallAsAnExplicitAnyScope() throws {
+    let (store, context) = try makeStore()
+    _ = try seedScopedTransactions(in: context)
+
+    XCTAssertEqual(
+      try store.preview(pattern: "*SWIGGY*"),
+      try store.preview(pattern: "*SWIGGY*", scope: .any))
+  }
+
+  /// `create` with a scope applies only where the scope admits, and the rows it
+  /// skipped keep the category they had.
+  func testCreateWithAScopeCategorisesOnlyTheRowsTheScopeAdmits() throws {
+    let (store, context) = try makeStore()
+    let (hdfc, _) = try seedScopedTransactions(in: context)
+    let food = UUID()
+
+    let result = try store.create(
+      pattern: "*SWIGGY*", categoryID: food, scope: RuleScope(direction: .credit))
+
+    let rows = try context.fetch(FetchDescriptor<Transaction>())
+    let categorised = rows.filter { $0.categoryID == food }
+    XCTAssertEqual(categorised.count, 1, "only the refund is a credit")
+    XCTAssertEqual(categorised.first?.normalizedDescription, "UPI/PM/SWIGGY/REFUND")
+    XCTAssertEqual(result.matched, 1)
+    XCTAssertTrue(
+      rows.filter { $0.accountID == hdfc && $0.direction == .debit }.allSatisfy {
+        $0.categoryID == nil
+      },
+      "a row the scope excluded is left exactly as it was")
+  }
+
+  /// Widening a scope re-applies across rows that already exist — the reason
+  /// `setScope` runs the pass and `setEnabled` does not.
+  func testSetScopeWidensRetroactivelyRatherThanOnlyAffectingFutureRows() throws {
+    let (store, context) = try makeStore()
+    _ = try seedScopedTransactions(in: context)
+    let food = UUID()
+
+    try store.create(pattern: "*SWIGGY*", categoryID: food, scope: RuleScope(direction: .credit))
+    let ruleID = try XCTUnwrap(
+      try context.fetch(FetchDescriptor<Rule>()).first { $0.pattern == "*SWIGGY*" }?.id)
+    let before = try context.fetch(FetchDescriptor<Transaction>()).filter { $0.categoryID == food }
+      .count
+    XCTAssertEqual(before, 1)
+
+    try store.setScope(ruleID, .any)
+
+    let after = try context.fetch(FetchDescriptor<Transaction>()).filter { $0.categoryID == food }
+      .count
+    XCTAssertGreaterThan(after, before, "widening must pick up the rows it previously skipped")
+  }
+
+  /// The scope survives a round trip through the store rather than being
+  /// applied once and forgotten.
+  func testAScopeIsPersistedOnTheRuleAndReadsBackEqual() throws {
+    let (store, context) = try makeStore()
+    _ = try seedScopedTransactions(in: context)
+    let account = UUID()
+    let scope = RuleScope(
+      direction: .debit, accountID: account, minAmountMinor: 1_000, maxAmountMinor: 2_000)
+
+    try store.create(pattern: "*SWIGGY*", categoryID: UUID(), scope: scope)
+
+    let stored = try XCTUnwrap(
+      try context.fetch(FetchDescriptor<Rule>()).first { $0.pattern == "*SWIGGY*" })
+    XCTAssertEqual(stored.scope, scope)
+    XCTAssertEqual(stored.directionRaw, Direction.debit.rawValue, "stored flat, one column each")
+    XCTAssertEqual(stored.accountID, account)
+    XCTAssertEqual(stored.minAmountMinor, 1_000)
+    XCTAssertEqual(stored.maxAmountMinor, 2_000)
+  }
+
+  /// A rule written before scoping existed reads back as `.any`, which is the
+  /// whole basis for calling the four columns additive.
+  func testARuleWithNoScopeColumnsReadsBackAsAny() throws {
+    let (_, context) = try makeStore()
+    let rule = Rule(pattern: "*SWIGGY*", categoryID: UUID())
+    context.insert(rule)
+    try context.save()
+
+    let stored = try XCTUnwrap(try context.fetch(FetchDescriptor<Rule>()).first)
+    XCTAssertEqual(stored.scope, .any)
+    XCTAssertTrue(stored.scope.isAny)
+    XCTAssertNil(stored.directionRaw)
+  }
+
+  /// `FakeRuleStore` counts the scope too. A preview stack that ignored it
+  /// would put a match count on screen that the real store contradicts.
+  func testTheFakeStoreAppliesTheScopeToItsMatchCount() throws {
+    let account = UUID()
+    let pool = [
+      Transaction(
+        descriptionText: "SWIGGY A", normalizedDescription: "SWIGGY A", amountMinor: 20_000,
+        directionRaw: Direction.debit.rawValue, accountID: account, dedupeKey: "f0"),
+      Transaction(
+        descriptionText: "SWIGGY B", normalizedDescription: "SWIGGY B", amountMinor: 20_000,
+        directionRaw: Direction.credit.rawValue, accountID: account, dedupeKey: "f1"),
+    ]
+    let fake = FakeRuleStore(rules: [], matchPool: pool)
+
+    XCTAssertEqual(try fake.preview(pattern: "SWIGGY*"), 2)
+    XCTAssertEqual(try fake.preview(pattern: "SWIGGY*", scope: RuleScope(direction: .credit)), 1)
+    XCTAssertEqual(
+      try fake.preview(pattern: "SWIGGY*", scope: RuleScope(minAmountMinor: 100_000)), 0)
+  }
 }

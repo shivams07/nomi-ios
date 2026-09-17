@@ -59,12 +59,17 @@ enum Fixture {
     )
   }
 
+  /// `scope` defaults here and nowhere else. `RuleSnapshot.init` gives it no
+  /// default on purpose (§W2-5) so that a production construction site cannot
+  /// forget it; a fixture is the one place where "no scope" is both the
+  /// overwhelming case and visible in the test that asked for it.
   static func rule(
     id: UUID = UUID(),
     pattern: String,
     categoryID: UUID,
     priority: Int = 0,
     isEnabled: Bool = true,
+    scope: RuleScope = .any,
     createdAt: String = "2026-01-01"
   ) -> RuleSnapshot {
     RuleSnapshot(
@@ -73,6 +78,7 @@ enum Fixture {
       categoryID: categoryID,
       priority: priority,
       isEnabled: isEnabled,
+      scope: scope,
       createdAt: Fixture.date(createdAt)
     )
   }

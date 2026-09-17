@@ -31,7 +31,7 @@ final class RulePrecedenceTests: XCTestCase {
       Fixture.rule(pattern: "*SWIGGY*", categoryID: shopping, priority: 5),
       Fixture.rule(pattern: "*SWIGGY*", categoryID: food, priority: 1),
     ])
-    let match = RuleEngine.firstMatch(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules)
+    let match = RuleEngine.firstMatchIgnoringScope(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules)
     XCTAssertEqual(match?.categoryID, food)
   }
 
@@ -42,7 +42,7 @@ final class RulePrecedenceTests: XCTestCase {
       pattern: "*SWIGGY*", categoryID: shopping, priority: 0, createdAt: "2026-06-01")
 
     for ordering in [[older, newer], [newer, older]] {
-      let match = RuleEngine.firstMatch(
+      let match = RuleEngine.firstMatchIgnoringScope(
         normalizedDescription: "SWIGGY ORDER", in: RuleEngine.precedenceOrdered(ordering))
       XCTAssertEqual(match?.id, older.id)
     }
@@ -60,7 +60,7 @@ final class RulePrecedenceTests: XCTestCase {
 
     let permutations = [[a, b, c], [c, b, a], [b, c, a], [a, c, b], [c, a, b], [b, a, c]]
     let winners = permutations.compactMap {
-      RuleEngine.firstMatch(
+      RuleEngine.firstMatchIgnoringScope(
         normalizedDescription: "SWIGGY ORDER", in: RuleEngine.precedenceOrdered($0))?.id
     }
 
@@ -73,7 +73,7 @@ final class RulePrecedenceTests: XCTestCase {
     let rules = RuleEngine.precedenceOrdered([
       Fixture.rule(pattern: "*SWIGGY*", categoryID: food, priority: 0, isEnabled: false)
     ])
-    XCTAssertNil(RuleEngine.firstMatch(normalizedDescription: "SWIGGY ORDER", in: rules))
+    XCTAssertNil(RuleEngine.firstMatchIgnoringScope(normalizedDescription: "SWIGGY ORDER", in: rules))
   }
 
   // MARK: - The case bug
@@ -88,7 +88,7 @@ final class RulePrecedenceTests: XCTestCase {
       Fixture.rule(pattern: "*swiggy*", categoryID: food)
     ])
 
-    let match = RuleEngine.firstMatch(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules)
+    let match = RuleEngine.firstMatchIgnoringScope(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules)
 
     XCTAssertEqual(match?.categoryID, food)
   }
@@ -99,7 +99,7 @@ final class RulePrecedenceTests: XCTestCase {
         Fixture.rule(pattern: pattern, categoryID: food)
       ])
       XCTAssertEqual(
-        RuleEngine.firstMatch(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules)?.categoryID,
+        RuleEngine.firstMatchIgnoringScope(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules)?.categoryID,
         food, pattern)
     }
   }
@@ -109,7 +109,7 @@ final class RulePrecedenceTests: XCTestCase {
     let rules = RuleEngine.precedenceOrdered([
       Fixture.rule(pattern: "*zomato*", categoryID: food)
     ])
-    XCTAssertNil(RuleEngine.firstMatch(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules))
+    XCTAssertNil(RuleEngine.firstMatchIgnoringScope(normalizedDescription: "UPI/PM//SWIGGY/HDFC", in: rules))
   }
 
   // MARK: - B5: the rule set is ordered once per pass, not once per row
@@ -123,10 +123,10 @@ final class RulePrecedenceTests: XCTestCase {
       Fixture.rule(pattern: "*SWIGGY*", categoryID: food, priority: 1),
     ]
     XCTAssertEqual(
-      RuleEngine.firstMatch(normalizedDescription: "SWIGGY ORDER", in: unordered)?.categoryID,
+      RuleEngine.firstMatchIgnoringScope(normalizedDescription: "SWIGGY ORDER", in: unordered)?.categoryID,
       shopping)
     XCTAssertEqual(
-      RuleEngine.firstMatch(
+      RuleEngine.firstMatchIgnoringScope(
         normalizedDescription: "SWIGGY ORDER", in: RuleEngine.precedenceOrdered(unordered)
       )?.categoryID,
       food)
@@ -192,7 +192,7 @@ final class RulePrecedenceTests: XCTestCase {
     let rows = await store.allRows
     XCTAssertEqual(rows.count, 40)
     for row in rows {
-      let expected = RuleEngine.firstMatch(
+      let expected = RuleEngine.firstMatchIgnoringScope(
         normalizedDescription: row.normalizedDescription, in: ordered)
       XCTAssertNotNil(expected, "every row must match something, or this compares nil to nil")
       XCTAssertEqual(row.appliedRuleID, expected?.id, row.normalizedDescription)
@@ -320,5 +320,185 @@ final class RulePrecedenceTests: XCTestCase {
       appliedRuleID: kept.id)
 
     XCTAssertNil(RuleEngine.clearingProvenance(of: deleted.id, from: other))
+  }
+
+  // MARK: - Scope (W2-5)
+  //
+  // `Fixture.rule` cannot carry a scope — `PipelineTestSupport` belongs to
+  // another unit — so these build their `RuleSnapshot`s here. Every one of them
+  // uses the *same pattern* as the row it is tested against, so a failure can
+  // only be the scope: if the pattern were doing the work the test would pass
+  // for the wrong reason.
+
+  private func scoped(
+    _ scope: RuleScope,
+    pattern: String = "*SWIGGY*",
+    categoryID: UUID? = nil,
+    priority: Int = 0
+  ) -> RuleSnapshot {
+    RuleSnapshot(
+      id: UUID(),
+      pattern: pattern,
+      categoryID: categoryID ?? food,
+      priority: priority,
+      isEnabled: true,
+      scope: scope,
+      createdAt: Fixture.date("2026-01-01")
+    )
+  }
+
+  private func swiggyRow(
+    direction: Direction = .debit,
+    amountMinor: Int = 45_900,
+    accountID: UUID? = nil
+  ) -> TransactionSnapshot {
+    Fixture.row(
+      from: Fixture.draft(
+        description: "UPI/P2M/412345678901/SWIGGY/HDFC/Order",
+        amountMinor: amountMinor,
+        direction: direction,
+        accountID: accountID))
+  }
+
+  func testACreditScopedRuleDoesNotMatchADebitWithTheSamePattern() {
+    let rule = scoped(RuleScope(direction: .credit))
+
+    XCTAssertNil(
+      RuleEngine.firstMatch(row: swiggyRow(direction: .debit), in: [rule]),
+      "the pattern matches; the direction does not")
+    XCTAssertEqual(
+      RuleEngine.firstMatch(row: swiggyRow(direction: .credit), in: [rule])?.id, rule.id,
+      "and the same rule must still match the direction it was scoped to")
+  }
+
+  func testAnAmountRangeExcludesRowsOutsideItAndIncludesBothBounds() {
+    let rule = scoped(RuleScope(minAmountMinor: 10_000, maxAmountMinor: 50_000))
+
+    XCTAssertNil(RuleEngine.firstMatch(row: swiggyRow(amountMinor: 9_999), in: [rule]))
+    XCTAssertNil(RuleEngine.firstMatch(row: swiggyRow(amountMinor: 50_001), in: [rule]))
+    XCTAssertNotNil(
+      RuleEngine.firstMatch(row: swiggyRow(amountMinor: 10_000), in: [rule]), "inclusive low")
+    XCTAssertNotNil(
+      RuleEngine.firstMatch(row: swiggyRow(amountMinor: 50_000), in: [rule]), "inclusive high")
+  }
+
+  func testAHalfOpenRangeBoundsOnlyTheEndItSets() {
+    let atLeast = scoped(RuleScope(minAmountMinor: 100_000))
+    XCTAssertNil(RuleEngine.firstMatch(row: swiggyRow(amountMinor: 99_999), in: [atLeast]))
+    XCTAssertNotNil(RuleEngine.firstMatch(row: swiggyRow(amountMinor: 9_999_999), in: [atLeast]))
+
+    let atMost = scoped(RuleScope(maxAmountMinor: 100_000))
+    XCTAssertNotNil(RuleEngine.firstMatch(row: swiggyRow(amountMinor: 1), in: [atMost]))
+    XCTAssertNil(RuleEngine.firstMatch(row: swiggyRow(amountMinor: 100_001), in: [atMost]))
+  }
+
+  /// An unowned row is admitted only by a rule that did not ask for an account.
+  func testAnAccountScopedRuleSkipsAnotherAccountAndAnUnownedRow() {
+    let hdfc = UUID()
+    let icici = UUID()
+    let rule = scoped(RuleScope(accountID: hdfc))
+
+    XCTAssertEqual(
+      RuleEngine.firstMatch(row: swiggyRow(accountID: hdfc), in: [rule])?.id, rule.id)
+    XCTAssertNil(RuleEngine.firstMatch(row: swiggyRow(accountID: icici), in: [rule]))
+    XCTAssertNil(
+      RuleEngine.firstMatch(row: swiggyRow(accountID: nil), in: [rule]),
+      "a row that belongs to no account is not in the account the user picked")
+  }
+
+  /// Every condition is an AND: one failing field is enough, and satisfying
+  /// three of four is not a match.
+  func testEveryFieldOfAScopeMustBeSatisfiedAtOnce() {
+    let account = UUID()
+    let rule = scoped(
+      RuleScope(
+        direction: .debit, accountID: account, minAmountMinor: 10_000, maxAmountMinor: 50_000))
+
+    XCTAssertNotNil(
+      RuleEngine.firstMatch(
+        row: swiggyRow(direction: .debit, amountMinor: 20_000, accountID: account), in: [rule]))
+    XCTAssertNil(
+      RuleEngine.firstMatch(
+        row: swiggyRow(direction: .credit, amountMinor: 20_000, accountID: account), in: [rule]),
+      "direction alone")
+    XCTAssertNil(
+      RuleEngine.firstMatch(
+        row: swiggyRow(direction: .debit, amountMinor: 80_000, accountID: account), in: [rule]),
+      "amount alone")
+    XCTAssertNil(
+      RuleEngine.firstMatch(
+        row: swiggyRow(direction: .debit, amountMinor: 20_000, accountID: UUID()), in: [rule]),
+      "account alone")
+  }
+
+  /// `.any` behaves as today: the same answer the pattern-only overload gives,
+  /// on a rule set that has no scopes in it.
+  func testAnUnscopedRuleSetAnswersExactlyWhatItAnsweredBeforeScoping() {
+    let rules = RuleEngine.precedenceOrdered([
+      Fixture.rule(pattern: "*SWIGGY*", categoryID: shopping, priority: 5),
+      Fixture.rule(pattern: "*SWIGGY*", categoryID: food, priority: 1),
+    ])
+    let row = swiggyRow()
+
+    XCTAssertTrue(rules.allSatisfy { $0.scope.isAny }, "Fixture.rule must still build unscoped rules")
+    XCTAssertEqual(RuleEngine.firstMatch(row: row, in: rules)?.categoryID, food)
+    XCTAssertEqual(
+      RuleEngine.firstMatch(row: row, in: rules)?.id,
+      RuleEngine.firstMatchIgnoringScope(normalizedDescription: row.normalizedDescription, in: rules)?.id)
+  }
+
+  /// Precedence does not stop at a rule the scope rejects — it passes over it.
+  ///
+  /// The scoped rule is *first* in precedence and would win on pattern alone,
+  /// so a `firstMatch` that treated a rejected scope as "no match at all" would
+  /// return nil here rather than the catch-all.
+  func testEvaluationContinuesPastARuleWhoseScopeRejectsTheRow() {
+    let rules = RuleEngine.precedenceOrdered([
+      scoped(RuleScope(direction: .credit), categoryID: shopping, priority: 0),
+      scoped(.any, categoryID: food, priority: 1),
+    ])
+
+    let match = RuleEngine.firstMatch(row: swiggyRow(direction: .debit), in: rules)
+    XCTAssertEqual(match?.categoryID, food, "the credit-only rule is skipped, not fatal")
+  }
+
+  /// `apply` inherits the scope, since it is the path ingest and the
+  /// retroactive pass both take.
+  func testApplyLeavesARowAScopedRuleDoesNotAdmitUntouched() {
+    let rule = scoped(RuleScope(minAmountMinor: 1_000_000))
+    let row = swiggyRow(amountMinor: 45_900)
+
+    XCTAssertNil(RuleEngine.apply([rule], to: row))
+    XCTAssertNotNil(
+      RuleEngine.apply([scoped(.any)], to: row),
+      "and the same row with the same pattern is assigned when the scope admits it")
+  }
+
+  /// `firstMatchIgnoringScope` declines every scoped rule rather than guessing
+  /// at a condition it has no facts for.
+  ///
+  /// It has no production caller — the suggester moved to `firstMatch(row:)`
+  /// with this unit — but the precedence tests above still use it, so what it
+  /// does with a scoped rule has to be pinned rather than assumed.
+  func testTheScopeIgnoringHelperNeverReturnsAScopedRule() {
+    let scopedRule = scoped(RuleScope(direction: .debit), categoryID: shopping, priority: 0)
+    let unscopedRule = scoped(.any, categoryID: food, priority: 1)
+    let description = swiggyRow().normalizedDescription
+
+    XCTAssertNil(RuleEngine.firstMatchIgnoringScope(normalizedDescription: description, in: [scopedRule]))
+    XCTAssertEqual(
+      RuleEngine.firstMatchIgnoringScope(
+        normalizedDescription: description,
+        in: RuleEngine.precedenceOrdered([scopedRule, unscopedRule]))?.categoryID,
+      food,
+      "it falls through to the unscoped rule rather than answering nothing")
+  }
+
+  func testADisabledRuleIsSkippedWhateverItsScopeSays() {
+    let rule = RuleSnapshot(
+      id: UUID(), pattern: "*SWIGGY*", categoryID: food, priority: 0, isEnabled: false,
+      scope: .any, createdAt: Fixture.date("2026-01-01"))
+
+    XCTAssertNil(RuleEngine.firstMatch(row: swiggyRow(), in: [rule]))
   }
 }

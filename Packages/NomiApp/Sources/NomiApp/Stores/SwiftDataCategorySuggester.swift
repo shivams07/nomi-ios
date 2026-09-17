@@ -80,12 +80,19 @@ public final class SwiftDataCategorySuggester: CategorySuggesting {
 
   /// Enabled rules, ordered once, first match wins. `firstMatch` re-checks
   /// `isEnabled` and uppercases the pattern itself.
+  ///
+  /// **It matches the whole row, not the description** (§W2-5). A rule scoped
+  /// to credits, or to another account, or to an amount band this row is
+  /// outside, does not fire on this row — so suggesting its category would
+  /// offer the user a rule that demonstrably would not have applied. The
+  /// snapshot comes from `TransactionSnapshotBridge`, which is also what the
+  /// two stores use.
   private func fromRules(_ row: Transaction) throws -> CategorySuggestion? {
     let rules = try context.fetch(FetchDescriptor<Rule>(predicate: #Predicate<Rule> { $0.isEnabled }))
       .map { RuleSnapshot($0) }
     guard
       let match = RuleEngine.firstMatch(
-        normalizedDescription: row.normalizedDescription,
+        row: TransactionSnapshot(row),
         in: RuleEngine.precedenceOrdered(rules))
     else { return nil }
     return CategorySuggestion(categoryID: match.categoryID, reason: .rule(ruleID: match.id))

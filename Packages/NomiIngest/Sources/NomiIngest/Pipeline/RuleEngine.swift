@@ -56,12 +56,40 @@ public enum RuleEngine {
   /// by `normalizeDescription`, `globMatches` is case-sensitive, and nothing
   /// uppercases what the user typed - so a rule typed as `*swiggy*` matched
   /// nothing, ever, with no error and no empty-preview warning to say so.
+  ///
+  /// **A scope is an AND with the pattern** (§W2-5). It is checked first: four
+  /// field comparisons are cheaper than walking a glob, and a rule the scope
+  /// rejects can never match however well the pattern fits.
   public static func firstMatch(
-    normalizedDescription: String,
+    row: TransactionSnapshot,
     in orderedRules: [RuleSnapshot]
   ) -> RuleSnapshot? {
     orderedRules.first { rule in
       rule.isEnabled
+        && rule.scope.admits(
+          direction: row.direction, accountID: row.accountID, amountMinor: row.amountMinor)
+        && globMatches(pattern: rule.pattern.uppercased(), value: row.normalizedDescription)
+    }
+  }
+
+  /// Pattern precedence alone, against a rule set that has no scopes in it.
+  ///
+  /// **No production caller, and the name is the reason.** Every path that
+  /// decides a category — ingest, the retroactive pass, manual entry, the
+  /// suggester — holds a whole row and uses `firstMatch(row:)`. This is for
+  /// tests that are about precedence rather than scoping, where building a
+  /// `TransactionSnapshot` per case would add noise and prove nothing.
+  ///
+  /// It skips scoped rules rather than guessing at a condition it has no facts
+  /// for. A name that said `firstMatch` would make that silence look like a
+  /// match failure; this one makes a caller that reaches for it say what it is
+  /// giving up.
+  public static func firstMatchIgnoringScope(
+    normalizedDescription: String,
+    in orderedRules: [RuleSnapshot]
+  ) -> RuleSnapshot? {
+    orderedRules.first { rule in
+      rule.isEnabled && rule.scope.isAny
         && globMatches(pattern: rule.pattern.uppercased(), value: normalizedDescription)
     }
   }
@@ -79,11 +107,7 @@ public enum RuleEngine {
     to row: TransactionSnapshot
   ) -> TransactionSnapshot? {
     guard row.categorySource != .manual else { return nil }
-    guard
-      let match = firstMatch(normalizedDescription: row.normalizedDescription, in: orderedRules)
-    else {
-      return nil
-    }
+    guard let match = firstMatch(row: row, in: orderedRules) else { return nil }
 
     var updated = row
     updated.categoryID = match.categoryID
