@@ -285,6 +285,7 @@ final class DefaultRuleSeedTests: XCTestCase {
   /// every install, and nothing else in the suite would notice: the two
   /// categorisation tests above build their snapshots from `specs` by hand and
   /// would inherit the same scope on both sides of the comparison.
+  @MainActor
   func testEverySeededRuleIsUnscoped() throws {
     let context = try makeContext()
     try DefaultRuleSeed.apply(in: context)
