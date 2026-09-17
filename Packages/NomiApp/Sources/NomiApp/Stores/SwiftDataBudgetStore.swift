@@ -127,14 +127,8 @@ public final class SwiftDataAccountStore: AccountStore {
     lastFour: String,
     kindRaw: String
   ) throws -> Account {
-    let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedName.isEmpty else { throw AccountStoreError.blankName }
-    guard lastFour.isEmpty
-      || (lastFour.count == 4 && lastFour.allSatisfy { $0.isASCII && $0.isNumber })
-    else { throw AccountStoreError.malformedLastFour }
-    guard AccountKind(rawValue: kindRaw) != nil else {
-      throw AccountStoreError.unknownKind(kindRaw)
-    }
+    let trimmedName = try Self.validated(
+      displayName: displayName, lastFour: lastFour, kindRaw: kindRaw)
 
     let account = Account(
       displayName: trimmedName,
@@ -146,6 +140,28 @@ public final class SwiftDataAccountStore: AccountStore {
     try context.save()
     coordinator.didWrite()
     return account
+  }
+
+  /// The rules `create` and `update` both enforce, in one place, returning the
+  /// trimmed name so neither can validate one string and store another.
+  ///
+  /// Static and free of the context on purpose: it decides nothing about
+  /// storage, and a caller that forgets to call it is a caller that does not
+  /// have a name to store.
+  private static func validated(
+    displayName: String,
+    lastFour: String,
+    kindRaw: String
+  ) throws -> String {
+    let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedName.isEmpty else { throw AccountStoreError.blankName }
+    guard lastFour.isEmpty
+      || (lastFour.count == 4 && lastFour.allSatisfy { $0.isASCII && $0.isNumber })
+    else { throw AccountStoreError.malformedLastFour }
+    guard AccountKind(rawValue: kindRaw) != nil else {
+      throw AccountStoreError.unknownKind(kindRaw)
+    }
+    return trimmedName
   }
 
   public func rename(_ id: UUID, to displayName: String) throws {
@@ -162,6 +178,63 @@ public final class SwiftDataAccountStore: AccountStore {
   public func setArchived(_ id: UUID, _ archived: Bool) throws {
     guard let account = try account(id: id) else { return }
     account.isArchived = archived
+    try context.save()
+    coordinator.didWrite()
+  }
+
+  /// Validation runs **before** the lookup, so a malformed edit of an account
+  /// that no longer exists throws rather than silently succeeding. An unknown
+  /// id is still a no-op, the shape `rename` and `setArchived` already have.
+  public func update(
+    _ id: UUID,
+    displayName: String,
+    institution: String,
+    lastFour: String,
+    kindRaw: String,
+    openingBalanceMinor: Int?
+  ) throws {
+    let trimmedName = try Self.validated(
+      displayName: displayName, lastFour: lastFour, kindRaw: kindRaw)
+
+    guard let account = try account(id: id) else { return }
+    account.displayName = trimmedName
+    account.institution = institution
+    account.lastFour = lastFour
+    account.kindRaw = kindRaw
+    account.openingBalanceMinor = openingBalanceMinor
+    try context.save()
+    coordinator.didWrite()
+  }
+
+  /// Orphan the transactions, delete the bindings, delete the account.
+  ///
+  /// The order matters in one direction only: the rows must be re-pointed
+  /// before the `Account` goes, because after the delete there is no id to
+  /// fetch them by. Nothing here is a cascade — `Transaction.accountID` is a
+  /// bare `UUID?`, not a SwiftData relationship, so a deleted `Account` leaves
+  /// rows pointing at an id that resolves to nothing, which renders as an
+  /// account name that is simply blank. That is the bug this method exists to
+  /// not have.
+  ///
+  /// The whole thing is one `save`. A crash between the three fetches would
+  /// otherwise leave bindings resolving mail onto a deleted account.
+  public func delete(_ id: UUID) throws {
+    guard let account = try account(id: id) else { return }
+
+    // Typed `UUID?` rather than leaning on `UUID` promoting inside the macro:
+    // `Transaction.accountID` is optional and the comparison is written at the
+    // same optionality as the column.
+    let target: UUID? = id
+    let owned = try context.fetch(
+      FetchDescriptor<Transaction>(predicate: #Predicate<Transaction> { $0.accountID == target }))
+    for row in owned { row.accountID = nil }
+
+    let bindings = try context.fetch(
+      FetchDescriptor<AccountBinding>(
+        predicate: #Predicate<AccountBinding> { $0.accountID == id }))
+    for binding in bindings { context.delete(binding) }
+
+    context.delete(account)
     try context.save()
     coordinator.didWrite()
   }

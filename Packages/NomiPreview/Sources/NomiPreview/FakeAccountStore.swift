@@ -44,4 +44,40 @@ public final class FakeAccountStore: AccountStore {
     guard let account = accounts.first(where: { $0.id == id }) else { return }
     account.isArchived = archived
   }
+
+  /// Validates, like the real store. A preview of the edit sheet whose Save
+  /// always succeeds would not show the error state the sheet exists to have.
+  public func update(
+    _ id: UUID,
+    displayName: String,
+    institution: String,
+    lastFour: String,
+    kindRaw: String,
+    openingBalanceMinor: Int?
+  ) throws {
+    let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedName.isEmpty else { throw AccountStoreError.blankName }
+    guard lastFour.isEmpty
+      || (lastFour.count == 4 && lastFour.allSatisfy { $0.isASCII && $0.isNumber })
+    else { throw AccountStoreError.malformedLastFour }
+    guard AccountKind(rawValue: kindRaw) != nil else {
+      throw AccountStoreError.unknownKind(kindRaw)
+    }
+
+    guard let account = accounts.first(where: { $0.id == id }) else { return }
+    account.displayName = trimmedName
+    account.institution = institution
+    account.lastFour = lastFour
+    account.kindRaw = kindRaw
+    account.openingBalanceMinor = openingBalanceMinor
+  }
+
+  /// Drops the account from `accounts`, which is all this fake can do: it
+  /// holds no transactions and no bindings, so the half of the real `delete`
+  /// that matters most — rows kept with a nil `accountID` — has nothing to act
+  /// on here and is pinned against a real container in `AccountStoreTests`
+  /// instead.
+  public func delete(_ id: UUID) throws {
+    accounts.removeAll { $0.id == id }
+  }
 }

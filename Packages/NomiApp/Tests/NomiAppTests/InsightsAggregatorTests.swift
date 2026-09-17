@@ -503,6 +503,76 @@ final class InsightsAggregatorTests: XCTestCase {
     XCTAssertEqual(InsightsAggregator.accountSummaries(accounts: accounts, rows: [], includeArchived: true).count, 1)
   }
 
+  /// W2-1, the done-when: opening 100 + credit 50 − debit 30 = 120.
+  ///
+  /// An opening balance is the user's own statement of what the account held
+  /// before the app saw anything, and it is the only thing that can make
+  /// `trackedBalanceMinor` agree with a bank app. It is not a transaction: it
+  /// is absent from `transactionCount` and from `trackingSince`, both asserted
+  /// here because both would be plausible places to have folded it in.
+  func testAnOpeningBalanceIsAddedToTheTrackedBalanceAndCountedNowhereElse() {
+    let hdfc = UUID()
+    let accounts = [
+      AccountRef(
+        id: hdfc, displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471",
+        kindRaw: "bank", isArchived: false, openingBalanceMinor: 100)
+    ]
+    let rows = [
+      row(50, .credit, on: date(2026, 4, 1), account: hdfc),
+      row(30, .debit, on: date(2026, 4, 5), account: hdfc),
+    ]
+
+    let summaries = InsightsAggregator.accountSummaries(
+      accounts: accounts, rows: rows, includeArchived: false)
+
+    XCTAssertEqual(summaries.first?.trackedBalanceMinor, 120)
+    XCTAssertEqual(summaries.first?.transactionCount, 2, "the opening balance is not a row")
+    XCTAssertEqual(
+      summaries.first?.trackingSince, date(2026, 4, 1), "and it has no date to move this")
+  }
+
+  /// `nil` is "the user never said", and it must contribute zero rather than
+  /// changing what the figure meant for every account that has no opening
+  /// balance — which, the day this ships, is all of them.
+  func testANilOpeningBalanceLeavesTheTrackedBalanceExactlyAsItWas() {
+    let hdfc = UUID()
+    let accounts = [
+      AccountRef(
+        id: hdfc, displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471",
+        kindRaw: "bank", isArchived: false)
+    ]
+    let rows = [
+      row(50, .credit, on: date(2026, 4, 1), account: hdfc),
+      row(30, .debit, on: date(2026, 4, 5), account: hdfc),
+    ]
+
+    let summaries = InsightsAggregator.accountSummaries(
+      accounts: accounts, rows: rows, includeArchived: false)
+
+    XCTAssertEqual(summaries.first?.trackedBalanceMinor, 20)
+  }
+
+  /// An account with an opening balance and nothing else is the state right
+  /// after the user sets one, and it is the state a `?? 0` applied to the wrong
+  /// side would get wrong without any row to hide behind.
+  func testAnOpeningBalanceWithNoRowsIsTheWholeTrackedBalance() {
+    let hdfc = UUID()
+    let accounts = [
+      AccountRef(
+        id: hdfc, displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471",
+        kindRaw: "bank", isArchived: false, openingBalanceMinor: -5_000)
+    ]
+
+    let summaries = InsightsAggregator.accountSummaries(
+      accounts: accounts, rows: [], includeArchived: false)
+
+    XCTAssertEqual(
+      summaries.first?.trackedBalanceMinor, -5_000,
+      "a card carrying a balance opens negative, and that is not clamped")
+    XCTAssertEqual(summaries.first?.transactionCount, 0)
+    XCTAssertNil(summaries.first?.trackingSince)
+  }
+
   // MARK: - Budgets
 
   func testBudgetProgressSumsOnlyDebitsInTheCategory() {
@@ -777,5 +847,56 @@ final class InsightsStoreSymbolNameTests: XCTestCase {
 
     let budgets = try store.budgetProgress(year: 2026, month: 4)
     XCTAssertEqual(budgets.map(\.symbolName), ["fork.knife"])
+  }
+
+  /// W2-1. `AccountRef.openingBalanceMinor` is defaulted to `nil`, so a
+  /// `SwiftDataInsightsStore.accountSummaries` that stopped passing the stored
+  /// value would leave every pure test above green and every opening balance
+  /// the user typed would simply never appear. This is the only place that
+  /// reads the stored column through to the summary.
+  func testTheStoreCarriesAnAccountsOpeningBalanceIntoItsTrackedBalance() throws {
+    let schema = Schema([
+      Transaction.self, NomiCore.Category.self, Budget.self, BudgetAlertLog.self,
+      Rule.self, Account.self, AccountBinding.self, ColumnMappingRecord.self,
+    ])
+    let container = try ModelContainer(
+      for: schema,
+      configurations: [
+        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+      ])
+    let context = container.mainContext
+
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Asia/Kolkata") ?? .current
+    let inApril = calendar.date(from: DateComponents(year: 2026, month: 4, day: 2, hour: 12))!
+
+    let withOpening = Account(
+      displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank",
+      openingBalanceMinor: 100)
+    let without = Account(
+      displayName: "ICICI", institution: "ICICI Bank", lastFour: "8890", kindRaw: "card")
+    context.insert(withOpening)
+    context.insert(without)
+    context.insert(
+      Transaction(
+        date: inApril, amountMinor: 50, directionRaw: Direction.credit.rawValue,
+        accountID: withOpening.id))
+    context.insert(
+      Transaction(
+        date: inApril, amountMinor: 30, directionRaw: Direction.debit.rawValue,
+        accountID: withOpening.id))
+    try context.save()
+
+    let store = SwiftDataInsightsStore(
+      context: context, cache: InsightsCache(), calendar: calendar, now: { inApril })
+
+    let summaries = try store.accountSummaries(includeArchived: false)
+
+    XCTAssertEqual(
+      summaries.first(where: { $0.id == withOpening.id })?.trackedBalanceMinor, 120,
+      "a store that dropped openingBalanceMinor gives 20 here")
+    XCTAssertEqual(
+      summaries.first(where: { $0.id == without.id })?.trackedBalanceMinor, 0,
+      "and an account that never had one is unchanged")
   }
 }
