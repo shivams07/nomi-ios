@@ -9,12 +9,20 @@ import AppIntents
 /// pair exists to avoid.
 public struct NomiAppIntentsPackage: AppIntentsPackage {}
 
-/// The one shortcut offered without the user assembling it themselves.
+/// The shortcuts offered without the user assembling them themselves.
 ///
-/// Only "Add Transaction". A provider's shortcuts are surfaced unprompted in
-/// Spotlight and the Shortcuts app, so each one spends attention the app has
-/// not been given; a query intent nobody asked for is clutter. Reading the
-/// ledger back is deliberately not here.
+/// Two, and the second one revises a decision. This used to say only "Add
+/// Transaction" belonged here, because "a query intent nobody asked for is
+/// clutter" — a provider's shortcuts are surfaced unprompted in Spotlight and
+/// the Shortcuts app, so each one spends attention the app has not been given.
+/// That reasoning holds for a query nobody asked for. "How much have I spent"
+/// is the question the app exists to answer and is W2-7's whole point, so it
+/// earns its place; the bar it had to clear is stated here rather than quietly
+/// dropped.
+///
+/// Still two, and not one per period. `SpendingSummaryIntent.period` has a
+/// default, so one phrase covers the common case and Siri asks when it does
+/// not.
 public struct NomiShortcuts: AppShortcutsProvider {
   public static var appShortcuts: [AppShortcut] {
     AppShortcut(
@@ -26,5 +34,14 @@ public struct NomiShortcuts: AppShortcutsProvider {
       ],
       shortTitle: "Add Transaction",
       systemImageName: "indianrupeesign.circle")
+
+    AppShortcut(
+      intent: SpendingSummaryIntent(),
+      phrases: [
+        "How much have I spent in \(.applicationName)",
+        "Check my spending in \(.applicationName)",
+      ],
+      shortTitle: "Spending Summary",
+      systemImageName: "chart.pie")
   }
 }
