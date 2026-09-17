@@ -94,6 +94,12 @@ public struct AccountRef: Sendable, Equatable {
   public let lastFour: String
   public let kindRaw: String
   public let isArchived: Bool
+  /// `Account.openingBalanceMinor`. Defaulted for the same reason as
+  /// `CategoryRef.symbolName` — the pure tests that are not about it stay
+  /// short — and held against the stored value through a real container by
+  /// `testTheStoreCarriesAnAccountsOpeningBalanceIntoItsTrackedBalance`, so
+  /// the default cannot quietly become the store forgetting to pass it.
+  public let openingBalanceMinor: Int?
 
   public init(
     id: UUID,
@@ -101,7 +107,8 @@ public struct AccountRef: Sendable, Equatable {
     institution: String,
     lastFour: String,
     kindRaw: String,
-    isArchived: Bool
+    isArchived: Bool,
+    openingBalanceMinor: Int? = nil
   ) {
     self.id = id
     self.displayName = displayName
@@ -109,6 +116,7 @@ public struct AccountRef: Sendable, Equatable {
     self.lastFour = lastFour
     self.kindRaw = kindRaw
     self.isArchived = isArchived
+    self.openingBalanceMinor = openingBalanceMinor
   }
 }
 
@@ -361,10 +369,17 @@ public enum InsightsAggregator {
 
   /// All-time per account: balance, count, and the date tracking began.
   ///
-  /// `trackedBalanceMinor` is credit minus debit **of what this app has seen**,
-  /// which is not the bank's balance and is not claimed to be — the field is
-  /// named for it. Rows with a nil `accountID` belong to no account and are
-  /// counted nowhere here; they surface through `NeedsYouCard` instead.
+  /// `trackedBalanceMinor` is the opening balance plus credit minus debit **of
+  /// what this app has seen**, which is not the bank's balance and is not
+  /// claimed to be — the field is named for it. An opening balance is the
+  /// user's own statement of what the account held before tracking began, and
+  /// it is the only thing that can make this figure agree with a bank app; an
+  /// account without one reads exactly as it did before, because `nil`
+  /// contributes zero. Rows with a nil `accountID` belong to no account and
+  /// are counted nowhere here; they surface through `NeedsYouCard` instead.
+  ///
+  /// The opening balance is **not** in `transactionCount` or `trackingSince`.
+  /// It is not a transaction and it has no date.
   public static func accountSummaries(
     accounts: [AccountRef],
     rows: [LedgerRow],
@@ -392,7 +407,7 @@ public enum InsightsAggregator {
           institution: account.institution,
           lastFour: account.lastFour,
           kindRaw: account.kindRaw,
-          trackedBalanceMinor: credit - debit,
+          trackedBalanceMinor: (account.openingBalanceMinor ?? 0) + credit - debit,
           transactionCount: owned.count,
           trackingSince: owned.map(\.date).min(),
           isArchived: account.isArchived

@@ -122,7 +122,10 @@ public final class FakeInsightsStore: InsightsStore {
           institution: account.institution,
           lastFour: account.lastFour,
           kindRaw: account.kindRaw,
-          trackedBalanceMinor: credit - debit,
+          // Opening balance included, as `InsightsAggregator` does it. A fake
+          // that left it out would give the edit sheet's preview a balance
+          // that ignores the field the sheet was added to set.
+          trackedBalanceMinor: (account.openingBalanceMinor ?? 0) + credit - debit,
           transactionCount: rows.count,
           trackingSince: rows.map(\.date).min(),
           isArchived: account.isArchived

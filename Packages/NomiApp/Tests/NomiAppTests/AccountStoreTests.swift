@@ -252,6 +252,261 @@ final class AccountStoreTests: XCTestCase {
     XCTAssertEqual(account.kindRaw, "crypto", "reading it does not rewrite the stored value")
   }
 
+  // MARK: - W2-1: update
+
+  /// The done-when. `update` re-runs `create`'s rules rather than trusting the
+  /// edit sheet, for the reason `create` stopped trusting the create sheet: a
+  /// partial `lastFour` is the `cardFragment` half of the `AccountBinding` key
+  /// and its only symptom is mail auto-resolution quietly never matching.
+  ///
+  /// It also asserts the stored row is *unchanged*. A validating `update` that
+  /// assigned the fields first and threw afterwards would leave the account
+  /// half-edited, which is worse than either outcome.
+  func testUpdateRejectsAPartialLastFourAndChangesNothing() throws {
+    let (store, context, _) = try makeStore()
+    let account = try store.create(
+      displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank")
+
+    XCTAssertThrowsError(
+      try store.update(
+        account.id, displayName: "HDFC", institution: "HDFC Bank", lastFour: "471",
+        kindRaw: "bank", openingBalanceMinor: nil)
+    ) { error in
+      XCTAssertEqual(error as? AccountStoreError, .malformedLastFour)
+    }
+
+    let stored = try XCTUnwrap(context.fetch(FetchDescriptor<Account>()).first)
+    XCTAssertEqual(stored.lastFour, "4471", "a rejected edit must not have been half-applied")
+  }
+
+  func testUpdateAppliesEveryFieldAndTrimsTheName() throws {
+    let (store, context, cache) = try makeStore()
+    let insights = SwiftDataInsightsStore(context: context, cache: cache)
+    let account = try store.create(
+      displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank")
+
+    XCTAssertEqual(
+      try insights.accountSummaries(includeArchived: false).map(\.displayName), ["HDFC"],
+      "the cache is warm from here on")
+
+    try store.update(
+      account.id, displayName: "  HDFC Salary  ", institution: "HDFC Bank Ltd",
+      lastFour: "8890", kindRaw: "card", openingBalanceMinor: 25_000)
+
+    let stored = try XCTUnwrap(context.fetch(FetchDescriptor<Account>()).first)
+    XCTAssertEqual(stored.displayName, "HDFC Salary")
+    XCTAssertEqual(stored.institution, "HDFC Bank Ltd")
+    XCTAssertEqual(stored.lastFour, "8890")
+    XCTAssertEqual(stored.kindRaw, "card")
+    XCTAssertEqual(stored.openingBalanceMinor, 25_000)
+
+    let summaries = try insights.accountSummaries(includeArchived: false)
+    XCTAssertEqual(
+      summaries.map(\.displayName), ["HDFC Salary"],
+      "a missing didWrite leaves the cached pre-edit answer in place")
+    XCTAssertEqual(
+      summaries.first?.trackedBalanceMinor, 25_000,
+      "the opening balance reaches the summary with no transactions at all")
+  }
+
+  /// `nil` clears rather than meaning "leave it alone". The caller is a form
+  /// that holds every field, so there is no unchanged sentinel — and a user who
+  /// empties the opening-balance field means to empty it.
+  func testUpdateWithANilOpeningBalanceClearsAStoredOne() throws {
+    let (store, context, _) = try makeStore()
+    let account = try store.create(
+      displayName: "HDFC", institution: "", lastFour: "", kindRaw: "bank")
+    try store.update(
+      account.id, displayName: "HDFC", institution: "", lastFour: "", kindRaw: "bank",
+      openingBalanceMinor: 25_000)
+
+    try store.update(
+      account.id, displayName: "HDFC", institution: "", lastFour: "", kindRaw: "bank",
+      openingBalanceMinor: nil)
+
+    let stored = try XCTUnwrap(context.fetch(FetchDescriptor<Account>()).first)
+    XCTAssertNil(stored.openingBalanceMinor)
+  }
+
+  func testUpdateRejectsABlankNameAndAnUnknownKind() throws {
+    let (store, _, _) = try makeStore()
+    let account = try store.create(
+      displayName: "HDFC", institution: "", lastFour: "", kindRaw: "bank")
+
+    XCTAssertThrowsError(
+      try store.update(
+        account.id, displayName: "   ", institution: "", lastFour: "", kindRaw: "bank",
+        openingBalanceMinor: nil)
+    ) { XCTAssertEqual($0 as? AccountStoreError, .blankName) }
+
+    XCTAssertThrowsError(
+      try store.update(
+        account.id, displayName: "HDFC", institution: "", lastFour: "", kindRaw: "crypto",
+        openingBalanceMinor: nil)
+    ) { XCTAssertEqual($0 as? AccountStoreError, .unknownKind("crypto")) }
+  }
+
+  // MARK: - W2-1: delete
+
+  /// The done-when, and the whole reason `delete` is not a one-liner.
+  ///
+  /// `Transaction.accountID` is a bare `UUID?`, not a SwiftData relationship —
+  /// there is no cascade and there is no nullify. Deleting only the `Account`
+  /// leaves every row pointing at an id that resolves to nothing: the
+  /// transactions stay in the ledger and in every period total, with an account
+  /// name that is silently blank and no way to rebind them, because the picker
+  /// offers accounts and this row claims to have one.
+  func testDeleteKeepsTheTransactionsAndOrphansThem() throws {
+    let (store, context, _) = try makeStore()
+    let account = try store.create(
+      displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank")
+    let other = try store.create(
+      displayName: "ICICI", institution: "ICICI Bank", lastFour: "8890", kindRaw: "card")
+
+    let mine = Transaction(descriptionText: "SWIGGY", amountMinor: 30_000, accountID: account.id)
+    let theirs = Transaction(descriptionText: "AMAZON", amountMinor: 10_000, accountID: other.id)
+    let unowned = Transaction(descriptionText: "CASH", amountMinor: 500)
+    for row in [mine, theirs, unowned] { context.insert(row) }
+    try context.save()
+
+    try store.delete(account.id)
+
+    XCTAssertEqual(
+      try context.fetch(FetchDescriptor<Account>()).map(\.id), [other.id],
+      "the account is gone and only that account")
+
+    let rows = try context.fetch(FetchDescriptor<Transaction>())
+    XCTAssertEqual(rows.count, 3, "no transaction was deleted")
+    XCTAssertNil(
+      rows.first { $0.id == mine.id }?.accountID,
+      "the deleted account's row is unowned, not pointing at a dead id")
+    XCTAssertEqual(
+      rows.first { $0.id == theirs.id }?.accountID, other.id,
+      "another account's rows are untouched")
+    XCTAssertNil(rows.first { $0.id == unowned.id }?.accountID)
+  }
+
+  /// The bindings are keyed `(senderDomain, cardFragment) -> accountID`. Left
+  /// behind, the next mail from that sender resolves onto an account that no
+  /// longer exists — re-creating the orphan the transaction nulling avoids,
+  /// for every future row rather than the stored ones.
+  func testDeleteRemovesTheAccountsBindingsAndNoOthers() throws {
+    let (store, context, _) = try makeStore()
+    let account = try store.create(
+      displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank")
+    let other = try store.create(
+      displayName: "ICICI", institution: "ICICI Bank", lastFour: "8890", kindRaw: "card")
+
+    context.insert(
+      AccountBinding(senderDomain: "hdfcbank.net", cardFragment: "4471", accountID: account.id))
+    context.insert(
+      AccountBinding(senderDomain: "hdfcbank.net", cardFragment: "", accountID: account.id))
+    context.insert(
+      AccountBinding(senderDomain: "icicibank.com", cardFragment: "8890", accountID: other.id))
+    try context.save()
+
+    try store.delete(account.id)
+
+    let bindings = try context.fetch(FetchDescriptor<AccountBinding>())
+    XCTAssertEqual(
+      bindings.map(\.accountID), [other.id],
+      "every binding onto the deleted account is gone, and only those")
+  }
+
+  /// Budgets are keyed by category, not by account. Nothing about deleting an
+  /// account should move a budget.
+  func testDeleteLeavesBudgetsAlone() throws {
+    let (store, context, _) = try makeStore()
+    let account = try store.create(
+      displayName: "HDFC", institution: "", lastFour: "", kindRaw: "bank")
+    let categoryID = UUID()
+    context.insert(Budget(categoryID: categoryID, amountMinor: 50_000))
+    try context.save()
+
+    try store.delete(account.id)
+
+    XCTAssertEqual(try context.fetch(FetchDescriptor<Budget>()).map(\.categoryID), [categoryID])
+  }
+
+  /// The Accounts screen reads summaries through the cache, so a delete that
+  /// skips `didWrite` leaves the deleted row on screen until something else
+  /// writes — the same failure shape `create` has, in the direction that reads
+  /// as "delete does nothing".
+  func testDeleteReachesTheSummariesThroughAWarmCache() throws {
+    let (store, context, cache) = try makeStore()
+    let insights = SwiftDataInsightsStore(context: context, cache: cache)
+    let account = try store.create(
+      displayName: "HDFC", institution: "", lastFour: "", kindRaw: "bank")
+
+    XCTAssertEqual(
+      try insights.accountSummaries(includeArchived: false).count, 1,
+      "the cache is warm from here on")
+
+    try store.delete(account.id)
+
+    XCTAssertTrue(
+      try insights.accountSummaries(includeArchived: false).isEmpty,
+      "a missing didWrite leaves the deleted account on the Accounts screen")
+  }
+
+  func testDeletingAnUnknownIdIsANoOp() throws {
+    let (store, context, _) = try makeStore()
+    try store.create(displayName: "HDFC", institution: "", lastFour: "", kindRaw: "bank")
+
+    XCTAssertNoThrow(try store.delete(UUID()))
+    XCTAssertEqual(try context.fetch(FetchDescriptor<Account>()).count, 1)
+  }
+
+  // MARK: - W2-1: the fake store must agree
+
+  func testBothStoresAgreeThatDeleteRemovesTheAccount() throws {
+    let (store, context, _) = try makeStore()
+    let real = try store.create(
+      displayName: "HDFC", institution: "", lastFour: "", kindRaw: "bank")
+    try store.create(displayName: "ICICI", institution: "", lastFour: "", kindRaw: "card")
+
+    let fake = FakeAccountStore(accounts: [])
+    let fakeAccount = try fake.create(
+      displayName: "HDFC", institution: "", lastFour: "", kindRaw: "bank")
+    try fake.create(displayName: "ICICI", institution: "", lastFour: "", kindRaw: "card")
+
+    try store.delete(real.id)
+    try fake.delete(fakeAccount.id)
+
+    XCTAssertEqual(
+      try context.fetch(FetchDescriptor<Account>()).map(\.displayName), ["ICICI"])
+    XCTAssertEqual(fake.accounts.map(\.displayName), ["ICICI"])
+  }
+
+  /// The fake validates too, or the edit sheet's preview has a Save that can
+  /// never fail and the error state it renders is never seen.
+  func testTheFakeUpdateValidatesAndAppliesTheSameWay() throws {
+    let fake = FakeAccountStore(accounts: [])
+    let account = try fake.create(
+      displayName: "HDFC", institution: "", lastFour: "4471", kindRaw: "bank")
+
+    XCTAssertThrowsError(
+      try fake.update(
+        account.id, displayName: "HDFC", institution: "", lastFour: "471", kindRaw: "bank",
+        openingBalanceMinor: nil)
+    ) { XCTAssertEqual($0 as? AccountStoreError, .malformedLastFour) }
+    XCTAssertEqual(fake.accounts[0].lastFour, "4471")
+
+    try fake.update(
+      account.id, displayName: "  HDFC Salary  ", institution: "HDFC Bank Ltd",
+      lastFour: "8890", kindRaw: "card", openingBalanceMinor: 25_000)
+
+    XCTAssertEqual(fake.accounts[0].displayName, "HDFC Salary")
+    XCTAssertEqual(fake.accounts[0].lastFour, "8890")
+    XCTAssertEqual(fake.accounts[0].kindRaw, "card")
+    XCTAssertEqual(fake.accounts[0].openingBalanceMinor, 25_000)
+
+    let insights = FakeInsightsStore(transactions: [], accounts: fake.accounts)
+    XCTAssertEqual(
+      try insights.accountSummaries(includeArchived: false).first?.trackedBalanceMinor, 25_000,
+      "the fake summaries carry the opening balance, as the aggregator does")
+  }
+
   // MARK: -
 
   /// A fresh container per test, and one `InsightsCache` shared by the store

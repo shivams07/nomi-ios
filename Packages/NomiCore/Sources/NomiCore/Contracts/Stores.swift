@@ -120,6 +120,42 @@ public protocol AccountStore: AnyObject {
 
   func rename(_ id: UUID, to displayName: String) throws
   func setArchived(_ id: UUID, _ archived: Bool) throws
+
+  /// Edits every field of an existing account, under exactly the rules
+  /// `create` enforces and throwing the same `AccountStoreError` cases.
+  ///
+  /// Not a superset of `rename`, and it does not replace it: `rename` is the
+  /// one-field write the detail and picker sheets already do, and widening it
+  /// would make every caller pass four values it has no opinion about. This is
+  /// the edit sheet's write.
+  ///
+  /// `openingBalanceMinor: nil` clears the opening balance rather than leaving
+  /// the stored one alone. There is no "unchanged" sentinel here because the
+  /// caller is a form that holds every field.
+  func update(
+    _ id: UUID,
+    displayName: String,
+    institution: String,
+    lastFour: String,
+    kindRaw: String,
+    openingBalanceMinor: Int?
+  ) throws
+
+  /// Deletes the account itself and its `AccountBinding`s.
+  ///
+  /// **Its transactions are kept**, with `accountID` set to `nil`. Deleting
+  /// them would delete history the user never asked to lose - an account they
+  /// closed is not a year of spending they are disowning - and it would move
+  /// every period total the moment they tidied up their account list. The rows
+  /// become unowned, which is a state the app already has a shape for: they
+  /// surface through `NeedsYouCard` and can be rebound from the detail sheet.
+  ///
+  /// The bindings go because they are keyed by `(senderDomain, cardFragment)`
+  /// onto this account id. Left behind, they would resolve new mail onto an
+  /// account that no longer exists.
+  ///
+  /// Budgets are untouched: they are keyed by category, not by account.
+  func delete(_ id: UUID) throws
 }
 
 /// The pipeline's post-commit hook. U4 calls it, U10 implements it, U8 wires it.

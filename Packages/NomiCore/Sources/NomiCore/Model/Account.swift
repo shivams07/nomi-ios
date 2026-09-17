@@ -40,6 +40,15 @@ public final class Account {
   public var kindRaw: String = "bank"
   public var isArchived: Bool = false
   public var createdAt: Date = Date()
+  /// What the account held before this app saw anything.
+  ///
+  /// Additive and optional, which is what makes it a property and not a
+  /// migration: every row already stored reads back `nil` and every total it
+  /// feeds is unchanged. `nil` is "the user never said", not zero - the
+  /// distinction is visible in `AccountSummary.trackedBalanceMinor`, which is
+  /// still credit minus debit for an account with no opening balance and is
+  /// still not a claim about the bank's balance either way.
+  public var openingBalanceMinor: Int?
 
   public init(
     id: UUID = UUID(),
@@ -48,7 +57,8 @@ public final class Account {
     lastFour: String = "",
     kindRaw: String = "bank",
     isArchived: Bool = false,
-    createdAt: Date = Date()
+    createdAt: Date = Date(),
+    openingBalanceMinor: Int? = nil
   ) {
     self.id = id
     self.displayName = displayName
@@ -57,6 +67,7 @@ public final class Account {
     self.kindRaw = kindRaw
     self.isArchived = isArchived
     self.createdAt = createdAt
+    self.openingBalanceMinor = openingBalanceMinor
   }
 
   /// Raw-backed, like `Transaction.direction`. The getter falls back to

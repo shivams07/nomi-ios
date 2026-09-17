@@ -83,7 +83,8 @@ public final class SwiftDataInsightsStore: InsightsStore {
           institution: $0.institution,
           lastFour: $0.lastFour,
           kindRaw: $0.kindRaw,
-          isArchived: $0.isArchived
+          isArchived: $0.isArchived,
+          openingBalanceMinor: $0.openingBalanceMinor
         )
       }
       let rows = try ledgerRows(in: nil)
