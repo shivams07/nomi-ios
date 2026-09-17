@@ -40,6 +40,10 @@ public final class AppEnvironment: ObservableObject {
   public let budgetStore: any BudgetStore
   public let accountStore: any AccountStore
   public let categorySuggester: any CategorySuggesting
+  /// W2-2. Not on `transactionStore`: search is a different query with a
+  /// different contract file, and `RootView` hands it to `LedgerScreen`
+  /// alongside the window rather than in place of it.
+  public let transactionSearch: any TransactionSearching
 
   public let fileImportService: any FileImportService
   public let mail: MailStack
@@ -102,6 +106,7 @@ public final class AppEnvironment: ObservableObject {
     self.budgetStore = SwiftDataBudgetStore(context: context, coordinator: coordinator)
     self.accountStore = SwiftDataAccountStore(context: context, coordinator: coordinator)
     self.categorySuggester = SwiftDataCategorySuggester(context: context)
+    self.transactionSearch = SwiftDataTransactionSearch(context: context)
 
     self.firstRun = FirstRunGate(store: preferences)
 
