@@ -3,16 +3,17 @@ import NomiPreview
 import SwiftUI
 
 /// The Accounts page (U11). Reads exclusively through `InsightsStore` (for
-/// the read-only `AccountSummary` rollups) and `AccountStore` (for rename
-/// and archive), same split as `DashboardView`/`AccountsCard` — this screen
-/// has no opinion on how those summaries are computed, it just renders and
-/// mutates through the two store protocols.
+/// the read-only `AccountSummary` rollups) and `AccountStore` (for edit,
+/// archive, and delete), same split as `DashboardView`/`AccountsCard` — this
+/// screen has no opinion on how those summaries are computed, it just renders
+/// and mutates through the two store protocols.
 public struct AccountsScreen: View {
   public let accountStore: AccountStore
   public let insightsStore: InsightsStore
 
-  @State private var renamingAccount: AccountSummary?
+  @State private var editingAccount: AccountSummary?
   @State private var archivingAccount: AccountSummary?
+  @State private var deletingAccount: AccountSummary?
   @State private var isArchivedExpanded = false
   @State private var isCreatingAccount = false
   @State private var refreshToken = 0
@@ -89,7 +90,7 @@ public struct AccountsScreen: View {
         }
       }
     }
-    .sheet(item: $renamingAccount) { account in
+    .sheet(item: $editingAccount) { account in
       AccountRenameSheet(accountStore: accountStore, account: account) {
         refreshToken += 1
       }
@@ -121,7 +122,30 @@ public struct AccountsScreen: View {
         Text("Transactions are kept. You can unarchive this account anytime.")
       }
     )
-    .alert("Couldn't update account", isPresented: $writeError) {
+    .confirmationDialog(
+      "Delete \(deletingAccount?.displayName ?? "account")?",
+      isPresented: Binding(
+        get: { deletingAccount != nil },
+        set: { if !$0 { deletingAccount = nil } }
+      ),
+      titleVisibility: .visible,
+      presenting: deletingAccount,
+      actions: { account in
+        Button("Delete", role: .destructive) {
+          do {
+            try accountStore.delete(account.id)
+            refreshToken += 1
+          } catch {
+            writeError = true
+          }
+        }
+        Button("Cancel", role: .cancel) {}
+      },
+      message: { account in
+        Text(AccountDeleteConfirmation.message(transactionCount: account.transactionCount))
+      }
+    )
+    .alert("Couldn't complete that", isPresented: $writeError) {
       Button("OK", role: .cancel) {}
     }
   }
@@ -159,9 +183,9 @@ public struct AccountsScreen: View {
     .opacity(deemphasized ? 0.6 : 1)
     .listRowBackground(NomiColor.surfaceRaised)
     .contentShape(Rectangle())
-    .onTapGesture { renamingAccount = account }
+    .onTapGesture { editingAccount = account }
     .contextMenu {
-      Button("Rename") { renamingAccount = account }
+      Button("Edit") { editingAccount = account }
       if account.isArchived {
         Button("Unarchive") {
           do {
@@ -174,6 +198,7 @@ public struct AccountsScreen: View {
       } else {
         Button("Archive") { archivingAccount = account }
       }
+      Button("Delete", role: .destructive) { deletingAccount = account }
     }
   }
 }
@@ -250,4 +275,24 @@ private final class FailingAccountSummariesStore: InsightsStore {
   }
   .environment(\.dynamicTypeSize, .accessibility3)
   .preferredColorScheme(.dark)
+}
+
+/// Isolated confirmationDialog preview, `CategoriesScreen`'s
+/// `.constant(true)` pattern — names a transaction count so the message
+/// (`AccountDeleteConfirmation`) is checkable without navigating the full
+/// screen and tapping through a context menu.
+#Preview("Accounts — delete confirmation, dark") {
+  Text("HDFC •• 4471")
+    .nomiTextStyle(.body)
+    .foregroundStyle(NomiColor.textPrimary)
+    .padding()
+    .background(NomiColor.surfaceRow)
+    .confirmationDialog("Delete HDFC •• 4471?", isPresented: .constant(true), titleVisibility: .visible) {
+      Button("Delete", role: .destructive) {}
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(AccountDeleteConfirmation.message(transactionCount: 42))
+    }
+    .background(NomiColor.surfaceCanvas)
+    .preferredColorScheme(.dark)
 }

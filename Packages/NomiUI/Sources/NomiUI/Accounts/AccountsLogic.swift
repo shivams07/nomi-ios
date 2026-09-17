@@ -1,14 +1,6 @@
 import Foundation
 import NomiCore
 
-/// Same shape as `CategoryFormGate` — extracted so "renaming to an empty
-/// string is rejected in the sheet" is testable without constructing a view.
-enum AccountRenameGate {
-  static func isValid(name: String) -> Bool {
-    !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-  }
-}
-
 /// `NomiFormatters.amountString` always strips the sign (by design — most
 /// callers add their own `+`/`` based on transaction direction, see
 /// `TransactionRow`). A tracked balance has no direction to hang a sign off
@@ -59,16 +51,124 @@ enum AccountKindOptions {
   static let defaultKind = AccountKind.bank.rawValue
 }
 
+/// `lastFour` is exactly four digits or empty — never partial. That rule is
+/// not cosmetic: `lastFour` is the `cardFragment` half of the
+/// `AccountBinding` key another unit relies on, so a value like "471" or
+/// "•• 4471" would silently break mail auto-resolution later with no visible
+/// symptom. Shared by `AccountCreateFormGate` and `AccountEditFormGate` so
+/// the two forms can't drift onto two different definitions of "valid".
+enum AccountLastFourGate {
+  static func isValid(_ lastFour: String) -> Bool {
+    lastFour.isEmpty || (lastFour.count == 4 && lastFour.allSatisfy { $0.isASCII && $0.isNumber })
+  }
+}
+
 /// Gates account creation: `displayName` is required and non-blank, same
-/// rule as `AccountRenameGate`. `lastFour` is exactly four digits or empty
-/// — never partial. That second rule is not cosmetic: `lastFour` is the
-/// `cardFragment` half of the `AccountBinding` key another unit relies on,
-/// so a value like "471" or "•• 4471" would silently break mail
-/// auto-resolution later with no visible symptom.
+/// rule `AccountEditFormGate` applies to the edit sheet.
 enum AccountCreateFormGate {
   static func isValid(displayName: String, lastFour: String) -> Bool {
     let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedName.isEmpty else { return false }
-    return lastFour.isEmpty || (lastFour.count == 4 && lastFour.allSatisfy { $0.isASCII && $0.isNumber })
+    return AccountLastFourGate.isValid(lastFour)
+  }
+}
+
+/// The opening-balance `TextField`'s two directions: seeding editable plain
+/// text from the stored value, and parsing typed text back into
+/// `AccountStore.update`'s `openingBalanceMinor: Int?` — which, per that
+/// method's own doc comment, treats `nil` as "clear the value", not "leave it
+/// alone". An account can legitimately already be overdrawn the day this app
+/// first sees it, so unlike `EntryAmount` (which rejects zero and negative —
+/// this field cannot reuse it) a leading `-` and an explicit `0` both parse
+/// to real values; only the empty string means "clear".
+///
+/// `isValid` scans characters directly rather than sanitizing-then-checking,
+/// on purpose: a sanitize-first pass (`EntryAmount`'s approach, meant for a
+/// live keystroke filter, not a validity check) silently drops anything it
+/// doesn't recognise, so garbage like `"abc"` collapses to an empty string
+/// and reads as "cleared" instead of "invalid" — a real bug caught by CI, not
+/// reasoning, since there is no local Swift toolchain to run this against.
+/// The same run also showed `Decimal(string:)` parsing a bare `"-"` as a
+/// value instead of returning `nil`, which a sanitize-then-parse check would
+/// have missed entirely; the character scan below rejects it directly by
+/// requiring at least one digit.
+enum AccountOpeningBalanceField {
+  static func string(minor: Int?) -> String {
+    guard let minor else { return "" }
+    return NSDecimalNumber(decimal: Decimal(minor) / 100).stringValue
+  }
+
+  static func isValid(_ text: String) -> Bool {
+    guard !text.isEmpty else { return true }
+    let (digitCount, fractionDigitCount, isWellFormed) = scan(text)
+    return isWellFormed && digitCount > 0 && fractionDigitCount <= 2
+  }
+
+  /// Only meaningful once `isValid` has passed, same contract
+  /// `EntryAmount.minorUnits` keeps with `EntrySaveGate`.
+  static func minorUnits(from text: String) -> Int? {
+    guard !text.isEmpty, let decimal = Decimal(string: text) else { return nil }
+    let scaled = decimal * 100
+    var rounded = Decimal()
+    var mutableScaled = scaled
+    NSDecimalRound(&rounded, &mutableScaled, 0, .plain)
+    return NSDecimalNumber(decimal: rounded).intValue
+  }
+
+  /// A single optional leading `-`, digits, at most one `.`, at most two
+  /// digits after it. Any other character (including a second `-` or `.`)
+  /// fails `isWellFormed` immediately rather than being silently dropped.
+  private static func scan(_ text: String) -> (digitCount: Int, fractionDigitCount: Int, isWellFormed: Bool) {
+    var digitCount = 0
+    var fractionDigitCount = 0
+    var seenDecimalPoint = false
+    for (index, character) in text.enumerated() {
+      if character == "-" && index == 0 {
+        continue
+      } else if character.isNumber {
+        if seenDecimalPoint { fractionDigitCount += 1 } else { digitCount += 1 }
+      } else if character == "." && !seenDecimalPoint {
+        seenDecimalPoint = true
+      } else {
+        return (digitCount, fractionDigitCount, false)
+      }
+    }
+    return (digitCount, fractionDigitCount, true)
+  }
+}
+
+/// Gates the edit sheet's Save button. `displayName`/`lastFour` share exactly
+/// `AccountCreateFormGate`'s rules — editing an account cannot be allowed to
+/// produce a state creating one couldn't. `institution` has no format rule
+/// (free text, same as create). `kindRaw` needs none either: the picker only
+/// ever offers `AccountKindOptions.all`. `openingBalanceMinor` is the one
+/// genuinely new rule, since it arrives as typed text here, not a picker
+/// selection.
+enum AccountEditFormGate {
+  static func isValid(displayName: String, lastFour: String, openingBalanceText: String) -> Bool {
+    AccountCreateFormGate.isValid(displayName: displayName, lastFour: lastFour)
+      && AccountOpeningBalanceField.isValid(openingBalanceText)
+  }
+}
+
+/// The `.confirmationDialog` message for deleting an account (design doc
+/// W2-1) — names the transaction count from the summary so the warning is
+/// concrete, the way `CategoriesScreen`'s delete dialog names what it
+/// cascades rather than reading as a generic warning. Transactions are kept:
+/// `AccountStore.delete` only removes the account row and its
+/// `AccountBinding`s, and leaves every transaction's `accountID` nil'd —
+/// nothing described here is deleted except the account itself.
+enum AccountDeleteConfirmation {
+  static func message(transactionCount: Int) -> String {
+    let subject: String
+    switch transactionCount {
+    case 0:
+      subject = "It has no transactions."
+    case 1:
+      subject = "Its 1 transaction will be kept, unassigned from any account."
+    default:
+      subject = "Its \(transactionCount) transactions will be kept, unassigned from any account."
+    }
+    return "\(subject) This can't be undone."
   }
 }
