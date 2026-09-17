@@ -3,20 +3,6 @@ import NomiCore
 import XCTest
 @testable import NomiUI
 
-final class AccountRenameGateTests: XCTestCase {
-  func testEmptyNameIsInvalid() {
-    XCTAssertFalse(AccountRenameGate.isValid(name: ""))
-  }
-
-  func testWhitespaceOnlyNameIsInvalid() {
-    XCTAssertFalse(AccountRenameGate.isValid(name: "   "))
-  }
-
-  func testNonEmptyNameIsValid() {
-    XCTAssertTrue(AccountRenameGate.isValid(name: "Checking"))
-  }
-}
-
 final class TrackedBalanceTextTests: XCTestCase {
   func testPositiveBalanceHasNoSign() {
     let text = TrackedBalanceText.string(minor: 128_450_00)
@@ -78,6 +64,82 @@ final class AccountCreateFormGateTests: XCTestCase {
 
   func testFourDigitLastFourIsValid() {
     XCTAssertTrue(AccountCreateFormGate.isValid(displayName: "Checking", lastFour: "4471"))
+  }
+}
+
+final class AccountOpeningBalanceFieldTests: XCTestCase {
+  func testNilMinorProducesEmptyString() {
+    XCTAssertEqual(AccountOpeningBalanceField.string(minor: nil), "")
+  }
+
+  func testPositiveMinorRoundTrips() {
+    let text = AccountOpeningBalanceField.string(minor: 128_450_00)
+    XCTAssertEqual(AccountOpeningBalanceField.minorUnits(from: text), 128_450_00)
+  }
+
+  func testZeroMinorRoundTripsAsExplicitZero() {
+    let text = AccountOpeningBalanceField.string(minor: 0)
+    XCTAssertNotEqual(text, "")
+    XCTAssertEqual(AccountOpeningBalanceField.minorUnits(from: text), 0)
+  }
+
+  func testNegativeMinorRoundTrips() {
+    let text = AccountOpeningBalanceField.string(minor: -4_200_00)
+    XCTAssertTrue(text.hasPrefix("-"))
+    XCTAssertEqual(AccountOpeningBalanceField.minorUnits(from: text), -4_200_00)
+  }
+
+  func testEmptyTextIsValidAndMeansClear() {
+    XCTAssertTrue(AccountOpeningBalanceField.isValid(""))
+    XCTAssertNil(AccountOpeningBalanceField.minorUnits(from: ""))
+  }
+
+  func testExplicitZeroTextIsValidAndDistinctFromClear() {
+    XCTAssertTrue(AccountOpeningBalanceField.isValid("0"))
+    XCTAssertEqual(AccountOpeningBalanceField.minorUnits(from: "0"), 0)
+  }
+
+  func testNegativeTextIsValid() {
+    XCTAssertTrue(AccountOpeningBalanceField.isValid("-500.50"))
+    XCTAssertEqual(AccountOpeningBalanceField.minorUnits(from: "-500.50"), -50_050)
+  }
+
+  func testMoreThanTwoDecimalDigitsIsInvalid() {
+    XCTAssertFalse(AccountOpeningBalanceField.isValid("100.999"))
+  }
+
+  func testTwoDecimalDigitsIsValid() {
+    XCTAssertTrue(AccountOpeningBalanceField.isValid("100.99"))
+  }
+
+  func testBareMinusSignIsInvalid() {
+    XCTAssertFalse(AccountOpeningBalanceField.isValid("-"))
+  }
+
+  func testNonNumericTextIsInvalid() {
+    XCTAssertFalse(AccountOpeningBalanceField.isValid("abc"))
+  }
+}
+
+final class AccountEditFormGateTests: XCTestCase {
+  func testBlankNameIsInvalid() {
+    XCTAssertFalse(AccountEditFormGate.isValid(displayName: "", lastFour: "4471", openingBalanceText: ""))
+  }
+
+  func testMalformedLastFourIsInvalid() {
+    XCTAssertFalse(AccountEditFormGate.isValid(displayName: "Checking", lastFour: "471", openingBalanceText: ""))
+  }
+
+  func testMalformedOpeningBalanceIsInvalid() {
+    XCTAssertFalse(AccountEditFormGate.isValid(displayName: "Checking", lastFour: "4471", openingBalanceText: "not a number"))
+  }
+
+  func testAllValidFieldsAreValid() {
+    XCTAssertTrue(AccountEditFormGate.isValid(displayName: "Checking", lastFour: "4471", openingBalanceText: "15000.00"))
+  }
+
+  func testEmptyOpeningBalanceIsValid() {
+    XCTAssertTrue(AccountEditFormGate.isValid(displayName: "Checking", lastFour: "", openingBalanceText: ""))
   }
 }
 

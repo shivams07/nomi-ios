@@ -3,15 +3,15 @@ import NomiPreview
 import SwiftUI
 
 /// The Accounts page (U11). Reads exclusively through `InsightsStore` (for
-/// the read-only `AccountSummary` rollups) and `AccountStore` (for rename
-/// and archive), same split as `DashboardView`/`AccountsCard` — this screen
-/// has no opinion on how those summaries are computed, it just renders and
-/// mutates through the two store protocols.
+/// the read-only `AccountSummary` rollups) and `AccountStore` (for edit,
+/// archive, and delete), same split as `DashboardView`/`AccountsCard` — this
+/// screen has no opinion on how those summaries are computed, it just renders
+/// and mutates through the two store protocols.
 public struct AccountsScreen: View {
   public let accountStore: AccountStore
   public let insightsStore: InsightsStore
 
-  @State private var renamingAccount: AccountSummary?
+  @State private var editingAccount: AccountSummary?
   @State private var archivingAccount: AccountSummary?
   @State private var deletingAccount: AccountSummary?
   @State private var isArchivedExpanded = false
@@ -90,7 +90,7 @@ public struct AccountsScreen: View {
         }
       }
     }
-    .sheet(item: $renamingAccount) { account in
+    .sheet(item: $editingAccount) { account in
       AccountRenameSheet(accountStore: accountStore, account: account) {
         refreshToken += 1
       }
@@ -183,9 +183,9 @@ public struct AccountsScreen: View {
     .opacity(deemphasized ? 0.6 : 1)
     .listRowBackground(NomiColor.surfaceRaised)
     .contentShape(Rectangle())
-    .onTapGesture { renamingAccount = account }
+    .onTapGesture { editingAccount = account }
     .contextMenu {
-      Button("Rename") { renamingAccount = account }
+      Button("Edit") { editingAccount = account }
       if account.isArchived {
         Button("Unarchive") {
           do {
