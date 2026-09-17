@@ -410,7 +410,11 @@ public enum InsightsAggregator {
           trackedBalanceMinor: (account.openingBalanceMinor ?? 0) + credit - debit,
           transactionCount: owned.count,
           trackingSince: owned.map(\.date).min(),
-          isArchived: account.isArchived
+          isArchived: account.isArchived,
+          // Read back, not re-derived: it is already inside
+          // `trackedBalanceMinor` above. An edit sheet needs the stored value
+          // to seed its field, and `nil` here means "never stated", not zero.
+          openingBalanceMinor: account.openingBalanceMinor
         )
       }
       .sorted { lhs, rhs in

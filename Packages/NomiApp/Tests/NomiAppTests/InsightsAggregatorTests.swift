@@ -573,6 +573,69 @@ final class InsightsAggregatorTests: XCTestCase {
     XCTAssertNil(summaries.first?.trackingSince)
   }
 
+  /// W2-1 read-back. `trackedBalanceMinor` already proves the opening balance
+  /// was *used*; it cannot prove it is still *legible*, because 100 + 50 − 30
+  /// is 120 whether or not the summary kept the 100 anywhere a form could
+  /// find it. §W2-1 gave `AccountRef` the field and stopped there, so the
+  /// edit sheet had a value it could write and no value it could read — and
+  /// `AccountStore.update` clears `openingBalanceMinor` on nil with no
+  /// unchanged sentinel, so the sheet would have wiped a stored balance the
+  /// first time the user edited any other field.
+  ///
+  /// `AccountSummary.openingBalanceMinor` is defaulted to `nil`, so an
+  /// aggregator that stopped passing it would leave every assertion above
+  /// green. This is the test that makes that default safe.
+  func testAnOpeningBalanceIsReadableBackOffTheSummary() {
+    let hdfc = UUID()
+    let accounts = [
+      AccountRef(
+        id: hdfc, displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471",
+        kindRaw: "bank", isArchived: false, openingBalanceMinor: 100)
+    ]
+    let rows = [
+      row(50, .credit, on: date(2026, 4, 1), account: hdfc),
+      row(30, .debit, on: date(2026, 4, 5), account: hdfc),
+    ]
+
+    let summaries = InsightsAggregator.accountSummaries(
+      accounts: accounts, rows: rows, includeArchived: false)
+
+    XCTAssertEqual(
+      summaries.first?.openingBalanceMinor, 100,
+      "an aggregator that dropped it gives nil here, and the tracked balance still says 120")
+    XCTAssertEqual(
+      summaries.first?.trackedBalanceMinor, 120,
+      "and it stays folded in — this is a read-back, not a second copy to add")
+  }
+
+  /// The distinction the edit sheet is built on: `nil` is "the user never
+  /// stated one" and shows a blank field; `0` is the user saying the account
+  /// opened empty and shows "0". Collapsing either into the other turns a
+  /// deliberate zero into a blank or a blank into a claim the user never made,
+  /// and both survive the arithmetic above untouched because both contribute
+  /// zero to `trackedBalanceMinor`.
+  func testNilAndZeroOpeningBalancesStayDistinctOnTheSummary() {
+    let never = UUID()
+    let zero = UUID()
+    let accounts = [
+      AccountRef(
+        id: never, displayName: "A", institution: "HDFC Bank", lastFour: "4471",
+        kindRaw: "bank", isArchived: false),
+      AccountRef(
+        id: zero, displayName: "B", institution: "ICICI Bank", lastFour: "8890",
+        kindRaw: "bank", isArchived: false, openingBalanceMinor: 0),
+    ]
+
+    let summaries = InsightsAggregator.accountSummaries(
+      accounts: accounts, rows: [], includeArchived: false)
+
+    XCTAssertNil(summaries.first(where: { $0.id == never })?.openingBalanceMinor)
+    XCTAssertEqual(summaries.first(where: { $0.id == zero })?.openingBalanceMinor, 0)
+    XCTAssertEqual(
+      summaries.map(\.trackedBalanceMinor), [0, 0],
+      "and neither moves the balance, which is why only this assertion can tell them apart")
+  }
+
   // MARK: - Budgets
 
   func testBudgetProgressSumsOnlyDebitsInTheCategory() {
@@ -898,5 +961,9 @@ final class InsightsStoreSymbolNameTests: XCTestCase {
     XCTAssertEqual(
       summaries.first(where: { $0.id == without.id })?.trackedBalanceMinor, 0,
       "and an account that never had one is unchanged")
+    XCTAssertEqual(
+      summaries.first(where: { $0.id == withOpening.id })?.openingBalanceMinor, 100,
+      "and the stored column is legible off the summary, not only folded into the sum")
+    XCTAssertNil(summaries.first(where: { $0.id == without.id })?.openingBalanceMinor)
   }
 }
