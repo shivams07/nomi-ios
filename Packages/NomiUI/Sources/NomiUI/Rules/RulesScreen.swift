@@ -10,15 +10,28 @@ public struct RulesScreen: View {
   public let ruleStore: RuleStore
   public let categoryStore: CategoryStore
 
+  /// The account list for the editor's "Only when" section and this
+  /// screen's own scope-summary line (W2-M4). A plain array, not `@Query`:
+  /// `RulesScreen` is built against preview/test containers
+  /// (`EntryRulesPreviewSupport.makeRulesContainer()` and this file's own
+  /// `makeSystemRuleDisabledContainer()`) whose schema doesn't include
+  /// `NomiCore.Account` — an `@Query` here would crash every one of them,
+  /// not just the ones that care about scope. Defaulted to `[]` so
+  /// `RootView`'s existing call site keeps compiling unchanged; wiring the
+  /// real account list through from there is follow-up, not this unit's file
+  /// to touch.
+  public let accounts: [NomiCore.Account]
+
   @Query(sort: \NomiCore.Rule.priority) private var rules: [NomiCore.Rule]
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
   @State private var editingRule: NomiCore.Rule?
   @State private var isCreating = false
   @State private var actionError = false
 
-  public init(ruleStore: RuleStore, categoryStore: CategoryStore) {
+  public init(ruleStore: RuleStore, categoryStore: CategoryStore, accounts: [NomiCore.Account] = []) {
     self.ruleStore = ruleStore
     self.categoryStore = categoryStore
+    self.accounts = accounts
   }
 
   public var body: some View {
@@ -48,10 +61,10 @@ public struct RulesScreen: View {
       #endif
     }
     .sheet(isPresented: $isCreating) {
-      RuleEditorSheet(ruleStore: ruleStore, categories: categories, rule: nil)
+      RuleEditorSheet(ruleStore: ruleStore, categories: categories, accounts: accounts, rule: nil)
     }
     .sheet(item: $editingRule) { rule in
-      RuleEditorSheet(ruleStore: ruleStore, categories: categories, rule: rule)
+      RuleEditorSheet(ruleStore: ruleStore, categories: categories, accounts: accounts, rule: rule)
     }
     .alert("Couldn't update rules", isPresented: $actionError) {
       Button("OK", role: .cancel) {}
@@ -77,6 +90,14 @@ public struct RulesScreen: View {
                 .nomiTextStyle(.caption)
                 .foregroundStyle(NomiColor.textTertiary)
             }
+          }
+          if let scopeSummary = RuleScopeSummary.text(
+            for: rule.scope,
+            accountName: { id in accounts.first(where: { $0.id == id })?.displayName }
+          ) {
+            Text(scopeSummary)
+              .nomiTextStyle(.caption)
+              .foregroundStyle(NomiColor.textTertiary)
           }
         }
       }
@@ -170,14 +191,51 @@ private func makeSystemRuleDisabledContainer() -> ModelContainer {
   .preferredColorScheme(.dark)
 }
 
+/// Local, `Account`-inclusive container for the one preview below that needs
+/// a scoped rule (W2-M4) — `EntryRulesPreviewSupport.makeRulesContainer()`'s
+/// schema is `[Category, Rule]` with no `Account`, and widening it is that
+/// file's call, not this unit's (see `accounts`'s own note on `RulesScreen`).
+@MainActor
+private func makeScopedRuleContainer() -> (container: ModelContainer, accounts: [NomiCore.Account]) {
+  let container = try! ModelContainer(
+    for: Schema([NomiCore.Category.self, NomiCore.Rule.self, NomiCore.Account.self]),
+    configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+  )
+  let category = NomiCore.Category(name: "Shopping", symbolName: "bag", paletteSlot: 1, isSystem: true, sortIndex: 0)
+  let account = NomiCore.Account(displayName: "HDFC •• 4471", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank")
+  container.mainContext.insert(category)
+  container.mainContext.insert(account)
+  container.mainContext.insert(
+    NomiCore.Rule(
+      pattern: "*AMAZON*",
+      categoryID: category.id,
+      priority: 0,
+      scope: RuleScope(direction: .debit, accountID: account.id, minAmountMinor: 100_00, maxAmountMinor: 2000_00)
+    )
+  )
+  return (container, [account])
+}
+
+#Preview("Rules — row with a scope summary, dark") {
+  let fixture = makeScopedRuleContainer()
+  NavigationStack {
+    RulesScreen(ruleStore: FakeRuleStore(), categoryStore: FakeCategoryStore(), accounts: fixture.accounts)
+  }
+  .modelContainer(fixture.container)
+  .preferredColorScheme(.dark)
+}
+
 private struct RulesScreenActionFailure: Error {}
 
 /// Delete, reorder, and now `setEnabled` all always throw, so swiping to
 /// delete, dragging a row, or flipping its toggle in the canvas exercises the
 /// `actionError` alert.
 ///
-/// `setScope` throws too, for consistency, but nothing on this screen calls it
-/// yet — the editor section that does is W2-M4.
+/// `setScope` throws too, for consistency, but nothing on this screen or the
+/// editor calls it: W2-M4's "Only when" section saves the whole rule through
+/// `update`/`create`, the same as a pattern or category edit does.
+/// `setScope` is for a scope-only write with no row for it yet (a swipe
+/// action, maybe) — see its own doc comment on `RuleStore`.
 @MainActor
 private final class AlwaysFailingRuleStore: RuleStore {
   @discardableResult
