@@ -14,13 +14,20 @@ import SwiftData
 /// bounded, so the worst case is four times the rows crossing the boundary to
 /// produce the same answer. SQLite does all of it here.
 ///
-/// **The optional fields are unwrapped at the value, not the call.** Three of
+/// **The optional fields are unwrapped at the call, not at the value.** Three of
 /// the four columns are `String?`, and the clause is written
-/// `($0.merchantName ?? "").localizedStandardContains(text)` rather than
-/// `$0.merchantName?.localizedStandardContains(text) ?? false`. The two mean
-/// the same thing in Swift; only the first is a shape `#Predicate` reliably
-/// carries into a store query, because the coalesce is over a value rather than
-/// over the result of a call it has to translate.
+/// `($0.merchantName?.localizedStandardContains(text) ?? false)`.
+///
+/// The other way round — `($0.merchantName ?? "").localizedStandardContains(x)`
+/// — compiles, and then throws at `fetch`. CoreData gets handed
+/// `TERNARY(merchantName != nil, merchantName, "") CONTAINS[cdl] "x"` and
+/// answers `unimplemented SQL generation for predicate … (bad RHS)`: a ternary
+/// in *string* position is not something it can compile. Coalescing the
+/// `Bool` instead keeps the ternary out of the comparison's operands.
+///
+/// That distinction is invisible at the type level, which is why every test for
+/// this type runs against a real container. `#Predicate` compiles far more than
+/// SwiftData can carry into a store query, and the gap is a runtime throw.
 ///
 /// Read-only, so no `WriteCoordinator` and no cache. It is not an aggregate —
 /// there is nothing to invalidate — and it runs once per keystroke-debounce on
@@ -44,9 +51,9 @@ public final class SwiftDataTransactionSearch: TransactionSearching {
     var descriptor = FetchDescriptor<Transaction>(
       predicate: #Predicate<Transaction> {
         $0.descriptionText.localizedStandardContains(needle)
-          || ($0.merchantName ?? "").localizedStandardContains(needle)
-          || ($0.counterpartyVPA ?? "").localizedStandardContains(needle)
-          || ($0.note ?? "").localizedStandardContains(needle)
+          || ($0.merchantName?.localizedStandardContains(needle) ?? false)
+          || ($0.counterpartyVPA?.localizedStandardContains(needle) ?? false)
+          || ($0.note?.localizedStandardContains(needle) ?? false)
       },
       sortBy: [
         SortDescriptor(\Transaction.date, order: .reverse),

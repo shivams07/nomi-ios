@@ -28,9 +28,9 @@ public final class FakeTransactionSearch: TransactionSearching {
       transactions
       .filter { row in
         row.descriptionText.localizedStandardContains(needle)
-          || (row.merchantName ?? "").localizedStandardContains(needle)
-          || (row.counterpartyVPA ?? "").localizedStandardContains(needle)
-          || (row.note ?? "").localizedStandardContains(needle)
+          || (row.merchantName?.localizedStandardContains(needle) ?? false)
+          || (row.counterpartyVPA?.localizedStandardContains(needle) ?? false)
+          || (row.note?.localizedStandardContains(needle) ?? false)
       }
       .sorted { lhs, rhs in
         if lhs.date != rhs.date { return lhs.date > rhs.date }

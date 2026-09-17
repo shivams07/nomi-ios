@@ -31,7 +31,7 @@ final class TransactionSearchTests: XCTestCase {
   /// three matches here instead of four, and this is the only place that would
   /// notice.
   ///
-  /// The 298 filler rows are not padding. They are what makes the match count
+  /// The 296 filler rows are not padding. They are what makes the match count
   /// meaningful: the predicate runs in SQLite over a table where the needle is
   /// rare, which is the shape the screen has, and a `contains` that had
   /// accidentally become "matches everything" would return 300 here rather
@@ -52,7 +52,7 @@ final class TransactionSearchTests: XCTestCase {
       note: "dinner, swiggy refund pending")
 
     for row in [byDescription, byMerchant, byVPA, byNote] { context.insert(row) }
-    insertFiller(298, into: context, from: 100)
+    insertFiller(296, into: context, from: 100)
     try context.save()
 
     XCTAssertEqual(
