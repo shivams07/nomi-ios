@@ -81,6 +81,31 @@ final class AccountCreateFormGateTests: XCTestCase {
   }
 }
 
+final class AccountDeleteConfirmationTests: XCTestCase {
+  func testZeroTransactionsMessageHasNoCount() {
+    let message = AccountDeleteConfirmation.message(transactionCount: 0)
+    XCTAssertTrue(message.contains("no transactions"))
+    XCTAssertTrue(message.contains("can't be undone"))
+  }
+
+  func testOneTransactionMessageIsSingular() {
+    let message = AccountDeleteConfirmation.message(transactionCount: 1)
+    XCTAssertTrue(message.contains("Its 1 transaction "))
+    XCTAssertFalse(message.contains("1 transactions"))
+  }
+
+  func testManyTransactionsMessageIsPlural() {
+    let message = AccountDeleteConfirmation.message(transactionCount: 42)
+    XCTAssertTrue(message.contains("Its 42 transactions "))
+  }
+
+  func testMessageNamesTransactionsAsKeptNotDeleted() {
+    let message = AccountDeleteConfirmation.message(transactionCount: 5)
+    XCTAssertTrue(message.contains("kept"))
+    XCTAssertFalse(message.localizedCaseInsensitiveContains("delete the transactions"))
+  }
+}
+
 final class AccountSectioningTests: XCTestCase {
   private func summary(isArchived: Bool) -> AccountSummary {
     AccountSummary(

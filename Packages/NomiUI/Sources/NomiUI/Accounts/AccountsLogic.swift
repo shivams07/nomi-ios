@@ -72,3 +72,25 @@ enum AccountCreateFormGate {
     return lastFour.isEmpty || (lastFour.count == 4 && lastFour.allSatisfy { $0.isASCII && $0.isNumber })
   }
 }
+
+/// The `.confirmationDialog` message for deleting an account (design doc
+/// W2-1) — names the transaction count from the summary so the warning is
+/// concrete, the way `CategoriesScreen`'s delete dialog names what it
+/// cascades rather than reading as a generic warning. Transactions are kept:
+/// `AccountStore.delete` only removes the account row and its
+/// `AccountBinding`s, and leaves every transaction's `accountID` nil'd —
+/// nothing described here is deleted except the account itself.
+enum AccountDeleteConfirmation {
+  static func message(transactionCount: Int) -> String {
+    let subject: String
+    switch transactionCount {
+    case 0:
+      subject = "It has no transactions."
+    case 1:
+      subject = "Its 1 transaction will be kept, unassigned from any account."
+    default:
+      subject = "Its \(transactionCount) transactions will be kept, unassigned from any account."
+    }
+    return "\(subject) This can't be undone."
+  }
+}
