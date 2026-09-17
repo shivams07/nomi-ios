@@ -16,9 +16,17 @@ public enum FakeRuleStoreError: Error, Sendable, Equatable {
 @MainActor
 public final class FakeRuleStore: RuleStore {
   public var rules: [Rule]
-  private let matchPool: [String]
 
-  public init(rules: [Rule] = PreviewData.rules, matchPool: [String] = PreviewData.transactions.map(\.normalizedDescription)) {
+  /// Whole rows, not descriptions.
+  ///
+  /// It held `[String]` until §W2-5, which was enough to count a pattern and
+  /// is not enough to count a *scope* — direction, account and amount are not
+  /// in a description. A fake that ignored the scope would put a match count in
+  /// front of the user that the real store contradicts, which is the same
+  /// failure the front-insertion note below is about, in a third place.
+  private let matchPool: [Transaction]
+
+  public init(rules: [Rule] = PreviewData.rules, matchPool: [Transaction] = PreviewData.transactions) {
     self.rules = rules
     self.matchPool = matchPool
   }
@@ -32,26 +40,36 @@ public final class FakeRuleStore: RuleStore {
   /// this one demonstrates the behaviour that was just fixed, which is worse
   /// than having no fake at all.
   @discardableResult
-  public func create(pattern: String, categoryID: UUID) throws -> RuleApplyResult {
+  public func create(pattern: String, categoryID: UUID, scope: RuleScope) throws -> RuleApplyResult {
     let rule = Rule(
       pattern: pattern,
       categoryID: categoryID,
-      priority: (rules.map(\.priority).min() ?? 1) - 1
+      priority: (rules.map(\.priority).min() ?? 1) - 1,
+      scope: scope
     )
     rules.append(rule)
-    let matched = matchPool.filter { globMatches(pattern: pattern, value: $0) }.count
+    let matched = count(pattern: pattern, scope: scope)
     return RuleApplyResult(matched: matched, recategorized: matched)
   }
 
   @discardableResult
-  public func update(_ id: UUID, pattern: String, categoryID: UUID) throws -> RuleApplyResult {
+  public func update(_ id: UUID, pattern: String, categoryID: UUID, scope: RuleScope) throws -> RuleApplyResult {
     guard let rule = rules.first(where: { $0.id == id }) else {
       return RuleApplyResult(matched: 0, recategorized: 0)
     }
     rule.pattern = pattern
     rule.categoryID = categoryID
-    let matched = matchPool.filter { globMatches(pattern: pattern, value: $0) }.count
+    rule.scope = scope
+    let matched = count(pattern: pattern, scope: scope)
     return RuleApplyResult(matched: matched, recategorized: matched)
+  }
+
+  /// Mirrors `SwiftDataRuleStore.setScope`: the scope moves and the counts are
+  /// dropped. The real one re-applies across the ledger; there is no ledger
+  /// here to re-apply to.
+  public func setScope(_ id: UUID, _ scope: RuleScope) throws {
+    guard let rule = rules.first(where: { $0.id == id }) else { return }
+    rule.scope = scope
   }
 
   /// Mirrors `SwiftDataRuleStore.setEnabled`: flips the flag and stops there.
@@ -84,7 +102,22 @@ public final class FakeRuleStore: RuleStore {
     rules.sort { $0.priority < $1.priority }
   }
 
-  public func preview(pattern: String) throws -> Int {
-    matchPool.filter { globMatches(pattern: pattern, value: $0) }.count
+  public func preview(pattern: String, scope: RuleScope) throws -> Int {
+    count(pattern: pattern, scope: scope)
+  }
+
+  /// Scope first, then the glob — the order `RuleEngine.firstMatch` uses, so
+  /// the two cannot drift on which condition wins.
+  ///
+  /// The pattern is **not** uppercased here, unlike the real store: this pool
+  /// is preview data matched against patterns written in the same previews,
+  /// and uppercasing one side only would change every existing count. The
+  /// place that discrepancy is pinned is `RulePriorityTests`, which asserts
+  /// the real store's case handling directly.
+  private func count(pattern: String, scope: RuleScope) -> Int {
+    matchPool.filter { row in
+      scope.admits(direction: row.direction, accountID: row.accountID, amountMinor: row.amountMinor)
+        && globMatches(pattern: pattern, value: row.normalizedDescription)
+    }.count
   }
 }

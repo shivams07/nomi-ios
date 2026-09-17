@@ -225,4 +225,60 @@ final class CategorySuggesterTests: XCTestCase {
     let context = container.mainContext
     return (SwiftDataCategorySuggester(context: context), context)
   }
+
+  // MARK: - Rule scope (W2-5)
+
+  /// A rule the row is outside the scope of is not offered for that row.
+  ///
+  /// The suggester reads rules through `TransactionSnapshotBridge` and matches
+  /// the whole row, so the same condition that stops the rule firing on ingest
+  /// stops it being suggested. The control is the point: the identical rule,
+  /// scoped the other way, *is* suggested — without it this would also pass if
+  /// the suggester had simply stopped working.
+  func testARuleScopedAwayFromTheRowIsNotSuggestedForIt() throws {
+    let (suggester, context) = try makeSuggester()
+    let rule = insertRule("*NETFLIX*", category: entertainment, into: context)
+    rule.scope = RuleScope(direction: .credit)
+    try context.save()
+    let row = insertRow("NETFLIX COM", category: nil, source: .none, into: context)
+
+    XCTAssertNil(
+      try suggester.suggestion(for: row.id),
+      "the row is a debit; the rule only fires on credits")
+
+    rule.scope = RuleScope(direction: .debit)
+    try context.save()
+    XCTAssertEqual(
+      try suggester.suggestion(for: row.id),
+      CategorySuggestion(categoryID: entertainment, reason: .rule(ruleID: rule.id)),
+      "control: scoped to the direction this row actually has")
+  }
+
+  /// The amount band, which is the scope field a description can say nothing
+  /// about at all. `insertRow` writes 499_00.
+  func testARuleScopedToAnAmountBandTheRowIsOutsideIsNotSuggested() throws {
+    let (suggester, context) = try makeSuggester()
+    let rule = insertRule("*NETFLIX*", category: entertainment, into: context)
+    rule.scope = RuleScope(minAmountMinor: 1_000_00)
+    try context.save()
+    let row = insertRow("NETFLIX COM", category: nil, source: .none, into: context)
+
+    XCTAssertNil(try suggester.suggestion(for: row.id))
+
+    rule.scope = RuleScope(minAmountMinor: 100_00)
+    try context.save()
+    XCTAssertNotNil(try suggester.suggestion(for: row.id), "control: the band now contains it")
+  }
+
+  /// An unscoped rule suggests exactly what it suggested before §W2-5.
+  func testAnUnscopedRuleIsStillSuggestedTheSameWay() throws {
+    let (suggester, context) = try makeSuggester()
+    let rule = insertRule("*NETFLIX*", category: entertainment, into: context)
+    let row = insertRow("NETFLIX COM", category: nil, source: .none, into: context)
+
+    XCTAssertEqual(rule.scope, .any)
+    XCTAssertEqual(
+      try suggester.suggestion(for: row.id),
+      CategorySuggestion(categoryID: entertainment, reason: .rule(ruleID: rule.id)))
+  }
 }

@@ -14,6 +14,16 @@ public struct RuleSnapshot: Sendable, Equatable, Identifiable {
   public let categoryID: UUID
   public let priority: Int
   public let isEnabled: Bool
+
+  /// The conditions the row must satisfy on top of the pattern (§W2-5).
+  ///
+  /// **The initialiser gives this no default, deliberately.** A default lets a
+  /// construction site that forgets to pass the scope compile clean and then
+  /// evaluate every rule as `.any` — silent, and wrong everywhere that site
+  /// feeds at once. It is not hypothetical: the first cut of this unit had the
+  /// default, and `TransactionSnapshotBridge` — the bridge behind every rule
+  /// read in `NomiApp` — quietly dropped the scope on the floor.
+  public let scope: RuleScope
   public let createdAt: Date
 
   public init(
@@ -22,6 +32,7 @@ public struct RuleSnapshot: Sendable, Equatable, Identifiable {
     categoryID: UUID,
     priority: Int,
     isEnabled: Bool,
+    scope: RuleScope,
     createdAt: Date
   ) {
     self.id = id
@@ -29,6 +40,7 @@ public struct RuleSnapshot: Sendable, Equatable, Identifiable {
     self.categoryID = categoryID
     self.priority = priority
     self.isEnabled = isEnabled
+    self.scope = scope
     self.createdAt = createdAt
   }
 }

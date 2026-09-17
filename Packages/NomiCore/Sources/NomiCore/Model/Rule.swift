@@ -26,6 +26,20 @@ public final class Rule {
   /// the affordance that actually sticks.
   public var isSystem: Bool = false
 
+  /// The four scope columns (§W2-5). Optional for the same reason `isSystem`
+  /// carries a default: the store is CloudKit-backed, so a new property must
+  /// be optional or defaulted to avoid a migration pass, and `nil` is also the
+  /// right answer for every row written before scoping existed — it reads back
+  /// as `RuleScope.any`, which is what those rules have always meant.
+  ///
+  /// Stored flat rather than as an encoded `RuleScope` blob so each one stays
+  /// a column a `#Predicate` could narrow on later. `scope` below is the only
+  /// thing that should read them.
+  public var directionRaw: String?
+  public var accountID: UUID?
+  public var minAmountMinor: Int?
+  public var maxAmountMinor: Int?
+
   public var createdAt: Date = Date()
 
   public init(
@@ -35,6 +49,7 @@ public final class Rule {
     priority: Int = 0,
     isEnabled: Bool = true,
     isSystem: Bool = false,
+    scope: RuleScope = .any,
     createdAt: Date = Date()
   ) {
     self.id = id
@@ -43,6 +58,41 @@ public final class Rule {
     self.priority = priority
     self.isEnabled = isEnabled
     self.isSystem = isSystem
+    directionRaw = scope.direction?.rawValue
+    accountID = scope.accountID
+    minAmountMinor = scope.minAmountMinor
+    maxAmountMinor = scope.maxAmountMinor
     self.createdAt = createdAt
+  }
+}
+
+extension Rule {
+  /// The four columns as one value.
+  ///
+  /// In an extension rather than the class body because a stored `@Model`
+  /// property and a computed one with the same standing read identically at
+  /// the call site, and only one of them is persisted. Keeping the bridge out
+  /// here makes the persisted set exactly the list above it.
+  ///
+  /// An unreadable `directionRaw` — a value no `Direction` case has, which
+  /// only a hand-edited store or a future case could produce — reads as `nil`,
+  /// meaning "either direction". The alternative is a rule that silently
+  /// admits nothing, and a rule that has stopped firing is much harder to
+  /// notice than one that fires too widely.
+  public var scope: RuleScope {
+    get {
+      RuleScope(
+        direction: directionRaw.flatMap(Direction.init(rawValue:)),
+        accountID: accountID,
+        minAmountMinor: minAmountMinor,
+        maxAmountMinor: maxAmountMinor
+      )
+    }
+    set {
+      directionRaw = newValue.direction?.rawValue
+      accountID = newValue.accountID
+      minAmountMinor = newValue.minAmountMinor
+      maxAmountMinor = newValue.maxAmountMinor
+    }
   }
 }

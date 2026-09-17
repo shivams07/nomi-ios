@@ -41,6 +41,14 @@ extension TransactionSnapshot {
   }
 }
 
+/// The same arrangement, and the same warning, for rules.
+///
+/// This is `NomiApp`'s only `RuleSnapshot(_ rule:)`, and `SwiftDataRuleStore`,
+/// `SwiftDataTransactionStore` and `SwiftDataCategorySuggester` all read their
+/// rules through it. A field missing here is a field missing from every rule
+/// decision the app makes — `scope` was, for exactly one CI run, and the whole
+/// of §W2-5 evaluated as `.any`. `RuleSnapshot.init` now defaults nothing, so
+/// the compiler is what catches the next one.
 extension RuleSnapshot {
   init(_ rule: Rule) {
     self.init(
@@ -49,6 +57,7 @@ extension RuleSnapshot {
       categoryID: rule.categoryID,
       priority: rule.priority,
       isEnabled: rule.isEnabled,
+      scope: rule.scope,
       createdAt: rule.createdAt
     )
   }

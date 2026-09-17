@@ -127,6 +127,7 @@ extension RuleSnapshot {
       categoryID: rule.categoryID,
       priority: rule.priority,
       isEnabled: rule.isEnabled,
+      scope: rule.scope,
       createdAt: rule.createdAt
     )
   }

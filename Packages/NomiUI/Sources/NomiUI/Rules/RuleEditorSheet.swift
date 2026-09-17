@@ -130,19 +130,20 @@ private struct RuleEditorMatchCountFailure: Error {}
 @MainActor
 private final class AlwaysFailingPreviewRuleStore: RuleStore {
   @discardableResult
-  func create(pattern: String, categoryID: UUID) throws -> RuleApplyResult {
+  func create(pattern: String, categoryID: UUID, scope: RuleScope) throws -> RuleApplyResult {
     RuleApplyResult(matched: 0, recategorized: 0)
   }
 
   @discardableResult
-  func update(_ id: UUID, pattern: String, categoryID: UUID) throws -> RuleApplyResult {
+  func update(_ id: UUID, pattern: String, categoryID: UUID, scope: RuleScope) throws -> RuleApplyResult {
     RuleApplyResult(matched: 0, recategorized: 0)
   }
 
+  func setScope(_ id: UUID, _ scope: RuleScope) throws {}
   func setEnabled(_ id: UUID, _ enabled: Bool) throws {}
   func delete(_ id: UUID) throws {}
   func reorder(_ orderedIDs: [UUID]) throws {}
-  func preview(pattern: String) throws -> Int { throw RuleEditorMatchCountFailure() }
+  func preview(pattern: String, scope: RuleScope) throws -> Int { throw RuleEditorMatchCountFailure() }
 }
 
 #Preview("Rule editor — match count fails to load, dark") {

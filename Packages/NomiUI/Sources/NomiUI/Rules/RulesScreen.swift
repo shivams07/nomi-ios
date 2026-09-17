@@ -175,22 +175,26 @@ private struct RulesScreenActionFailure: Error {}
 /// Delete, reorder, and now `setEnabled` all always throw, so swiping to
 /// delete, dragging a row, or flipping its toggle in the canvas exercises the
 /// `actionError` alert.
+///
+/// `setScope` throws too, for consistency, but nothing on this screen calls it
+/// yet — the editor section that does is W2-M4.
 @MainActor
 private final class AlwaysFailingRuleStore: RuleStore {
   @discardableResult
-  func create(pattern: String, categoryID: UUID) throws -> RuleApplyResult {
+  func create(pattern: String, categoryID: UUID, scope: RuleScope) throws -> RuleApplyResult {
     RuleApplyResult(matched: 0, recategorized: 0)
   }
 
   @discardableResult
-  func update(_ id: UUID, pattern: String, categoryID: UUID) throws -> RuleApplyResult {
+  func update(_ id: UUID, pattern: String, categoryID: UUID, scope: RuleScope) throws -> RuleApplyResult {
     RuleApplyResult(matched: 0, recategorized: 0)
   }
 
+  func setScope(_ id: UUID, _ scope: RuleScope) throws { throw RulesScreenActionFailure() }
   func setEnabled(_ id: UUID, _ enabled: Bool) throws { throw RulesScreenActionFailure() }
   func delete(_ id: UUID) throws { throw RulesScreenActionFailure() }
   func reorder(_ orderedIDs: [UUID]) throws { throw RulesScreenActionFailure() }
-  func preview(pattern: String) throws -> Int { 0 }
+  func preview(pattern: String, scope: RuleScope) throws -> Int { 0 }
 }
 
 #Preview("Rules — delete or reorder fails, dark") {
