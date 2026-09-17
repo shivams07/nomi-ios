@@ -81,6 +81,17 @@ enum AccountCreateFormGate {
 /// first sees it, so unlike `EntryAmount` (which rejects zero and negative —
 /// this field cannot reuse it) a leading `-` and an explicit `0` both parse
 /// to real values; only the empty string means "clear".
+///
+/// `isValid` scans characters directly rather than sanitizing-then-checking,
+/// on purpose: a sanitize-first pass (`EntryAmount`'s approach, meant for a
+/// live keystroke filter, not a validity check) silently drops anything it
+/// doesn't recognise, so garbage like `"abc"` collapses to an empty string
+/// and reads as "cleared" instead of "invalid" — a real bug caught by CI, not
+/// reasoning, since there is no local Swift toolchain to run this against.
+/// The same run also showed `Decimal(string:)` parsing a bare `"-"` as a
+/// value instead of returning `nil`, which a sanitize-then-parse check would
+/// have missed entirely; the character scan below rejects it directly by
+/// requiring at least one digit.
 enum AccountOpeningBalanceField {
   static func string(minor: Int?) -> String {
     guard let minor else { return "" }
@@ -88,18 +99,15 @@ enum AccountOpeningBalanceField {
   }
 
   static func isValid(_ text: String) -> Bool {
-    let sanitized = sanitizeInput(text)
-    guard !sanitized.isEmpty else { return true }
-    guard Decimal(string: sanitized) != nil else { return false }
-    let parts = sanitized.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
-    return parts.count < 2 || parts[1].count <= 2
+    guard !text.isEmpty else { return true }
+    let (digitCount, fractionDigitCount, isWellFormed) = scan(text)
+    return isWellFormed && digitCount > 0 && fractionDigitCount <= 2
   }
 
   /// Only meaningful once `isValid` has passed, same contract
   /// `EntryAmount.minorUnits` keeps with `EntrySaveGate`.
   static func minorUnits(from text: String) -> Int? {
-    let sanitized = sanitizeInput(text)
-    guard !sanitized.isEmpty, let decimal = Decimal(string: sanitized) else { return nil }
+    guard !text.isEmpty, let decimal = Decimal(string: text) else { return nil }
     let scaled = decimal * 100
     var rounded = Decimal()
     var mutableScaled = scaled
@@ -107,21 +115,25 @@ enum AccountOpeningBalanceField {
     return NSDecimalNumber(decimal: rounded).intValue
   }
 
-  /// Keeps digits, a single decimal point, and a single leading `-`.
-  private static func sanitizeInput(_ text: String) -> String {
+  /// A single optional leading `-`, digits, at most one `.`, at most two
+  /// digits after it. Any other character (including a second `-` or `.`)
+  /// fails `isWellFormed` immediately rather than being silently dropped.
+  private static func scan(_ text: String) -> (digitCount: Int, fractionDigitCount: Int, isWellFormed: Bool) {
+    var digitCount = 0
+    var fractionDigitCount = 0
     var seenDecimalPoint = false
-    var result = ""
     for (index, character) in text.enumerated() {
       if character == "-" && index == 0 {
-        result.append(character)
+        continue
       } else if character.isNumber {
-        result.append(character)
+        if seenDecimalPoint { fractionDigitCount += 1 } else { digitCount += 1 }
       } else if character == "." && !seenDecimalPoint {
         seenDecimalPoint = true
-        result.append(character)
+      } else {
+        return (digitCount, fractionDigitCount, false)
       }
     }
-    return result
+    return (digitCount, fractionDigitCount, true)
   }
 }
 
