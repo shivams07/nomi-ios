@@ -90,8 +90,14 @@ final class RuleScopeSummaryTests: XCTestCase {
   }
 
   func testMultiplePartsAreJoined() {
+    // Not an exact string match: `NomiFormatters.amountString`'s ICU
+    // currency formatting inserts a space after "₹" on some runtimes (seen
+    // on CI) and not others, and that spacing isn't this function's
+    // contract to pin down — only that the two parts it owns joining
+    // correctly with " · " is.
     let scope = RuleScope(direction: .credit, minAmountMinor: 500_00)
-    let text = RuleScopeSummary.text(for: scope, accountName: { _ in nil })
-    XCTAssertEqual(text, "Credit · ≥ ₹500.00")
+    let text = RuleScopeSummary.text(for: scope, accountName: { _ in nil }) ?? ""
+    XCTAssertTrue(text.hasPrefix("Credit · ≥"))
+    XCTAssertTrue(text.contains("500.00"))
   }
 }
