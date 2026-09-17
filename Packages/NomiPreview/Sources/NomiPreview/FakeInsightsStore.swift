@@ -128,7 +128,10 @@ public final class FakeInsightsStore: InsightsStore {
           trackedBalanceMinor: (account.openingBalanceMinor ?? 0) + credit - debit,
           transactionCount: rows.count,
           trackingSince: rows.map(\.date).min(),
-          isArchived: account.isArchived
+          isArchived: account.isArchived,
+          // Carried through for the same reason the sum above includes it: a
+          // preview of the edit sheet must show the field already populated.
+          openingBalanceMinor: account.openingBalanceMinor
         )
       }
   }
