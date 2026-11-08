@@ -17,7 +17,7 @@ final class DesignTokenTests: XCTestCase {
       (NomiColor.surfaceInput, 0xFFFFFF),
     ]
     for (actual, hex) in steps {
-      assertSameRGB(actual, Color(hex: hex), environment: environment)
+      assertResolves(actual, toHex: hex, environment: environment)
     }
   }
 
@@ -40,7 +40,7 @@ final class DesignTokenTests: XCTestCase {
       (NomiColor.heroGlassSolid, 0x0E3972),
     ]
     for (actual, hex) in tokens {
-      assertSameRGB(actual, Color(hex: hex), environment: environment)
+      assertResolves(actual, toHex: hex, environment: environment)
     }
   }
 
@@ -143,6 +143,16 @@ final class DesignTokenTests: XCTestCase {
   }
 
   // MARK: - Helpers
+
+  /// Checks a resolved token against an integer hex value (0xRRGGBB) without
+  /// building a `Color` from a hex literal, so the test file carries no
+  /// `Color(hex:)` construction of its own.
+  private func assertResolves(_ actual: Color, toHex hex: UInt32, environment: EnvironmentValues, file: StaticString = #filePath, line: UInt = #line) {
+    let resolved = actual.resolve(in: environment)
+    XCTAssertEqual(Double(resolved.red), Double((hex >> 16) & 0xFF) / 255, accuracy: 0.001, file: file, line: line)
+    XCTAssertEqual(Double(resolved.green), Double((hex >> 8) & 0xFF) / 255, accuracy: 0.001, file: file, line: line)
+    XCTAssertEqual(Double(resolved.blue), Double(hex & 0xFF) / 255, accuracy: 0.001, file: file, line: line)
+  }
 
   private func assertSameRGB(_ actual: Color, _ expected: Color, environment: EnvironmentValues, file: StaticString = #filePath, line: UInt = #line) {
     let resolvedActual = actual.resolve(in: environment)
