@@ -16,14 +16,38 @@ protocol SystemFlagged {
 
 extension NomiCore.Category: SystemFlagged {}
 
+/// The category delete rules and copy, shared by the list's swipe accelerator
+/// and the editor's Delete row so the two cannot drift apart.
 enum CategoryDeletion {
   static func isDeletable<T: SystemFlagged>(_ item: T) -> Bool {
     !item.isSystem
   }
+
+  /// "Delete Transport?", the delete alert's title (DeleteCategoryConfirm).
+  static func alertTitle(for name: String) -> String {
+    "Delete \(name)?"
+  }
+
+  /// The delete alert's message. True against `SwiftDataCategoryStore.delete`
+  /// (Packages/NomiApp/Sources/NomiApp/Stores/SwiftDataCategoryStore.swift):
+  /// it clears the category from every transaction that carries it (they
+  /// become uncategorized), deletes every `Rule` and every `Budget` whose
+  /// `categoryID` is this category, then deletes the category row. Nothing is
+  /// soft-deleted, so nothing can be restored.
+  static let alertMessage = "Its rules and budget will be deleted too, and its transactions become uncategorized. This can't be undone."
+
+  /// The blocking alert's title, for a swipe on a system category or a failed
+  /// delete.
+  static let blockedTitle = "Can't delete category"
 }
 
-/// The Categories screen (U6). Pushed into from Settings by U7 — public so
-/// that unit can construct it without reaching into `NomiUI`'s internals.
+/// The Categories screen (U6; OR2). Shape from the approved `Categories` and
+/// `DeleteCategoryConfirm` artboards: an H0 "Categories" title with "+" in the
+/// nav bar, then one 60-high row per category (32 palette badge, name, a
+/// "System" tag for seeded ones, chevron). Tapping a row opens the editor;
+/// swipe-to-delete stays as the accelerator. Pushed into from Settings by U7 —
+/// public so that unit can construct it without reaching into `NomiUI`'s
+/// internals.
 public struct CategoriesScreen: View {
   public let categoryStore: CategoryStore
 
@@ -41,21 +65,26 @@ public struct CategoriesScreen: View {
     List {
       ForEach(categories) { category in
         row(for: category)
-          .contentShape(Rectangle())
-          .onTapGesture { editingCategory = category }
       }
       .onDelete(perform: delete)
     }
     .scrollContentBackground(.hidden)
-    .background(NomiColor.surfaceCanvas)
+    #if os(iOS)
+    .listStyle(.insetGrouped)
+    #endif
+    .background(NomiColor.ground)
     .navigationTitle("Categories")
+    #if os(iOS)
+    .navigationBarTitleDisplayMode(.large)
+    #endif
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         Button {
           isCreating = true
         } label: {
-          Image(systemName: "plus")
+          NomiNavIcon(systemName: "plus")
         }
+        .accessibilityLabel("New category")
       }
     }
     .sheet(isPresented: $isCreating) {
@@ -65,7 +94,7 @@ public struct CategoriesScreen: View {
       CategoryEditorSheet(categoryStore: categoryStore, category: category)
     }
     .alert(
-      "Can't delete category",
+      CategoryDeletion.blockedTitle,
       isPresented: Binding(
         get: { deleteErrorMessage != nil },
         set: { if !$0 { deleteErrorMessage = nil } }
@@ -77,42 +106,51 @@ public struct CategoriesScreen: View {
         Text(deleteErrorMessage ?? "")
       }
     )
-    .confirmationDialog(
-      "Delete \(pendingDeletion?.name ?? "category")?",
+    .alert(
+      pendingDeletion.map { CategoryDeletion.alertTitle(for: $0.name) } ?? "Delete category?",
       isPresented: Binding(
         get: { pendingDeletion != nil },
         set: { if !$0 { pendingDeletion = nil } }
       ),
-      titleVisibility: .visible,
-      presenting: pendingDeletion,
-      actions: { category in
-        Button("Delete", role: .destructive) { confirmDelete(category) }
+      actions: {
         Button("Cancel", role: .cancel) { pendingDeletion = nil }
+        Button("Delete", role: .destructive) {
+          if let category = pendingDeletion { confirmDelete(category) }
+        }
       },
-      message: { _ in
-        Text("Its rules and budget will be deleted too. This can't be undone.")
+      message: {
+        Text(CategoryDeletion.alertMessage)
       }
     )
   }
 
+  /// One 60-high row. The whole row is a `Button` that opens the editor. The
+  /// swipe delete is on the `ForEach` (`onDelete`) and asks first.
   private func row(for category: NomiCore.Category) -> some View {
-    HStack(spacing: NomiSpacing.xs) {
-      Circle()
-        .fill(paletteSlot(category.paletteSlot))
-        .frame(width: 10, height: 10)
-      Image(systemName: category.symbolName)
-        .foregroundStyle(NomiColor.textSecondary)
-      Text(category.name)
-        .nomiTextStyle(.body)
-        .foregroundStyle(NomiColor.textPrimary)
-      Spacer()
-      if category.isSystem {
-        Text("System")
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.textTertiary)
+    Button {
+      editingCategory = category
+    } label: {
+      HStack(spacing: 12) {
+        NomiCategoryBadge(symbolName: category.symbolName, paletteSlot: category.paletteSlot, size: 32)
+        Text(category.name)
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(NomiColor.ink)
+          .lineLimit(1)
+        Spacer(minLength: NomiSpacing.xs)
+        if category.isSystem {
+          Text("System")
+            .nomiTextStyle(.footnote)
+            .foregroundStyle(NomiColor.inkSecondary)
+        }
+        Image(systemName: "chevron.right")
+          .foregroundStyle(NomiColor.inkSecondary)
+          .accessibilityHidden(true)
       }
+      .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+      .contentShape(Rectangle())
     }
-    .listRowBackground(NomiColor.surfaceRaised)
+    .buttonStyle(.plain)
+    .listRowBackground(NomiColor.card)
   }
 
   private func delete(at offsets: IndexSet) {
@@ -136,48 +174,43 @@ public struct CategoriesScreen: View {
   }
 }
 
-#Preview("Categories — default, dark") {
+#Preview("Categories — default, light") {
   NavigationStack {
     CategoriesScreen(categoryStore: FakeCategoryStore())
   }
   .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Categories — accessibility 3, dark") {
+#Preview("Categories — accessibility 3, light") {
   NavigationStack {
     CategoriesScreen(categoryStore: FakeCategoryStore())
   }
   .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer())
   .environment(\.dynamicTypeSize, .accessibility3)
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-/// `pendingDeletion` is `private` to `CategoriesScreen`, so there is no way to
-/// force it open from outside for a canvas preview. The dialog itself is a
-/// plain view modifier, so it is previewed in isolation instead, with a
-/// `.constant(true)` presentation binding standing in for the real one —
-/// wording kept verbatim from `CategoriesScreen`'s own dialog.
-#Preview("Categories — delete confirmation, dark") {
+/// The delete alert is a plain view modifier, so it is previewed in isolation
+/// with a `.constant(true)` presentation binding standing in for the real one.
+/// Title and message come from `CategoryDeletion`, the same values the screen
+/// and the editor use.
+#Preview("Categories — delete confirmation, light") {
   Color.clear
-    .confirmationDialog(
-      "Delete Transport?",
-      isPresented: .constant(true),
-      titleVisibility: .visible
-    ) {
-      Button("Delete", role: .destructive) {}
+    .alert(CategoryDeletion.alertTitle(for: "Transport"), isPresented: .constant(true)) {
       Button("Cancel", role: .cancel) {}
+      Button("Delete", role: .destructive) {}
     } message: {
-      Text("Its rules and budget will be deleted too. This can't be undone.")
+      Text(CategoryDeletion.alertMessage)
     }
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
 }
 
 private struct CategoriesScreenDeleteFailure: Error {}
 
 /// Delete always throws, so swiping to delete a non-system category and
-/// confirming the dialog in the canvas exercises the `deleteErrorMessage`
+/// confirming the alert in the canvas exercises the `deleteErrorMessage`
 /// alert — the UI-side `CategoryDeletion.isDeletable` gate only covers the
 /// system-category case, not a genuine store failure like this one.
 @MainActor
@@ -189,10 +222,10 @@ private final class AlwaysFailingCategoryStore: CategoryStore {
   func delete(_ id: UUID) throws { throw CategoriesScreenDeleteFailure() }
 }
 
-#Preview("Categories — delete fails, dark") {
+#Preview("Categories — delete fails, light") {
   NavigationStack {
     CategoriesScreen(categoryStore: AlwaysFailingCategoryStore())
   }
   .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
