@@ -138,4 +138,39 @@ final class TransactionDetailLogicTests: XCTestCase {
       reason: .rule(ruleID: UUID()), merchantLabel: "Swiggy", categoryName: "Food & Dining")
     XCTAssertEqual(text, "Matches your rule for Swiggy")
   }
+
+  // MARK: - DT: primaryAction truth table
+
+  func testPrimaryIsApplyWhenSuggestionShownAndFlagged() {
+    XCTAssertEqual(TransactionDetailLogic.primaryAction(hasSuggestion: true, needsReview: true), .apply)
+  }
+
+  func testPrimaryIsApplyWhenSuggestionShownAndNotFlagged() {
+    XCTAssertEqual(TransactionDetailLogic.primaryAction(hasSuggestion: true, needsReview: false), .apply)
+  }
+
+  func testPrimaryIsMarkReviewedWhenFlaggedWithoutSuggestion() {
+    XCTAssertEqual(TransactionDetailLogic.primaryAction(hasSuggestion: false, needsReview: true), .markReviewed)
+  }
+
+  func testPrimaryIsNoneWhenNeitherApplies() {
+    XCTAssertEqual(TransactionDetailLogic.primaryAction(hasSuggestion: false, needsReview: false), .none)
+  }
+
+  // MARK: - DT: signedMinor (DEC-03 / A-03 sign rule)
+
+  func testDebitIsNegativeAndCreditPositive() {
+    XCTAssertEqual(TransactionDetailLogic.signedMinor(amountMinor: 68_00, direction: .debit), -68_00)
+    XCTAssertEqual(TransactionDetailLogic.signedMinor(amountMinor: 38_500_00, direction: .credit), 38_500_00)
+  }
+
+  func testZeroCarriesNoSign() {
+    XCTAssertEqual(TransactionDetailLogic.signedMinor(amountMinor: 0, direction: .debit), 0)
+    XCTAssertEqual(TransactionDetailLogic.signedMinor(amountMinor: 0, direction: .credit), 0)
+  }
+
+  func testSignFollowsDirectionNotAStoredSign() {
+    XCTAssertEqual(TransactionDetailLogic.signedMinor(amountMinor: -68_00, direction: .debit), -68_00)
+    XCTAssertEqual(TransactionDetailLogic.signedMinor(amountMinor: -68_00, direction: .credit), 68_00)
+  }
 }
