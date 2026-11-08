@@ -18,6 +18,11 @@ public struct SettingsScreen: View {
   public let ruleStore: RuleStore
   @Binding public var notificationSettings: NotificationSettings
   public let storageMode: StorageMode
+  /// The live account list, passed through to `RulesScreen` so the rule
+  /// editor's Account picker has something to show. `RootView` supplies it;
+  /// the default `[]` keeps every preview compiling and leaves the picker at
+  /// "Any", which is what an empty list shows anyway.
+  public let accounts: [NomiCore.Account]
 
   @State private var connectionState: MailConnectionState = .disconnected
   @State private var permissionDenied = false
@@ -37,7 +42,8 @@ public struct SettingsScreen: View {
     categoryStore: CategoryStore,
     ruleStore: RuleStore,
     notificationSettings: Binding<NotificationSettings>,
-    storageMode: StorageMode = .cloudKit
+    storageMode: StorageMode = .cloudKit,
+    accounts: [NomiCore.Account] = []
   ) {
     self.mailConnectionService = mailConnectionService
     self.fileImportService = fileImportService
@@ -45,6 +51,7 @@ public struct SettingsScreen: View {
     self.ruleStore = ruleStore
     _notificationSettings = notificationSettings
     self.storageMode = storageMode
+    self.accounts = accounts
     forcedPermissionDenied = nil
   }
 
@@ -58,7 +65,8 @@ public struct SettingsScreen: View {
     ruleStore: RuleStore,
     notificationSettings: Binding<NotificationSettings>,
     forcedPermissionDenied: Bool,
-    storageMode: StorageMode = .cloudKit
+    storageMode: StorageMode = .cloudKit,
+    accounts: [NomiCore.Account] = []
   ) {
     self.mailConnectionService = mailConnectionService
     self.fileImportService = fileImportService
@@ -66,7 +74,15 @@ public struct SettingsScreen: View {
     self.ruleStore = ruleStore
     _notificationSettings = notificationSettings
     self.storageMode = storageMode
+    self.accounts = accounts
     self.forcedPermissionDenied = forcedPermissionDenied
+  }
+
+  /// The Rules destination, built with the account list. Internal so
+  /// `RulesAccountsWiringTests` can check what reaches `RulesScreen`'s
+  /// initialiser without rendering the view.
+  func rulesScreen() -> RulesScreen {
+    RulesScreen(ruleStore: ruleStore, categoryStore: categoryStore, accounts: accounts)
   }
 
   public var body: some View {
@@ -86,7 +102,7 @@ public struct SettingsScreen: View {
           CategoriesScreen(categoryStore: categoryStore)
         }
         NavigationLink("Rules") {
-          RulesScreen(ruleStore: ruleStore, categoryStore: categoryStore)
+          rulesScreen()
         }
       }
       Section("Import") {

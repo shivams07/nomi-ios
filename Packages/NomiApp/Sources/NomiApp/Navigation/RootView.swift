@@ -1,5 +1,6 @@
 import NomiCore
 import NomiUI
+import SwiftData
 import SwiftUI
 
 /// The navigation graph. §2.18(1): "There is no `TabView` anywhere in the
@@ -28,6 +29,13 @@ struct RootView: View {
   @State private var backfillProgress: BackfillProgress?
   @State private var backfillUnfinished = false
   @State private var presentedTransaction: PresentedTransaction?
+
+  /// The live account list for the Rules editor's Account picker, reached
+  /// through Settings. Sorted like `AccountPickerSheet` and includes archived
+  /// rows, so a rule scoped to an archived account still names it. Read from
+  /// the app container attached in `NomiAppScene`, never from a preview
+  /// container, so this `@Query` cannot reach a schema without `Account`.
+  @Query(sort: \NomiCore.Account.displayName) private var accounts: [NomiCore.Account]
 
   /// Shared by the Dashboard's Upcoming card and its `SubscriptionsScreen`
   /// destination below — one call site instead of two, so both agree on the
@@ -198,7 +206,8 @@ struct RootView: View {
           categoryStore: environment.categoryStore,
           ruleStore: environment.ruleStore,
           notificationSettings: environment.notificationSettings.binding,
-          storageMode: environment.storageMode
+          storageMode: environment.storageMode,
+          accounts: accounts
         )
         .toolbar {
           ToolbarItem(placement: .primaryAction) {
