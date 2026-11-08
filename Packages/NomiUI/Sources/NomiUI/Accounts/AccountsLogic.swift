@@ -49,6 +49,35 @@ enum AccountSectioning {
 enum AccountKindOptions {
   static let all: [String] = AccountKind.allCases.map(\.rawValue)
   static let defaultKind = AccountKind.bank.rawValue
+
+  /// The stored raw value as a kind. An unrecognised value reads as `.bank`,
+  /// the same fallback `Account.kind` uses.
+  static func kind(raw: String) -> AccountKind {
+    AccountKind(rawValue: raw) ?? .bank
+  }
+}
+
+/// The SF Symbol on an account's row tile. Bank and card share the card
+/// glyph, as the approved Accounts artboards draw them.
+enum AccountTileSymbol {
+  static func name(for kind: AccountKind) -> String {
+    switch kind {
+    case .bank, .card: return "creditcard"
+    case .wallet: return "wallet.pass"
+    }
+  }
+}
+
+/// The second line of an account row: "HDFC Bank ••4471 · 42 txns". An empty
+/// institution or last four is left out rather than printed as a dangling
+/// separator (a wallet has no last four).
+enum AccountRowText {
+  static func subtitle(institution: String, lastFour: String, transactionCount: Int) -> String {
+    let maskedLastFour = lastFour.isEmpty ? "" : "••\(lastFour)"
+    let identity = [institution, maskedLastFour].filter { !$0.isEmpty }.joined(separator: " ")
+    let count = transactionCount == 1 ? "1 txn" : "\(transactionCount) txns"
+    return identity.isEmpty ? count : identity + " · " + count
+  }
 }
 
 /// `lastFour` is exactly four digits or empty — never partial. That rule is
