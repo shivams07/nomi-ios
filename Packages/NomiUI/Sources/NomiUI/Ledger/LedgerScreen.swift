@@ -24,6 +24,11 @@ private enum LedgerMetrics {
   static let dayHeaderHeight: CGFloat = 20
 }
 
+/// The list's top marker, scrolled to after "Show <previous period>".
+private enum LedgerScrollTarget {
+  static let top = "ledger-top"
+}
+
 /// The Ledger screen (U14) — the transaction list the UI direction specified
 /// and no unit was ever given (design §2.19(2)). A tab-root screen like
 /// `DashboardView`: `NomiTabShell` supplies the tab chrome, and this screen
@@ -39,11 +44,12 @@ private enum LedgerMetrics {
 /// here — that stays `CategoriesScreen`'s job — but is accepted for the same
 /// construction contract as every other screen.
 ///
-/// **F1 (fix plan unit 5b):** the transaction table itself is never read
-/// whole. `LedgerTransactionList` below owns the `@Query` over
-/// `NomiCore.Transaction` and builds its filter from `since`, a rolling
-/// 90-day-per-step boundary (`LedgerWindow.since`) — see that type for why it
-/// has to be a separate view.
+/// **G1 (DEC-04):** the list shows one calendar month or financial year at a
+/// time, chosen with the period pill. The period is `LedgerPeriod.range`, the
+/// same range Home's figure for that label is computed over, so the two agree.
+/// The transaction table is never read whole: `LedgerTransactionList` owns the
+/// `@Query`s, one bounded by the period and one the flagged queue (see that
+/// type). Search and Needs review are queues and ignore the period.
 public struct LedgerScreen: View {
   public let transactionStore: TransactionStore
   public let categoryStore: CategoryStore
@@ -51,31 +57,34 @@ public struct LedgerScreen: View {
   public let editor: TransactionEditing
   public let suggester: (any CategorySuggesting)?
   /// Searches the whole ledger for a non-blank query (D2). Nil in previews and
-  /// until the app passes it; the box then filters the 90-day window in memory,
-  /// as it always did.
+  /// until the app passes it; the box then filters the selected period in
+  /// memory, as it always did.
   public let transactionSearch: (any TransactionSearching)?
 
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
   @Query private var accounts: [NomiCore.Account]
 
   @State private var selection: LedgerChipSelection = .all
-  @State private var stepsBack = 0
+  /// The period, as Home holds it: a basis and an anchor date inside the period.
+  /// Opens on the current calendar month and is not kept across launches.
+  @State private var basis: PeriodBasis = .calendarMonth
+  @State private var anchor: Date = Date()
   @State private var now = Date()
   @State private var searchText = ""
   @State private var presented: PresentedTransaction?
   /// Rows from `transactionSearch` for the current query. Nil means "no
-  /// whole-ledger results to show", which is the windowed list. A non-nil
+  /// whole-ledger results to show", which is the period list. A non-nil
   /// array is shown as-is, even when empty.
   @State private var searchResults: [NomiCore.Transaction]?
-  /// The last whole-ledger search threw. The list falls back to the window and
+  /// The last whole-ledger search threw. The list falls back to the period and
   /// says so, rather than showing nothing or a silent partial answer.
   @State private var searchFailed = false
   /// Bumped to re-run the search with the same query, once the detail sheet
   /// closes or a row is changed from the list. Results read before then may
   /// point at a deleted or edited row.
   @State private var searchGeneration = 0
-  /// Reported by the windowed list: whether the window holds any row, and how
-  /// many need review (the chip's count).
+  /// Reported by the list: whether the period holds any row, and how many need
+  /// review across the whole ledger (the chip's count).
   @State private var windowSummary = LedgerWindowSummary.unreported
 
   /// A sheet does not inherit the root's `modelContainer` — the detail
@@ -101,8 +110,29 @@ public struct LedgerScreen: View {
     self._selection = State(initialValue: initialChip)
   }
 
-  private var since: Date {
-    LedgerWindow.since(for: stepsBack, now: now)
+  /// The selected period's half-open range, from the one definition Home uses.
+  private var range: Range<Date> {
+    LedgerPeriod.range(basis: basis, anchor: anchor, calendar: .current, now: now)
+  }
+
+  /// The selected period's label, e.g. "November 2026" or "FY 2026–27".
+  private var periodLabel: String {
+    DashboardPeriod.label(for: DashboardPeriod.period(basis: basis, anchor: anchor, calendar: .current))
+  }
+
+  /// A search is active and its whole-ledger results are in hand. Until they
+  /// are, the list filters the period in memory, and the period still applies.
+  private var wholeLedgerSearchActive: Bool {
+    LedgerSearch.normalized(searchText) != nil && searchResults != nil
+  }
+
+  private var scope: LedgerScope {
+    LedgerScope.resolve(selection: selection, wholeLedgerSearchActive: wholeLedgerSearchActive)
+  }
+
+  /// The period named in copy, or nil when no period is in effect.
+  private var scopedPeriodLabel: String? {
+    scope == .period ? periodLabel : nil
   }
 
   /// U16: the chip's single-select state and the search box, folded into
@@ -129,26 +159,25 @@ public struct LedgerScreen: View {
 
   /// Decides the empty treatment, and whether the chip row and search bar show.
   /// Only `.empty` hides them: the store has no transactions, so there is
-  /// nothing to filter or search.
+  /// nothing to filter, search or choose a period for.
   private var emptyKind: LedgerEmptyKind {
     LedgerEmptyKind.of(
       hasRows: windowSummary.hasRows, storeHasRows: windowSummary.storeHasRows, isFiltered: isFiltered)
   }
 
   /// SwiftData fixes a `@Query`'s predicate at the view instance's
-  /// construction (see `.id(queryKey)`'s note, below). Only `since` is baked
-  /// into that predicate now — the chip and search box are read back out of
-  /// plain `filter` state in `LedgerTransactionList.filtered` — so widening
-  /// the window is the only thing that still needs a new instance; typing a
-  /// search character or switching a chip must not rebuild the list, or it
-  /// re-runs the `@Query` fetch and drops `pendingDeleteID`/`errorMessage`
-  /// on every keystroke.
+  /// construction (see `.id(queryKey)`'s note, below). Only the period is baked
+  /// into that predicate — the chip and search box are read back out of plain
+  /// `filter` state in `LedgerTransactionList.rows` — so changing the period is
+  /// the only thing that needs a new instance; typing a search character or
+  /// switching a chip must not rebuild the list, or it re-runs the `@Query`
+  /// fetch and drops `pendingDeleteID`/`errorMessage` on every keystroke.
   private struct QueryKey: Hashable {
-    let since: Date
+    let range: Range<Date>
   }
 
   private var queryKey: QueryKey {
-    QueryKey(since: since)
+    QueryKey(range: range)
   }
 
   // `id` carries no unique constraint anywhere in NomiCore (R5 — CloudKit
@@ -175,64 +204,71 @@ public struct LedgerScreen: View {
   }
 
   public var body: some View {
-    ScrollView {
-      LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-        if emptyKind != .empty {
-          chipRow
-            .padding(.top, NomiSpacing.xs)
-        }
+    ScrollViewReader { proxy in
+      ScrollView {
+        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+          Color.clear
+            .frame(height: 0)
+            .id(LedgerScrollTarget.top)
 
-        if searchFailed {
-          // Same window arithmetic as `LedgerWindow.since`, so the copy names
-          // the span actually shown after any "Show older" taps.
-          Text("Search didn’t run. Showing the last \(LedgerWindow.days(for: stepsBack)) days.")
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.inkSecondary)
-            .padding(.horizontal, NomiSpacing.screenGutter)
-            .padding(.bottom, NomiSpacing.xs)
-        }
+          if emptyKind != .empty {
+            periodRow
+            chipRow
+              .padding(.top, NomiSpacing.xs)
+          }
 
-        // `.id(queryKey)` is load-bearing: SwiftData's `@Query` fixes its
-        // filter at the view instance's construction and never re-evaluates
-        // it in place. Only widening the window changes that predicate, so
-        // only `since` is in `queryKey` — a chip switch or a search edit
-        // updates `filter` in place instead, which `filtered` already
-        // re-reads without forcing a new instance.
-        LedgerTransactionList(
-          filter: filter,
-          since: since,
-          now: now,
-          windowDays: LedgerWindow.days(for: stepsBack),
-          wholeLedgerSearch: transactionSearch != nil,
-          isFiltered: isFiltered,
-          transactionStore: transactionStore,
-          categoryNamesByID: categoryNamesByID,
-          categoryPaletteSlotByID: categoryPaletteSlotByID,
-          categorySymbolNameByID: categorySymbolNameByID,
-          accountNamesByID: accountNamesByID,
-          searchMatches: searchResults,
-          onSelectTransaction: { id in
-            // Drop the whole-ledger rows before the sheet opens. The sheet can
-            // delete or edit the row it shows, and a model read after that
-            // can trap; the list then falls back to the live window until the
-            // sheet closes and the search runs again.
-            searchResults = nil
-            presented = PresentedTransaction(id: id)
-          },
-          onMutate: {
-            // Same reason as above, for delete and "Mark reviewed" in the
-            // context menu: those rows may be in `searchResults`.
-            searchResults = nil
-            searchGeneration += 1
-          },
-          onWindowChange: { windowSummary = $0 },
-          onClearFilters: clearFilters
-        )
-        .id(queryKey)
+          if searchFailed {
+            Text(LedgerCopy.searchFailedText(periodLabel: scopedPeriodLabel))
+              .nomiTextStyle(.caption)
+              .foregroundStyle(NomiColor.inkSecondary)
+              .padding(.horizontal, NomiSpacing.screenGutter)
+              .padding(.bottom, NomiSpacing.xs)
+          }
 
-        // Hidden only in the true first-run state, where nothing is older.
-        if searchResults == nil && emptyKind != .empty {
-          showOlderButton
+          // `.id(queryKey)` is load-bearing: SwiftData's `@Query` fixes its
+          // filter at the view instance's construction and never re-evaluates
+          // it in place. Only the period changes that predicate, so only the
+          // range is in `queryKey` — a chip switch or a search edit updates
+          // `filter` in place instead, which `rows` already re-reads without
+          // forcing a new instance.
+          LedgerTransactionList(
+            filter: filter,
+            range: range,
+            now: now,
+            periodLabel: periodLabel,
+            scope: scope,
+            wholeLedgerSearch: transactionSearch != nil,
+            isFiltered: isFiltered,
+            transactionStore: transactionStore,
+            categoryNamesByID: categoryNamesByID,
+            categoryPaletteSlotByID: categoryPaletteSlotByID,
+            categorySymbolNameByID: categorySymbolNameByID,
+            accountNamesByID: accountNamesByID,
+            searchMatches: searchResults,
+            onSelectTransaction: { id in
+              // Drop the whole-ledger rows before the sheet opens. The sheet can
+              // delete or edit the row it shows, and a model read after that
+              // can trap; the list then falls back to the live period until the
+              // sheet closes and the search runs again.
+              searchResults = nil
+              presented = PresentedTransaction(id: id)
+            },
+            onMutate: {
+              // Same reason as above, for delete and "Mark reviewed" in the
+              // context menu: those rows may be in `searchResults`.
+              searchResults = nil
+              searchGeneration += 1
+            },
+            onWindowChange: { windowSummary = $0 },
+            onClearFilters: clearFilters
+          )
+          .id(queryKey)
+
+          // Hidden in the true first-run state, and while the list is a queue
+          // (Needs review, or a search): a queue takes no period.
+          if scope == .period && emptyKind != .empty {
+            showPreviousButton(proxy: proxy)
+          }
         }
       }
     }
@@ -251,6 +287,12 @@ public struct LedgerScreen: View {
     // Sets `now` once per appearance rather than every `dayHeader` call —
     // day headers read it from here, not from a fresh `Date()` in `body`.
     .onAppear { now = Date() }
+    // A basis switch re-anchors to the current period, as the menu reads
+    // (DEC-04, item 3). The anchor is otherwise kept, so leaving Needs review
+    // or a search restores the period that was on screen.
+    .onChange(of: basis) { _, _ in
+      anchor = now
+    }
     .task(id: searchKey) {
       await runSearch(for: searchKey.text)
     }
@@ -308,6 +350,37 @@ public struct LedgerScreen: View {
     }
   }
 
+  // MARK: - Period
+
+  /// The period pill, trailing on its own row above the chips (DEC-04). Its
+  /// menu is Home's shape: a basis picker, a divider, then the recent periods.
+  /// While the list is a queue the pill reads "All time" and is disabled.
+  private var periodRow: some View {
+    HStack(spacing: 0) {
+      Spacer(minLength: NomiSpacing.xs)
+      NomiPeriodPill(title: scope == .period ? periodLabel : "All time", style: .onGround) {
+        periodMenu
+      }
+      .disabled(scope == .wholeLedger)
+    }
+    .padding(.horizontal, NomiSpacing.screenGutter)
+    .padding(.top, NomiSpacing.xs)
+  }
+
+  @ViewBuilder
+  private var periodMenu: some View {
+    Picker("Period basis", selection: $basis) {
+      Text("Calendar month").tag(PeriodBasis.calendarMonth)
+      Text("Financial year").tag(PeriodBasis.financialYear)
+    }
+    Divider()
+    ForEach(DashboardPeriod.recentAnchors(basis: basis, now: now), id: \.self) { candidate in
+      Button(DashboardPeriod.label(for: DashboardPeriod.period(basis: basis, anchor: candidate))) {
+        anchor = candidate
+      }
+    }
+  }
+
   // MARK: - Filter chips
 
   /// One horizontal row of `NomiChip`: All, Needs review (with its count),
@@ -338,6 +411,8 @@ public struct LedgerScreen: View {
     }
   }
 
+  /// Resets the chip and the search box. The period is not a filter, so it is
+  /// kept (DEC-04, item 8).
   private func clearFilters() {
     searchText = ""
     selection = .all
@@ -345,14 +420,14 @@ public struct LedgerScreen: View {
 
   // MARK: - Paging
 
-  /// At the foot of the list. This screen never queries beyond `since` to find
-  /// out whether there's anything older to show, since doing so would be
-  /// exactly the whole-table read F1 exists to remove. Shown in the
-  /// "Nothing in the last N days" state, so an empty window can still reach
-  /// older rows; hidden only in the true first-run state.
-  private var showOlderButton: some View {
-    Button("Show older") {
-      stepsBack += 1
+  /// At the foot of the list. Steps the period back one, moves the list to its
+  /// top, and names the period it will show (DEC-04, item 7). Replaces the
+  /// 90-day "Show older": a bounded period needs no paging.
+  private func showPreviousButton(proxy: ScrollViewProxy) -> some View {
+    let label = LedgerPeriod.previousLabel(basis: basis, anchor: anchor, calendar: .current, now: now)
+    return Button(LedgerCopy.showPreviousTitle(label: label)) {
+      anchor = LedgerPeriod.previousAnchor(basis: basis, anchor: anchor, calendar: .current, now: now)
+      proxy.scrollTo(LedgerScrollTarget.top, anchor: .top)
     }
     .buttonStyle(NomiSecondaryButtonStyle())
     .frame(maxWidth: .infinity)
@@ -394,20 +469,28 @@ private struct LedgerClearFiltersStyle: ButtonStyle {
   }
 }
 
-/// The windowed transaction list. Its own view, not a computed property on
+/// The transaction list. Its own view, not a computed property on
 /// `LedgerScreen`, because a `@Query`'s filter is fixed when the view
 /// instance is built and SwiftData does not let it be re-pointed afterwards —
-/// so a widening window has to construct a new instance of *something*, and
-/// `LedgerScreen` gives it a new one via `.id(queryKey)`. A chip switch or a
-/// search edit changes `filter` instead, which `filtered` reads on every
-/// body re-evaluation of the *same* instance — no new `@Query` needed.
+/// so a new period has to construct a new instance of *something*, and
+/// `LedgerScreen` gives it one via `.id(queryKey)`. A chip switch or a search
+/// edit changes `filter` instead, which `rows` reads on every body
+/// re-evaluation of the *same* instance — no new `@Query` needed.
+///
+/// Two queries. `periodRows` is bounded by the period (`LedgerFilterPredicate.make(range:)`).
+/// `flagged` is the Needs review queue, a single comparison with no date bound,
+/// so the chip's count and its list are the same all-time set (DEC-04, item 6).
 private struct LedgerTransactionList: View {
   let filter: TransactionFilter
+  /// The selected period. The list's period query is built from it at init.
+  let range: Range<Date>
   let now: Date
-  /// How far back the window reaches, for the "Nothing in the last N days" copy.
-  let windowDays: Int
+  /// The period's label, for the "Nothing in <period>" title.
+  let periodLabel: String
+  /// Which rows the list draws. `.period` names the period in copy; the queues do not.
+  let scope: LedgerScope
   /// Whether a whole-ledger search service is wired. Without one, the search
-  /// box only filters the window, and the copy must not say otherwise.
+  /// box only filters the period, and the copy must not say otherwise.
   let wholeLedgerSearch: Bool
   /// A chip other than All is selected, or the search box holds a query.
   let isFiltered: Bool
@@ -416,18 +499,23 @@ private struct LedgerTransactionList: View {
   let categoryPaletteSlotByID: [UUID: Int]
   let categorySymbolNameByID: [UUID: String]
   let accountNamesByID: [UUID: String]
-  /// Whole-ledger rows for the current query, or nil for the windowed list.
+  /// Whole-ledger rows for the current query, or nil for the period list.
   let searchMatches: [NomiCore.Transaction]?
   let onSelectTransaction: (UUID) -> Void
   /// Called after this list deletes or marks a row reviewed, so the parent can
   /// drop any whole-ledger rows it still holds.
   let onMutate: () -> Void
-  /// Reports the window's summary to the parent, which owns the chip row.
+  /// Reports the summary to the parent, which owns the chip row.
   let onWindowChange: (LedgerWindowSummary) -> Void
   /// Resets the chip and the search box from the no-results state.
   let onClearFilters: () -> Void
 
-  @Query private var transactions: [NomiCore.Transaction]
+  @Query private var periodRows: [NomiCore.Transaction]
+  @Query(
+    filter: LedgerFilterPredicate.makeNeedsReview(),
+    sort: [SortDescriptor(\NomiCore.Transaction.date, order: .reverse)]
+  )
+  private var flagged: [NomiCore.Transaction]
 
   @Environment(\.nomiAddTransaction) private var addTransaction
   @Environment(\.modelContext) private var modelContext
@@ -437,9 +525,10 @@ private struct LedgerTransactionList: View {
 
   init(
     filter: TransactionFilter,
-    since: Date,
+    range: Range<Date>,
     now: Date,
-    windowDays: Int,
+    periodLabel: String,
+    scope: LedgerScope,
     wholeLedgerSearch: Bool,
     isFiltered: Bool,
     transactionStore: TransactionStore,
@@ -454,8 +543,10 @@ private struct LedgerTransactionList: View {
     onClearFilters: @escaping () -> Void
   ) {
     self.filter = filter
+    self.range = range
     self.now = now
-    self.windowDays = windowDays
+    self.periodLabel = periodLabel
+    self.scope = scope
     self.wholeLedgerSearch = wholeLedgerSearch
     self.isFiltered = isFiltered
     self.transactionStore = transactionStore
@@ -468,52 +559,60 @@ private struct LedgerTransactionList: View {
     self.onMutate = onMutate
     self.onWindowChange = onWindowChange
     self.onClearFilters = onClearFilters
-    // Only `since` is pushed into the `@Query` itself — see
+    // Only the period is pushed into the period `@Query` itself — see
     // `LedgerFilterPredicate`'s note on why the chip/search criteria are
-    // applied below instead, in `filtered`.
-    _transactions = Query(
-      filter: LedgerFilterPredicate.make(since: since),
+    // applied below instead, in `rows`.
+    _periodRows = Query(
+      filter: LedgerFilterPredicate.make(range: range),
       sort: [SortDescriptor(\NomiCore.Transaction.date, order: .reverse)]
     )
   }
 
-  private var filtered: [NomiCore.Transaction] {
+  /// The rows the list draws, before grouping. A search reaches the whole
+  /// ledger and ignores the period. Needs review is the flagged queue. Otherwise
+  /// the selected period. The chip and search rules apply to each.
+  private var rows: [NomiCore.Transaction] {
     // A blank box never shows whole-ledger rows, even for the one frame before
     // `runSearch` clears `searchMatches`.
-    guard let searchMatches, LedgerSearch.normalized(filter.searchText) != nil else {
-      return transactions.filter { LedgerFilterPredicate.matches($0, filter: filter) }
+    if let searchMatches, LedgerSearch.normalized(filter.searchText) != nil {
+      // The whole-ledger search already matched the text. Only the chip still
+      // applies, so the text is cleared here rather than matched twice.
+      var chipOnly = filter
+      chipOnly.searchText = ""
+      return searchMatches.filter { LedgerFilterPredicate.matches($0, filter: chipOnly, within: nil) }
     }
-    // The whole-ledger search already matched the text. Only the chip still
-    // applies, so the text is cleared here rather than matched twice.
-    var chipOnly = filter
-    chipOnly.searchText = ""
-    return searchMatches.filter { LedgerFilterPredicate.matches($0, filter: chipOnly) }
+    if filter.needsReviewOnly {
+      return flagged.filter { LedgerFilterPredicate.matches($0, filter: filter, within: nil) }
+    }
+    return periodRows.filter { LedgerFilterPredicate.matches($0, filter: filter, within: range) }
   }
 
-  /// The window, not the search: see `LedgerWindowSummary`. `storeHasRows` is
-  /// read only when the window is empty, since a non-empty window already
-  /// proves the store has rows.
+  /// The period, not the search: see `LedgerWindowSummary`. `storeHasRows` is
+  /// read only when the period is empty, since a non-empty period already proves
+  /// the store has rows. `needsReviewCount` is the whole ledger's queue.
   private var summary: LedgerWindowSummary {
-    let hasRows = !transactions.isEmpty
+    let hasRows = !periodRows.isEmpty
     return LedgerWindowSummary(
       hasRows: hasRows,
       storeHasRows: hasRows || storeHasAnyRow,
-      needsReviewCount: transactions.filter { $0.needsReview }.count
+      needsReviewCount: flagged.count
     )
   }
 
   /// Whether the whole table holds any transaction. A one-row fetch, so it
   /// never loads the table (F1). If the fetch throws it answers true, so the
-  /// screen says "Nothing in the last N days" rather than the first-run copy.
+  /// screen says "Nothing in <period>" rather than the first-run copy.
   private var storeHasAnyRow: Bool {
     var descriptor = FetchDescriptor<NomiCore.Transaction>()
     descriptor.fetchLimit = 1
-    guard let rows = try? modelContext.fetch(descriptor) else { return true }
-    return !rows.isEmpty
+    guard let fetched = try? modelContext.fetch(descriptor) else { return true }
+    return !fetched.isEmpty
   }
 
+  /// Calendar `.current`, the same calendar `range` and Home use, so a day
+  /// group never straddles the period's edge (DEC-04, item 4).
   private var groups: [LedgerDayGroup<NomiCore.Transaction>] {
-    LedgerGrouping.byDay(filtered)
+    LedgerGrouping.byDay(rows, calendar: .current)
   }
 
   private var addAction: (() -> Void)? {
@@ -631,9 +730,9 @@ private struct LedgerTransactionList: View {
   // MARK: - Empty states
 
   /// `.empty` only when the store has no transactions and no filter is set:
-  /// the first-run state. `.nothingRecent` when the window is empty but older
+  /// the first-run state. `.nothingRecent` when the period is empty but other
   /// rows exist. `.noResults` when a chip or the search empties the list. Only
-  /// `.empty` hides the chip row and search bar, in `LedgerScreen`.
+  /// `.empty` hides the period pill, chip row and search bar, in `LedgerScreen`.
   @ViewBuilder
   private var emptyContent: some View {
     switch LedgerEmptyKind.of(
@@ -652,8 +751,8 @@ private struct LedgerTransactionList: View {
     case .nothingRecent:
       NomiEmptyState(
         systemImage: "clock",
-        title: LedgerCopy.nothingRecentTitle(days: windowDays),
-        message: LedgerCopy.nothingRecentMessage(wholeLedger: wholeLedgerSearch)
+        title: LedgerCopy.nothingInPeriodTitle(label: periodLabel),
+        message: LedgerCopy.nothingInPeriodMessage(wholeLedger: wholeLedgerSearch)
       )
       .padding(.horizontal, NomiSpacing.md)
       .padding(.top, NomiSpacing.lg)
@@ -669,7 +768,7 @@ private struct LedgerTransactionList: View {
       NomiEmptyState(
         systemImage: "magnifyingglass",
         title: LedgerCopy.noResultsTitle(query: filter.searchText),
-        message: "Nothing matches this search and filter."
+        message: LedgerCopy.noResultsMessage(periodLabel: scope == .period ? periodLabel : nil)
       )
       Button("Clear filters", action: onClearFilters)
         .buttonStyle(LedgerClearFiltersStyle())
