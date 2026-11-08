@@ -3,26 +3,27 @@ import NomiUI
 import SwiftData
 import SwiftUI
 
-/// The navigation graph. §2.18(1): "There is no `TabView` anywhere in the
-/// repository. Twelve public screens are built and reachable by name; nothing
-/// composes them."
+/// The navigation graph. Five slots: Home, Ledger, the centre `+`, Insights,
+/// Accounts (`RootTab`, `TabBarLayout`; SIMP §0).
 ///
-/// **Not a `TabView`, deliberately.** U5 shipped the chrome this app is meant
-/// to wear — `NomiTabShell` (the navy-black canvas behind everything) and
-/// `NomiFloatingTabBarBackground` (the floating glass pill). A `TabView` draws
-/// its own opaque bar and pins content above it; getting U5's bar to sit over
-/// that means hiding the system one and fighting its safe-area insets. A
-/// `ZStack` over an explicit selection is less machinery, and it is the only
-/// arrangement in which `NomiFloatingTabBarBackground` — which currently has no
-/// consumer at all — actually gets used.
+/// **Not a `TabView`, deliberately.** `NomiTabBar` (F3) is the glass capsule the
+/// artboards draw, floating 22 pt above the bottom edge with the `+` in the
+/// middle. A `TabView` draws its own opaque bar and pins content above it. A
+/// `ZStack` over an explicit selection puts the bar over the content, which is
+/// the arrangement the artboards show.
 ///
-/// One `NavigationStack` per tab, not one around the bar. Accounts and Budgets
-/// push onto Dashboard's and Settings' stacks respectively (§2.18: they "hang
-/// off Dashboard/Settings, not off the bar"), and a shared stack would carry a
-/// push from one tab into another.
+/// One `NavigationStack` per tab, each bound to its own `NavigationPath`.
+/// Settings, Budgets, Subscriptions and Connect mail are pushed onto Home's
+/// stack, and the bar is hidden while any of them is open (`TabBarVisibility`).
+/// The paths live here rather than inside the stacks, so a pushed screen is still
+/// there when its tab is selected again.
 struct RootView: View {
   @ObservedObject var environment: AppEnvironment
-  @State private var selection: RootTab = .dashboard
+  @State private var selection: RootTab = .home
+  @State private var homePath = NavigationPath()
+  @State private var ledgerPath = NavigationPath()
+  @State private var insightsPath = NavigationPath()
+  @State private var accountsPath = NavigationPath()
   @State private var isPresentingEntry = false
   @State private var tabBarHeight: CGFloat = 0
   @State private var ledgerInitialChip: LedgerChipSelection = .all
@@ -30,26 +31,29 @@ struct RootView: View {
   @State private var backfillUnfinished = false
   @State private var presentedTransaction: PresentedTransaction?
 
-  /// The live account list for the Rules editor's Account picker, reached
-  /// through Settings. Sorted like `AccountPickerSheet` and includes archived
-  /// rows, so a rule scoped to an archived account still names it. Read from
-  /// the app container attached in `NomiAppScene`, never from a preview
-  /// container, so this `@Query` cannot reach a schema without `Account`.
+  /// The live account list, passed to Settings and on to `RulesScreen`, so the
+  /// rule editor's Account picker has something to show. Sorted like
+  /// `AccountPickerSheet` and includes archived rows, so a rule scoped to an
+  /// archived account still names it. Read from the app container attached in
+  /// `NomiAppScene`, never from a preview container, so this `@Query` cannot
+  /// reach a schema without `Account`.
   @Query(sort: \NomiCore.Account.displayName) private var accounts: [NomiCore.Account]
 
-  /// Shared by the Dashboard's Upcoming card and its `SubscriptionsScreen`
-  /// destination below — one call site instead of two, so both agree on the
-  /// same cache-backed construction.
+  /// Shared by the Home Upcoming card and its `SubscriptionsScreen` destination
+  /// below, so both agree on the same cache-backed construction.
   private var recurringStore: SwiftDataRecurringStore {
     SwiftDataRecurringStore(context: environment.container.mainContext, cache: environment.cache)
   }
 
   /// `LedgerScreen`'s own row-tap sheet and the Home recent-row sheet below
-  /// both edit through the same coordinator — one call site instead of two,
-  /// same "cheap to rebuild, still stateless" reasoning the ledger case
-  /// already applies to this construction.
+  /// both edit through the same coordinator, so one call site serves both.
   private var transactionEditor: SwiftDataTransactionEditor {
     SwiftDataTransactionEditor(context: environment.container.mainContext, coordinator: environment.coordinator)
+  }
+
+  /// Whether the bar is on screen right now: only on a tab root.
+  private var isTabBarShown: Bool {
+    TabBarVisibility.isVisible(pathCount: pathCount(for: selection))
   }
 
   var body: some View {
@@ -64,14 +68,17 @@ struct RootView: View {
             }
           }
           .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: TabBarInsetHeight.reserved(barHeight: tabBarHeight))
+            // Reserved only while the bar is up. A pushed screen runs to the
+            // bottom edge.
+            Color.clear.frame(height: isTabBarShown ? TabBarInsetHeight.reserved(barHeight: tabBarHeight) : 0)
           }
-        NomiFloatingTabBar(selection: $selection, onAdd: { isPresentingEntry = true })
-          .padding(.horizontal, NomiSpacing.screenGutter)
-          .padding(.bottom, NomiSpacing.xs)
+        if isTabBarShown {
+          tabBar
+        }
       }
     }
-    .onPreferenceChange(TabBarHeightKey.self) { tabBarHeight = $0 }
+    // The "+" slot and any "Add transaction" button in the app open this sheet.
+    .environment(\.nomiAddTransaction, NomiAddTransactionAction { isPresentingEntry = true })
     .onChange(of: selection) { _, newValue in
       // `LedgerScreen` only reads `initialChip` once, at construction — the
       // instance is torn down the moment `selection` leaves `.ledger`. Reset
@@ -115,20 +122,89 @@ struct RootView: View {
     }
   }
 
+  // MARK: - Tab bar
+
+  private var tabBar: some View {
+    let slots = barSlots
+    return NomiTabBar(
+      leading: slots.leading,
+      trailing: slots.trailing,
+      selectedID: selection.id,
+      onSelect: { id in
+        if let tab = RootTab(rawValue: id) {
+          select(tab)
+        }
+      },
+      onAdd: { isPresentingEntry = true }
+    )
+    .onPreferenceChange(NomiTabBarHeightKey.self) { tabBarHeight = $0 }
+    .padding(.horizontal, TabBarInsetHeight.sideMargin)
+    .padding(.bottom, TabBarInsetHeight.bottomMargin)
+  }
+
+  /// The two halves of the bar, read from `TabBarLayout.items` so the order is
+  /// written in one place. `NomiTabBar` puts the `+` between them.
+  private var barSlots: (leading: [NomiTabBarItem], trailing: [NomiTabBarItem]) {
+    var leading: [NomiTabBarItem] = []
+    var trailing: [NomiTabBarItem] = []
+    var passedAdd = false
+    for item in TabBarLayout.items {
+      switch item {
+      case .add:
+        passedAdd = true
+      case .tab(let tab):
+        let slot = NomiTabBarItem(id: tab.id, title: tab.title, symbolName: tab.symbolName)
+        if passedAdd {
+          trailing.append(slot)
+        } else {
+          leading.append(slot)
+        }
+      }
+    }
+    return (leading, trailing)
+  }
+
+  /// Switches to `tab`. Selecting the tab that is already showing pops its
+  /// stack to the root, the usual iOS behaviour for a tab bar.
+  private func select(_ tab: RootTab) {
+    if tab == selection {
+      popToRoot(tab)
+    }
+    selection = tab
+  }
+
+  private func popToRoot(_ tab: RootTab) {
+    switch tab {
+    case .home: homePath = NavigationPath()
+    case .ledger: ledgerPath = NavigationPath()
+    case .insights: insightsPath = NavigationPath()
+    case .accounts: accountsPath = NavigationPath()
+    }
+  }
+
+  private func pathCount(for tab: RootTab) -> Int {
+    switch tab {
+    case .home: return homePath.count
+    case .ledger: return ledgerPath.count
+    case .insights: return insightsPath.count
+    case .accounts: return accountsPath.count
+    }
+  }
+
+  // MARK: - Destinations
+
   @ViewBuilder
   private var destination: some View {
     switch selection {
-    case .dashboard:
-      NavigationStack {
+    case .home:
+      NavigationStack(path: $homePath) {
         DashboardView(
           insightsStore: environment.insightsStore,
           mailConnectionService: environment.mailConnectionService,
           // Built here rather than held on `AppEnvironment`, per U17b's own
-          // spec — unlike `LedgerScreen`'s `editor` below, this is not
-          // debt to fold in later, it's the design: `SwiftDataInsightsStore`
-          // and `SwiftDataRecurringStore` already share `environment.cache`,
-          // so constructing this here costs nothing beyond the call and
-          // shares that cache like every other store does.
+          // spec: `SwiftDataInsightsStore` and `SwiftDataRecurringStore`
+          // already share `environment.cache`, so constructing this here
+          // costs nothing beyond the call and shares that cache.
           recurringStore: recurringStore,
           // Stored and never read by the screen — see `DashboardView`'s note.
           // It is what makes SwiftUI re-invoke `body` after a write, and it is
@@ -141,6 +217,8 @@ struct RootView: View {
           },
           onSelectTransaction: { id in presentedTransaction = PresentedTransaction(id: id) }
         )
+        // The back button on a pushed screen reads this title, so Home keeps it
+        // even though its own nav bar is hidden by the hero.
         .navigationTitle("Home")
         .navigationDestination(for: DashboardRoute.self) { route in
           switch route {
@@ -150,179 +228,75 @@ struct RootView: View {
             SubscriptionsScreen(recurringStore: recurringStore)
           }
         }
-        .toolbar {
-          ToolbarItem(placement: .primaryAction) {
-            // Accounts hangs off Dashboard, per §2.18. A toolbar link rather
-            // than a tab.
-            NavigationLink {
-              AccountsScreen(
-                accountStore: environment.accountStore,
-                insightsStore: environment.insightsStore
-              )
-            } label: {
-              Image(systemName: "creditcard")
-            }
+        // The gear (Settings) and the mail banner or Connect mail button.
+        .navigationDestination(for: HomeRoute.self) { route in
+          switch route {
+          case .settings:
+            SettingsScreen(
+              mailConnectionService: environment.mailConnectionService,
+              fileImportService: environment.fileImportService,
+              categoryStore: environment.categoryStore,
+              ruleStore: environment.ruleStore,
+              notificationSettings: environment.notificationSettings.binding,
+              storageMode: environment.storageMode,
+              accounts: accounts,
+              // The Budgets row under Organize needs both stores; without them
+              // SettingsScreen shows no row.
+              budgetStore: environment.budgetStore,
+              insightsStore: environment.insightsStore
+            )
+          case .connectMail:
+            ConnectMailScreen(mailConnectionService: environment.mailConnectionService)
           }
         }
       }
 
     case .ledger:
-      NavigationStack {
+      NavigationStack(path: $ledgerPath) {
+        // `LedgerScreen` sets its own "Ledger" title (LG).
         LedgerScreen(
           transactionStore: environment.transactionStore,
           categoryStore: environment.categoryStore,
           accountStore: environment.accountStore,
-          // Built here rather than held on `AppEnvironment` — that file
-          // belongs to `park/account-binding-loop`. A second construction
-          // outside the composition root is debt, named as such in
-          // `SwiftDataTransactionEditor`'s own note; fold it in once units 1,
-          // 3 and 5a have all merged. Cheap to rebuild on every `destination`
-          // evaluation: it is a stateless wrapper over the same context and
-          // coordinator every other store already shares.
           editor: transactionEditor,
           initialChip: ledgerInitialChip,
-          suggester: environment.categorySuggester
+          suggester: environment.categorySuggester,
+          // Whole-ledger search (D2). Without it the search box filters only
+          // the 90-day window.
+          transactionSearch: environment.transactionSearch
         )
-        // `LedgerScreen` is a tab-root screen and sets no title of its own —
-        // same as `DashboardView`, and the same reason Dashboard and Reports
-        // get theirs here.
-        .navigationTitle("Ledger")
       }
 
-    case .reports:
-      NavigationStack {
+    case .insights:
+      NavigationStack(path: $insightsPath) {
+        // `ReportsScreen` sets its own "Insights" title.
         ReportsScreen(
           insightsStore: environment.insightsStore,
           refreshToken: environment.insightsGeneration
         )
-        .navigationTitle("Reports")
       }
 
-    case .settings:
-      NavigationStack {
-        SettingsScreen(
-          mailConnectionService: environment.mailConnectionService,
-          fileImportService: environment.fileImportService,
-          categoryStore: environment.categoryStore,
-          ruleStore: environment.ruleStore,
-          notificationSettings: environment.notificationSettings.binding,
-          storageMode: environment.storageMode,
-          accounts: accounts
+    case .accounts:
+      NavigationStack(path: $accountsPath) {
+        AccountsScreen(
+          accountStore: environment.accountStore,
+          insightsStore: environment.insightsStore
         )
-        .toolbar {
-          ToolbarItem(placement: .primaryAction) {
-            // Budgets hangs off Settings, per §2.18.
-            //
-            // `SettingsScreen` already self-routes to Categories and Rules with
-            // its own `NavigationLink`s and §2.18 says in as many words not to
-            // re-route it — so Budgets goes in the toolbar rather than being
-            // added as a fifth row inside a screen this unit does not own.
-            NavigationLink {
-              BudgetsScreen(
-                budgetStore: environment.budgetStore,
-                insightsStore: environment.insightsStore
-              )
-            } label: {
-              Image(systemName: "chart.pie")
-            }
-          }
-        }
       }
     }
   }
 }
 
-/// Publishes `NomiFloatingTabBar`'s rendered height so `RootView` can reserve
-/// exactly that much space — the bar has no fixed frame anywhere (it is
-/// intrinsically sized from an icon, a `.caption` label and its own padding),
-/// so a named constant would be one more number to keep in sync by hand, and
-/// wrong the moment Dynamic Type grows the label.
-private struct TabBarHeightKey: SwiftUI.PreferenceKey {
-  static var defaultValue: CGFloat = 0
-  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-    value = nextValue()
-  }
-}
-
-/// The space every tab root and every pushed screen must reserve at the
-/// bottom: the bar's own measured height, plus the same bottom margin
-/// (`NomiSpacing.xs`) `RootView` already lifts the bar off the screen edge
-/// by. Pulled out as a pure function — not a duplicate literal, the existing
-/// spacing token the call site already applies for the identical purpose —
-/// so `TabBarLayoutTests` can assert the relationship directly instead of
-/// inferring it from a rendered view.
+/// The space every tab root and every pushed screen must reserve at the bottom:
+/// the bar's measured height plus its bottom margin, so content scrolls clear of
+/// the bar rather than under it. A pure function, so `TabBarLayoutTests` can
+/// assert the relationship directly instead of inferring it from a rendered view.
 enum TabBarInsetHeight {
+  /// The bar's side and bottom margins: 24 and 22 on the artboards.
+  static let sideMargin: CGFloat = 24
+  static let bottomMargin: CGFloat = 22
+
   static func reserved(barHeight: CGFloat) -> CGFloat {
-    barHeight + NomiSpacing.xs
-  }
-}
-
-/// The floating glass pill bar, over U5's `NomiFloatingTabBarBackground`.
-///
-/// The centre `+` is a solid blue circle — Estate-Ease's send button doing a
-/// different job (design §"The screens, re-skinned") — and it is the one place
-/// in this file that uses `NomiColor.accent`. `DESIGN.md`'s "one primary action
-/// per screen, always blue" is why nothing else here is.
-struct NomiFloatingTabBar: View {
-  @Binding var selection: RootTab
-  let onAdd: () -> Void
-
-  var body: some View {
-    HStack(spacing: 0) {
-      ForEach(TabBarLayout.items) { item in
-        switch item {
-        case .tab(let tab):
-          tabButton(tab)
-        case .add:
-          addButton
-        }
-      }
-    }
-    .padding(.vertical, NomiSpacing.xs)
-    .padding(.horizontal, NomiSpacing.xs)
-    .background(NomiFloatingTabBarBackground())
-    .background(
-      GeometryReader { proxy in
-        Color.clear.preference(key: TabBarHeightKey.self, value: proxy.size.height)
-      }
-    )
-  }
-
-  private func tabButton(_ tab: RootTab) -> some View {
-    Button {
-      selection = tab
-    } label: {
-      VStack(spacing: NomiSpacing.xxs) {
-        Image(systemName: tab.symbolName)
-          .font(.system(size: 18, weight: selection == tab ? .semibold : .regular))
-        Text(tab.title)
-          .nomiTextStyle(.caption)
-      }
-      // Selection is carried by opacity, not hue: the accent is the `+`
-      // button's and a second blue in the bar would make two primary actions.
-      .foregroundStyle(selection == tab ? NomiColor.textPrimary : NomiColor.textQuaternary)
-      .frame(maxWidth: .infinity)
-    }
-    .buttonStyle(.plain)
-    .accessibilityLabel(tab.title)
-    .accessibilityAddTraits(selection == tab ? [.isSelected, .isButton] : .isButton)
-  }
-
-  private var addButton: some View {
-    Button(action: onAdd) {
-      Image(systemName: "plus")
-        .font(.system(size: 20, weight: .semibold))
-        .foregroundStyle(NomiColor.textPrimary)
-        .frame(width: 44, height: 44)
-        .background(Circle().fill(NomiColor.accent))
-        // v5 (`nomi-ui-refresh`): the glow modifier's one surviving
-        // consumer, now that the hero card and the tab-content glow orbs are
-        // both gone — this button neither scrolls nor sits inside anything
-        // that does, so the "never a ledger row" rule doesn't apply here.
-        .nomiGlow()
-    }
-    .buttonStyle(.plain)
-    .frame(maxWidth: .infinity)
-    .accessibilityLabel("Add transaction")
+    barHeight + bottomMargin
   }
 }

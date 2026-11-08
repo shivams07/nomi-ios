@@ -7,11 +7,11 @@ import XCTest
 /// and a list is the easiest thing in the world to edit wrongly.
 final class RootTabTests: XCTestCase {
 
-  /// "Tabs: Dashboard, Ledger, centre `+`, Reports, Settings."
+  /// "Home, Ledger, centre `+`, Insights, Accounts" (SIMP §0, the artboards).
   func testBarOrderMatchesTheDesign() {
     XCTAssertEqual(
       TabBarLayout.items,
-      [.tab(.dashboard), .tab(.ledger), .add, .tab(.reports), .tab(.settings)]
+      [.tab(.home), .tab(.ledger), .add, .tab(.insights), .tab(.accounts)]
     )
   }
 
@@ -22,13 +22,13 @@ final class RootTabTests: XCTestCase {
     XCTAssertEqual(TabBarLayout.items.firstIndex(of: .add), 2)
   }
 
-  /// "Accounts and Budgets hang off Dashboard/Settings, not off the bar."
-  /// `RootView` pushes them from those two tabs' toolbars.
-  func testAccountsAndBudgetsAreNotTabs() {
+  /// Accounts is a tab. Budgets and Settings are not: Budgets is pushed from
+  /// Home's card and Settings' row, and Settings is pushed from Home's gear.
+  func testAccountsIsATabBudgetsAndSettingsAreNot() {
     XCTAssertEqual(RootTab.allCases.count, 4)
     XCTAssertEqual(
       Set(RootTab.allCases.map(\.rawValue)),
-      ["dashboard", "ledger", "reports", "settings"]
+      ["home", "ledger", "insights", "accounts"]
     )
   }
 

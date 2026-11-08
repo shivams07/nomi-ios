@@ -1,33 +1,40 @@
+// clt-harness: include
+
 import Foundation
 
-/// The four destinations the tab bar selects between.
+/// The four destinations the tab bar selects between: Home, Ledger, Insights
+/// and Accounts (SIMP §0, "Five slots"; the four tab artboards).
 ///
-/// **Accounts and Budgets are deliberately absent.** §2.18: "Accounts and
-/// Budgets hang off Dashboard/Settings, not off the bar." They are pushed onto
-/// the enclosing `NavigationStack`, which is also why every tab has one.
+/// **Budgets and Settings are deliberately absent.** Budgets is a card on Home
+/// and a row in Settings > Organize. Settings is pushed from Home's gear, so it
+/// has a back button and is not a slot. Both are pushed onto the Home stack,
+/// which is why each tab keeps its own `NavigationStack`: a shared stack would
+/// carry a push from one tab into another.
 public enum RootTab: String, CaseIterable, Sendable, Identifiable {
-  case dashboard
+  case home
   case ledger
-  case reports
-  case settings
+  case insights
+  case accounts
 
   public var id: String { rawValue }
 
   public var title: String {
     switch self {
-    case .dashboard: return "Home"
+    case .home: return "Home"
     case .ledger: return "Ledger"
-    case .reports: return "Reports"
-    case .settings: return "Settings"
+    case .insights: return "Insights"
+    case .accounts: return "Accounts"
     }
   }
 
+  /// SF Symbols. Each one matches the glyph the artboard draws: house, the
+  /// ledger arrows, the pie, the card.
   public var symbolName: String {
     switch self {
-    case .dashboard: return "house"
-    case .ledger: return "list.bullet"
-    case .reports: return "chart.bar"
-    case .settings: return "gearshape"
+    case .home: return "house"
+    case .ledger: return "arrow.up.arrow.down"
+    case .insights: return "chart.pie"
+    case .accounts: return "creditcard"
     }
   }
 }
@@ -49,15 +56,24 @@ public enum TabBarItem: Equatable, Sendable, Identifiable {
 }
 
 public enum TabBarLayout {
-  /// Bar order, verbatim from §2.18: "Dashboard, Ledger, centre `+`, Reports,
-  /// Settings". The `+` is third of five, which is what makes it the centre —
-  /// asserted in `RootTabTests` rather than left to whoever edits this array
-  /// next.
+  /// Bar order, verbatim from the four tab artboards: "Home, Ledger, +,
+  /// Insights, Accounts". The `+` is third of five, which is what makes it the
+  /// centre. `TabBarOrderTests` and `NavigationTests` assert this list, so an
+  /// edit that moves the `+` fails a test rather than shipping.
   public static let items: [TabBarItem] = [
-    .tab(.dashboard),
+    .tab(.home),
     .tab(.ledger),
     .add,
-    .tab(.reports),
-    .tab(.settings),
+    .tab(.insights),
+    .tab(.accounts),
   ]
+}
+
+/// Whether the tab bar is on screen. It shows only on a tab root: once a screen
+/// is pushed (Settings from Home's gear, Budgets, Subscriptions, Connect mail)
+/// the bar goes, and the screen's own back button takes over.
+public enum TabBarVisibility {
+  public static func isVisible(pathCount: Int) -> Bool {
+    pathCount == 0
+  }
 }
