@@ -1,6 +1,6 @@
 import NomiCore
 
-/// Version stub. Pipeline/, Mail/, Resources/, File/ land here in U2-U4.
+/// Mail (IMAP) and file (CSV/XLSX) ingestion, and the write pipeline.
 public enum NomiIngestModule {
   public static let version = "0.1.0"
 }

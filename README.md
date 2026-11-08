@@ -3,8 +3,6 @@
 iOS expense tracker (SwiftUI + SwiftData + CloudKit), no backend. India-focused:
 email/UPI ingestion, CSV/XLSX import, rules, budgets, reports.
 
-Design: `E:\Projects\designs\nomi.md`.
-
 ## Layout
 
 One app target, five local Swift packages:
@@ -27,7 +25,7 @@ committed.
 ```sh
 brew install xcodegen
 xcodegen generate
-xcodebuild build -scheme Nomi -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.0'
+xcodebuild build -scheme Nomi -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.2'
 ```
 
 ## Test
