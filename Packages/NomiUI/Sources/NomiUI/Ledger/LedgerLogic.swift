@@ -154,8 +154,8 @@ struct LedgerWindowSummary: Equatable {
 enum LedgerEmptyKind: Equatable {
   /// The store holds no transactions at all, and no filter is set: the
   /// first-run state, "No transactions yet" with "Add transaction". The chip
-  /// row, period pill and search bar are hidden, since there is nothing to
-  /// search or choose.
+  /// row and search bar are hidden, since there is nothing to search or
+  /// filter. The period pill stays (LedgerEmpty artboard).
   case empty
   /// The selected period is empty but the store holds rows elsewhere, and no
   /// filter is set. Shows "Nothing in <period>". The period pill, search bar

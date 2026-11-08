@@ -159,7 +159,7 @@ public struct LedgerScreen: View {
 
   /// Decides the empty treatment, and whether the chip row and search bar show.
   /// Only `.empty` hides them: the store has no transactions, so there is
-  /// nothing to filter, search or choose a period for.
+  /// nothing to filter or search.
   private var emptyKind: LedgerEmptyKind {
     LedgerEmptyKind.of(
       hasRows: windowSummary.hasRows, storeHasRows: windowSummary.storeHasRows, isFiltered: isFiltered)
@@ -211,8 +211,10 @@ public struct LedgerScreen: View {
             .frame(height: 0)
             .id(LedgerScrollTarget.top)
 
+          // The period pill stays in the first-run state too: the LedgerEmpty
+          // artboard shows it. Only the chip row is hidden there.
+          periodRow
           if emptyKind != .empty {
-            periodRow
             chipRow
               .padding(.top, NomiSpacing.xs)
           }
@@ -732,7 +734,7 @@ private struct LedgerTransactionList: View {
   /// `.empty` only when the store has no transactions and no filter is set:
   /// the first-run state. `.nothingRecent` when the period is empty but other
   /// rows exist. `.noResults` when a chip or the search empties the list. Only
-  /// `.empty` hides the period pill, chip row and search bar, in `LedgerScreen`.
+  /// `.empty` hides the chip row and search bar, in `LedgerScreen`.
   @ViewBuilder
   private var emptyContent: some View {
     switch LedgerEmptyKind.of(
