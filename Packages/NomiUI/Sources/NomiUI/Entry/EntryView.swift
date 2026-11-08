@@ -3,12 +3,13 @@ import NomiPreview
 import SwiftData
 import SwiftUI
 
-/// The manual-entry sheet (U6). Done-when: the tap path from list to saved is
-/// exactly two navigation/confirmation taps, amount is the only required
-/// input, and no picker, segmented control or required field sits in that
-/// path. Concretely: whoever presents this view spends tap one; the Save
-/// pill below is tap two. Date, category and direction are all prefilled
-/// with a sensible default and reachable only by an EXTRA, optional tap.
+/// The manual-entry sheet (U6), drawn to the approved Entry artboard (EN).
+/// Done-when: the amount is the only required input; Expense / Income sits
+/// directly under the amount; the chip row wraps (and stacks into full-width
+/// rows at accessibility sizes); the note comes last; Save is pinned at 54 pt
+/// and is disabled until the amount is positive. Date, category, account and
+/// direction are prefilled and reachable only by an optional tap. There is no
+/// custom keypad (DEC-14): the system decimal pad is the amount keyboard.
 public struct EntryView: View {
   public let transactionStore: TransactionStore
   public let categoryStore: CategoryStore
@@ -18,6 +19,7 @@ public struct EntryView: View {
   @Query(sort: \NomiCore.Account.displayName) private var accounts: [NomiCore.Account]
 
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @FocusState private var isAmountFocused: Bool
 
   @State private var amountText = ""
@@ -52,21 +54,27 @@ public struct EntryView: View {
   public var body: some View {
     NavigationStack {
       ScrollView {
-        VStack(spacing: NomiSpacing.lg) {
+        VStack(spacing: NomiSpacing.cardGap) {
           amountField
-          chipsRow
           DirectionToggle(direction: $direction)
+          chips
           noteField
         }
-        .padding(NomiSpacing.screenGutter)
+        .padding(.horizontal, NomiSpacing.screenGutter)
+        .padding(.top, NomiSpacing.cardGap)
+        .padding(.bottom, NomiSpacing.sm)
       }
-      .background(NomiColor.surfaceCanvas)
+      .background(NomiColor.ground)
       .safeAreaInset(edge: .bottom) {
         savePill
           .padding(.horizontal, NomiSpacing.screenGutter)
-          .padding(.bottom, NomiSpacing.sm)
-          .background(NomiColor.surfaceCanvas)
+          .padding(.top, NomiSpacing.xs)
+          .padding(.bottom, NomiSpacing.xs)
+          .background(NomiColor.ground)
       }
+      #if os(iOS)
+      .navigationBarTitleDisplayMode(.inline)
+      #endif
       .navigationTitle("Add transaction")
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
@@ -74,6 +82,7 @@ public struct EntryView: View {
         }
       }
     }
+    .nomiSheet(detents: [.large])
     .onAppear {
       isAmountFocused = true
       guard !didPrefillCategory else { return }
@@ -102,74 +111,101 @@ public struct EntryView: View {
     )
   }
 
+  /// The amount card: a 96 pt card, the ₹ sign and a 39 pt field. The ₹ is
+  /// decorative, so VoiceOver reads only the field.
   private var amountField: some View {
-    HStack(spacing: NomiSpacing.xxs) {
+    HStack(spacing: 6) {
       Text("₹")
-        .font(TabularFigures.font(name: NomiFont.montserratSemiBold, size: 39))
-        .foregroundStyle(NomiColor.textPrimary)
-      TextField("0", text: $amountText)
+        .font(amountFont)
+        .foregroundStyle(NomiColor.ink)
+        .accessibilityHidden(true)
+      TextField("Amount", text: $amountText, prompt: Text("0").foregroundStyle(NomiColor.placeholder))
         #if os(iOS)
         .keyboardType(.decimalPad)
         #endif
         .focused($isAmountFocused)
-        .font(TabularFigures.font(name: NomiFont.montserratSemiBold, size: 39))
-        .foregroundStyle(NomiColor.textPrimary)
+        .font(amountFont)
+        .foregroundStyle(NomiColor.ink)
         .onChange(of: amountText) { _, newValue in
           let sanitized = EntryAmount.sanitizeInput(newValue)
           if sanitized != newValue { amountText = sanitized }
         }
     }
-    .padding(NomiSpacing.sm)
-    .background(NomiColor.surfaceInput)
-    .nomiCornerRadius(NomiRadius.tile)
+    .padding(.horizontal, NomiSpacing.screenGutter)
+    .frame(maxWidth: .infinity, minHeight: 96, alignment: .leading)
+    .entryCard(cornerRadius: 26)
   }
 
-  private var chipsRow: some View {
-    HStack(spacing: NomiSpacing.xs) {
-      EntryChip(
-        label: NomiFormatters.dayMonthYear.string(from: date),
-        leadingColor: nil,
-        leadingSymbol: "calendar",
-        action: { isDatePickerPresented = true }
-      )
-      EntryChip(
-        label: selectedCategory?.name ?? "Uncategorized",
-        leadingColor: selectedCategory.map { paletteSlot($0.paletteSlot) },
-        leadingSymbol: selectedCategory?.symbolName ?? "questionmark.circle",
-        action: { isCategoryPickerPresented = true }
-      )
-      EntryChip(
-        label: selectedAccount?.displayName ?? "Unassigned",
-        leadingColor: nil,
-        leadingSymbol: "creditcard",
-        action: { isAccountPickerPresented = true }
-      )
-      Spacer(minLength: 0)
+  private var amountFont: Font {
+    .custom(NomiFont.interRegular, size: 39, relativeTo: .largeTitle).monospacedDigit()
+  }
+
+  /// Category, Account, Date, in that order. A wrapping flow row, or full-width
+  /// rows at accessibility sizes.
+  @ViewBuilder
+  private var chips: some View {
+    if dynamicTypeSize >= .accessibility1 {
+      VStack(spacing: NomiSpacing.xs) {
+        categoryChip
+        accountChip
+        dateChip
+      }
+    } else {
+      EntryChipFlowLayout(spacing: NomiSpacing.xs) {
+        categoryChip
+        accountChip
+        dateChip
+      }
     }
+  }
+
+  private var categoryChip: some View {
+    EntryChip(
+      name: "Category",
+      value: selectedCategory?.name ?? "Uncategorized",
+      isPlaceholder: selectedCategory == nil,
+      leadingColor: selectedCategory.map { paletteSlot($0.paletteSlot) },
+      action: { isCategoryPickerPresented = true }
+    )
+  }
+
+  private var accountChip: some View {
+    EntryChip(
+      name: "Account",
+      value: selectedAccount?.displayName ?? "Unassigned",
+      isPlaceholder: selectedAccount == nil,
+      leadingColor: nil,
+      action: { isAccountPickerPresented = true }
+    )
+  }
+
+  private var dateChip: some View {
+    EntryChip(
+      name: "Date",
+      value: Calendar.current.isDateInToday(date) ? "Today" : NomiFormatters.dayMonthYear.string(from: date),
+      isPlaceholder: false,
+      leadingColor: nil,
+      action: { isDatePickerPresented = true }
+    )
   }
 
   private var noteField: some View {
     // L4: this field writes `descriptionText`, not `Transaction.note` — the
     // detail screen's separate annotation — so its label says what it
     // actually captures rather than implying it's the note.
-    TextField("What was it for? (optional)", text: $note)
-      .nomiTextStyle(.body)
-      .foregroundStyle(NomiColor.textPrimary)
-      .padding(NomiSpacing.sm)
-      .background(NomiColor.surfaceInput)
-      .nomiCornerRadius(NomiRadius.tile)
+    TextField("What was it for? (optional)", text: $note, prompt: Text("What was it for? (optional)").foregroundStyle(NomiColor.placeholder))
+      .font(.custom(NomiFont.interRegular, size: 16, relativeTo: .body))
+      .foregroundStyle(NomiColor.ink)
+      .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+      .padding(.horizontal, 18)
+      .entryCard(cornerRadius: 22)
   }
 
   private var savePill: some View {
     Button(action: save) {
       Text("Save")
-        .nomiTextStyle(.body)
-        .foregroundStyle(NomiColor.textPrimary)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, NomiSpacing.sm)
     }
-    .background(canSave ? NomiColor.accent : NomiColor.accent.opacity(0.4))
-    .nomiCornerRadius(NomiRadius.pill)
+    .buttonStyle(NomiPrimaryButtonStyle(height: 54))
     .disabled(!canSave)
   }
 
@@ -202,35 +238,35 @@ public struct EntryView: View {
 // not the original `makeCategoryContainer(seed:)`, which stays as it was
 // for `CategoryEditorSheet`/`RulesScreen`.
 
-#Preview("Entry — default, dark") {
+#Preview("Entry · default · light") {
   EntryView(transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore())
     .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer(accounts: []))
-    .preferredColorScheme(.dark)
+    .preferredColorScheme(.light)
 }
 
-#Preview("Entry — accessibility 3, dark") {
+#Preview("Entry · accessibility 3 · light") {
   EntryView(transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore())
     .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer(accounts: []))
     .environment(\.dynamicTypeSize, .accessibility3)
-    .preferredColorScheme(.dark)
+    .preferredColorScheme(.light)
 }
 
-#Preview("Entry — no categories yet, dark") {
+#Preview("Entry · no categories yet · light") {
   EntryView(transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore(categories: []))
     .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer(seed: [], accounts: []))
-    .preferredColorScheme(.dark)
+    .preferredColorScheme(.light)
 }
 
 /// M3 done-when: "the chip 'Unassigned' with no accounts" is the three
 /// previews above (none seed an account). This one is the counterpart: one
 /// active account, so `EntryAccountDefault.preselection` picks it and the
 /// chip shows it before Save, with no tap needed.
-#Preview("Entry — account prefilled, dark") {
+#Preview("Entry · account prefilled · light") {
   EntryView(transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore())
     .modelContainer(
       EntryRulesPreviewSupport.makeCategoryContainer(
         accounts: [NomiCore.Account(displayName: "HDFC Savings", institution: "HDFC Bank", lastFour: "4821")]
       )
     )
-    .preferredColorScheme(.dark)
+    .preferredColorScheme(.light)
 }
