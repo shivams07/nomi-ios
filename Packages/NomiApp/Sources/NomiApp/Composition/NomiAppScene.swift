@@ -54,6 +54,9 @@ public struct NomiAppScene: Scene {
     // the *app* bundle, and these live in `NomiUI`'s. `registerIfNeeded` is
     // U5's own answer to that; nothing had ever called it.
     NomiFont.registerIfNeeded()
+    // DEC-08 (L1). Installs the navigation bar appearance (F3, I-4). It names
+    // the Inter faces, so it runs after registration.
+    NomiNavigationAppearance.configure()
   }
 
   public var body: some Scene {
@@ -63,7 +66,8 @@ public struct NomiAppScene: Scene {
         // `CategoriesScreen`, `RulesScreen`, `EntryView`, `BudgetsScreen`,
         // `ImportEntryView`, the ledger — reads through it.
         .modelContainer(environment.container)
-        .preferredColorScheme(.dark)
+        // DEC-08: light only, for this restyle. See App/Info.plist.
+        .preferredColorScheme(.light)
     }
     .onChange(of: scenePhase) { _, phase in
       switch phase {
