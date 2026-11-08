@@ -2,15 +2,16 @@ import NomiCore
 import NomiPreview
 import SwiftUI
 
-/// M5 (`nomi-ui-refresh` v5 §Subscriptions). Pushed onto Home's own
-/// `NavigationStack` from the Upcoming card — not a fifth tab (design doc
-/// §Why not the alternatives). `ui-root-wiring` (M6) is what actually wires
-/// `.navigationDestination(for: DashboardRoute.self)` to construct this.
+/// The Subscriptions page (M5; BS, approved `Subscriptions` artboard). Pushed
+/// onto Home's own `NavigationStack` from the Upcoming card, not a fifth tab
+/// (design doc §Why not the alternatives). Read-only, as shipped: no actions.
 ///
-/// Reads through `DashboardWiring.recurringSeries(from:)` rather than a
-/// second `do`/`catch` of its own — that wiring is internal to `NomiUI` and
-/// this screen lives in the same module, so no edit to `DashboardView.swift`
-/// is needed to share it.
+/// Shape: an H0 large title, a total card (the monthly sum at 32 with "a month",
+/// then the count and the next charge), then rows grouped under their day.
+///
+/// Reads through `DashboardWiring.recurringSeries(from:)` rather than a second
+/// `do`/`catch` of its own. That wiring is internal to `NomiUI` and this screen
+/// lives in the same module, so no edit to `DashboardView.swift` is needed.
 public struct SubscriptionsScreen: View {
   public let recurringStore: any RecurringInsightsStore
 
@@ -22,12 +23,13 @@ public struct SubscriptionsScreen: View {
   }
 
   private var series: DashboardWiring.Load<[RecurringSeries]> {
-    DashboardWiring.recurringSeries(from: recurringStore)
+    _ = retryToken
+    return DashboardWiring.recurringSeries(from: recurringStore)
   }
 
   public var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: NomiSpacing.sectionGap) {
+      VStack(alignment: .leading, spacing: NomiSpacing.md) {
         switch series {
         case .loaded(let items) where items.isEmpty:
           emptyState
@@ -35,41 +37,55 @@ public struct SubscriptionsScreen: View {
           header(for: items)
           rows(for: items)
         case .failed:
-          FailedLoadCaption { retryToken += 1 }
+          NomiLoadFailedCard(message: "Subscriptions didn’t load.") {
+            retryToken += 1
+          }
         }
       }
       .padding(.horizontal, NomiSpacing.screenGutter)
-      .padding(.vertical, NomiSpacing.screenGutter)
+      .padding(.vertical, NomiSpacing.sm)
     }
-    .background(NomiColor.surfaceCanvas)
+    .background(NomiColor.ground)
     .navigationTitle("Subscriptions")
+    #if os(iOS)
+    .navigationBarTitleDisplayMode(.large)
+    #endif
   }
 
   private var emptyState: some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.xs) {
-      Text("Nothing recurring yet")
-        .nomiTextStyle(.title)
-        .foregroundStyle(NomiColor.textPrimary)
-      Text("Nomi lists a charge here once the same amount has hit your account three months running.")
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textTertiary)
-    }
+    NomiEmptyState(
+      systemImage: "arrow.triangle.2.circlepath",
+      title: "No subscriptions yet",
+      message: "Repeating charges Nomi finds in your transactions will appear here."
+    )
+    .padding(.top, 96)
   }
 
   private func header(for items: [RecurringSeries]) -> some View {
     VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-      Text("\(NomiFormatters.amountString(minor: SubscriptionsSummary.monthlyTotalMinor(items))) a month")
-        .nomiTextStyle(.displayValue)
-        .foregroundStyle(NomiColor.textPrimary)
+      HStack(alignment: .firstTextBaseline, spacing: 6) {
+        SizedAmountText(
+          minor: SubscriptionsSummary.monthlyTotalMinor(items),
+          fontName: NomiFont.interRegular,
+          size: 32,
+          tracking: -0.6
+        )
+        Text("a month")
+          .font(.custom(NomiFont.interRegular, size: 16, relativeTo: .body))
+          .foregroundStyle(NomiColor.ink)
+      }
+      .accessibilityElement(children: .combine)
       Text(headerCaption(for: items))
         .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textTertiary)
+        .foregroundStyle(NomiColor.inkSecondary)
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .nomiCard(padding: EdgeInsets(top: 18, leading: 18, bottom: 18, trailing: 18))
   }
 
-  /// "3 subscriptions · next: Netflix in 3 days" — reuses
+  /// "3 subscriptions · next: Netflix in 3 days". Reuses
   /// `SubscriptionRowText.nextCharge`'s own day math rather than a second,
-  /// untested copy of it; the leading "next " is dropped from that string
+  /// untested copy of it. The leading "next " is dropped from that string,
   /// since this caption already supplies its own "next:" label.
   private func headerCaption(for items: [RecurringSeries]) -> String {
     guard let next = SubscriptionsSummary.next(items) else { return "" }
@@ -80,16 +96,15 @@ public struct SubscriptionsScreen: View {
   }
 
   private func rows(for items: [RecurringSeries]) -> some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.sm) {
+    VStack(alignment: .leading, spacing: NomiSpacing.md) {
       ForEach(SubscriptionsGrouping.byExpectedDay(items)) { group in
         VStack(alignment: .leading, spacing: NomiSpacing.xs) {
           Text(NomiFormatters.dayMonthAdaptive(group.day, relativeTo: now))
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.textSecondary)
-          VStack(spacing: NomiSpacing.xs) {
-            ForEach(group.rows) { item in
-              row(for: item)
-            }
+            .nomiTextStyle(.subhead)
+            .foregroundStyle(NomiColor.dayHeader)
+            .accessibilityAddTraits(.isHeader)
+          ForEach(group.rows) { item in
+            row(for: item)
           }
         }
       }
@@ -98,44 +113,42 @@ public struct SubscriptionsScreen: View {
 
   private func row(for item: RecurringSeries) -> some View {
     let isOverdue = Calendar.current.startOfDay(for: item.nextExpected) < Calendar.current.startOfDay(for: now)
-    return HStack(spacing: NomiSpacing.sm) {
+    return HStack(spacing: NomiSpacing.cardGap) {
       badge(for: item)
       VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
         Text(item.label)
-          .nomiTextStyle(.body)
-          .foregroundStyle(NomiColor.textPrimary)
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(NomiColor.ink)
           .lineLimit(1)
         HStack(spacing: NomiSpacing.xxs) {
           cadenceCapsule
           if isOverdue {
             Text(SubscriptionRowText.nextCharge(nextExpected: item.nextExpected, now: now))
-              .nomiTextStyle(.caption)
-              .foregroundStyle(NomiColor.textTertiary)
+              .nomiTextStyle(.footnote)
+              .foregroundStyle(NomiColor.inkSecondary)
           }
         }
       }
-      Spacer(minLength: NomiSpacing.xs)
-      Text(NomiFormatters.amountString(minor: item.amountMinor))
-        .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 14))
-        .foregroundStyle(NomiColor.debitText)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      SizedAmountText(minor: item.amountMinor, fontName: NomiFont.interMedium, size: 16)
     }
-    .padding(NomiSpacing.cardPadding)
-    .background(NomiColor.surfaceRow)
-    .nomiCornerRadius(NomiRadius.inset)
+    .accessibilityElement(children: .combine)
+    .nomiCard(padding: EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16))
   }
 
   private var cadenceCapsule: some View {
     Text(SubscriptionRowText.cadence)
-      .nomiTextStyle(.caption)
-      .foregroundStyle(NomiColor.textTertiary)
-      .padding(.horizontal, NomiSpacing.xxs)
-      .background(NomiColor.glassFill)
-      .clipShape(Capsule(style: .continuous))
+      .nomiTextStyle(.footnote)
+      .foregroundStyle(NomiColor.dayHeader)
+      .padding(.horizontal, NomiSpacing.xs)
+      .padding(.vertical, 2)
+      .background(Capsule(style: .continuous).fill(NomiColor.track))
   }
 
-  /// 40pt — subscription rows and budget tiles' size per `NomiCategoryBadge`'s
-  /// own doc comment. No account badge: `RecurringSeries` carries no account
-  /// (design doc §Subscriptions, explicit).
+  /// 40 pt, the size `NomiCategoryBadge`'s own doc comment gives subscription
+  /// rows. No account badge: `RecurringSeries` carries no account (design doc
+  /// §Subscriptions, explicit). A series with no category gets a monogram on
+  /// the neutral `track` fill, with no logo fetching of any kind.
   @ViewBuilder
   private func badge(for item: RecurringSeries) -> some View {
     switch SubscriptionBadge.resolve(item) {
@@ -143,58 +156,44 @@ public struct SubscriptionsScreen: View {
       NomiCategoryBadge(symbolName: category.symbolName, paletteSlot: category.paletteSlot, size: 40)
     case .monogram(let letter):
       Circle()
-        .fill(NomiColor.glassFill)
+        .fill(NomiColor.track)
         .frame(width: 40, height: 40)
         .overlay(
           Text(letter)
-            .nomiTextStyle(.body)
-            .foregroundStyle(Color.white)
+            .font(.custom(NomiFont.interMedium, size: 16, relativeTo: .body))
+            .foregroundStyle(NomiColor.inkDeep)
         )
     }
   }
 }
 
-/// Its own private ten lines, same as `DashboardView`'s: that type is
-/// private to `DashboardView.swift`, which is M2's file, not this unit's.
-private struct FailedLoadCaption: View {
-  let retry: () -> Void
-
-  var body: some View {
-    Button(action: retry) {
-      Text("Couldn't load — tap to retry")
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.overBudget)
-    }
-  }
-}
-
-#Preview("Subscriptions — populated, two badges one monogram, dark") {
+#Preview("Subscriptions — populated, two badges one monogram") {
   NavigationStack {
     SubscriptionsScreen(recurringStore: FakeRecurringStore())
   }
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Subscriptions — empty, dark") {
+#Preview("Subscriptions — empty") {
   NavigationStack {
     SubscriptionsScreen(recurringStore: FakeRecurringStore(series: []))
   }
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
 private struct SubscriptionsScreenPreviewFailure: Error {}
 
-#Preview("Subscriptions — failed to load, dark") {
+#Preview("Subscriptions — failed to load") {
   NavigationStack {
     SubscriptionsScreen(recurringStore: FakeRecurringStore(series: [], failure: SubscriptionsScreenPreviewFailure()))
   }
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Subscriptions — accessibility 3, dark") {
+#Preview("Subscriptions — accessibility 3") {
   NavigationStack {
     SubscriptionsScreen(recurringStore: FakeRecurringStore())
   }
   .environment(\.dynamicTypeSize, .accessibility3)
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }

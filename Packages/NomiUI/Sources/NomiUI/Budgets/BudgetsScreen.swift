@@ -3,12 +3,12 @@ import NomiPreview
 import SwiftData
 import SwiftUI
 
-/// The Budgets page (U12; v5 `ui-budgets` refresh, M3). Category-level only —
-/// no whole-app cap exists or should be added (spec Assumptions). Reads
-/// `Design/**`. Must not edit it. The gauge card's ring and the tiles' over
-/// captions share `NomiRingGauge`/`BudgetRowEmphasis`'s 90% threshold and
-/// `overBudget` token rather than inventing a second red; tiles carry no bar
-/// of their own — the ring carries the aggregate.
+/// The Budgets page (U12; BS). Category-level only: no whole-app cap exists or
+/// should be added (spec Assumptions). Shape from the approved `Budgets`
+/// artboard: an H0 large title, one ring card (month, days left, the left-to-spend
+/// figure inside the ring, the pace line as its caption), then a two-column grid
+/// of category tiles. Each tile is one button into the editor and carries its
+/// own 6 pt progress bar. The nav "+" appears only while a category has no budget.
 public struct BudgetsScreen: View {
   public let budgetStore: BudgetStore
   public let insightsStore: InsightsStore
@@ -18,15 +18,17 @@ public struct BudgetsScreen: View {
   @State private var editingCategory: NomiCore.Category?
   @State private var isAddingBudget = false
   @State private var now = Date()
+  @State private var retryToken = 0
 
   public init(budgetStore: BudgetStore, insightsStore: InsightsStore) {
     self.budgetStore = budgetStore
     self.insightsStore = insightsStore
   }
 
-  /// `nil` means the fetch threw — distinct from a legitimate zero-budgets
-  /// month, which is `[]` and renders `emptyState`.
+  /// `nil` means the fetch threw. That is distinct from a legitimate
+  /// zero-budgets month, which is `[]` and renders `emptyState`.
   private var progress: [BudgetProgress]? {
+    _ = retryToken
     let (year, month) = BudgetPeriod.current(from: now)
     do {
       return try insightsStore.budgetProgress(year: year, month: month)
@@ -43,31 +45,50 @@ public struct BudgetsScreen: View {
     categories.filter { !budgetedCategoryIDs.contains($0.id) }
   }
 
+  private var showsAddButton: Bool {
+    BudgetsLogic.showsAddButton(unbudgetedCount: unbudgetedCategories.count)
+  }
+
   private func amountMinor(for categoryID: UUID) -> Int {
     budgetRows.first { $0.categoryID == categoryID }?.amountMinor ?? 0
   }
 
   public var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: NomiSpacing.cardToCard) {
+      VStack(alignment: .leading, spacing: NomiSpacing.md) {
         if let progress {
           if progress.isEmpty {
             emptyState
           } else if let totals = BudgetTotals.compute(progress) {
-            paceCard(totals: totals)
             gaugeCard(totals: totals)
             categoryBudgetsSection(for: progress)
-            addBudgetButton
           }
         } else {
-          loadFailedState
+          NomiLoadFailedCard(message: "Budgets didn’t load.") {
+            retryToken += 1
+          }
         }
       }
       .padding(.horizontal, NomiSpacing.screenGutter)
-      .padding(.vertical, NomiSpacing.screenGutter)
+      .padding(.vertical, NomiSpacing.sm)
     }
-    .background(NomiColor.surfaceCanvas)
+    .background(NomiColor.ground)
     .navigationTitle("Budgets")
+    #if os(iOS)
+    .navigationBarTitleDisplayMode(.large)
+    #endif
+    .toolbar {
+      if showsAddButton {
+        ToolbarItem(placement: .primaryAction) {
+          Button {
+            isAddingBudget = true
+          } label: {
+            NomiNavIcon(systemName: "plus")
+          }
+          .accessibilityLabel("Add budget")
+        }
+      }
+    }
     .sheet(item: $editingCategory) { category in
       BudgetEditorSheet(
         budgetStore: budgetStore,
@@ -86,23 +107,16 @@ public struct BudgetsScreen: View {
     }
   }
 
-  private var loadFailedState: some View {
-    Text("Couldn't load budgets")
-      .nomiTextStyle(.caption)
-      .foregroundStyle(NomiColor.textTertiary)
-  }
-
   private var emptyState: some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.xs) {
-      Text("No budgets yet")
-        .nomiTextStyle(.title)
-        .foregroundStyle(NomiColor.textPrimary)
-      Text("A budget tracks how much you spend in a category each month and warns you as you approach the limit. Add one to get started.")
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textTertiary)
-      addBudgetButton
-        .padding(.top, NomiSpacing.xs)
+    NomiEmptyState(
+      systemImage: "chart.pie",
+      title: "No budgets yet",
+      message: "Set a monthly limit for a category and Nomi will track your spending against it here.",
+      actionTitle: showsAddButton ? "Add budget" : nil
+    ) {
+      isAddingBudget = true
     }
+    .padding(.top, 96)
   }
 
   private var elapsedFraction: Double {
@@ -112,119 +126,170 @@ public struct BudgetsScreen: View {
     return Double(today) / Double(daysInMonth)
   }
 
-  private func paceCard(totals: BudgetTotals.Totals) -> some View {
-    let pace = BudgetPace.assess(spentFraction: totals.fraction, elapsedFraction: elapsedFraction)
-    return DashboardCard {
-      HStack(alignment: .top, spacing: NomiSpacing.xs) {
-        Image(systemName: "sparkle")
-          .foregroundStyle(NomiColor.textTertiary)
-        Text(pace.line(overByMinor: -totals.remainingMinor))
-          .nomiTextStyle(.body)
-          .foregroundStyle(NomiColor.textPrimary)
-      }
-    }
-  }
-
   private func gaugeCard(totals: BudgetTotals.Totals) -> some View {
     let daysLeft = BudgetDaysLeft.remaining(from: now)
-    return DashboardCard {
-      VStack(spacing: NomiSpacing.sm) {
-        HStack(alignment: .top) {
-          VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-            Text("Monthly")
-              .nomiTextStyle(.caption)
-              .foregroundStyle(NomiColor.textTertiary)
-            Text(BudgetPeriodText.monthRange(for: now))
-              .nomiTextStyle(.body)
-              .foregroundStyle(NomiColor.textPrimary)
-          }
-          Spacer()
-          VStack(alignment: .trailing, spacing: NomiSpacing.xxs) {
-            Text("Days left")
-              .nomiTextStyle(.caption)
-              .foregroundStyle(NomiColor.textTertiary)
-            Text("\(daysLeft) days")
-              .nomiTextStyle(.body)
-              .foregroundStyle(NomiColor.textPrimary)
-          }
+    let pace = BudgetPace.assess(spentFraction: totals.fraction, elapsedFraction: elapsedFraction)
+    let centreCaption = BudgetGaugeText.centreCaption(remainingMinor: totals.remainingMinor)
+    let centreAmount = abs(totals.remainingMinor)
+    return VStack(spacing: NomiSpacing.sm) {
+      HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+          Text("Monthly")
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.inkSecondary)
+          Text(BudgetPeriodText.monthRange(for: now))
+            .nomiTextStyle(.rowTitle)
+            .foregroundStyle(NomiColor.ink)
         }
-        ZStack {
-          NomiRingGauge(fraction: totals.fraction, lineWidth: 14)
-            .frame(width: 140, height: 140)
-          VStack(spacing: NomiSpacing.xxs) {
-            Text("Left to spend")
-              .nomiTextStyle(.caption)
-              .foregroundStyle(NomiColor.textTertiary)
-            Text(NomiFormatters.amountString(minor: totals.remainingMinor))
-              .nomiTextStyle(.displayValue)
-              .foregroundStyle(NomiColor.textPrimary)
-            Text("\(Int((totals.fraction * 100).rounded()))% used")
-              .nomiTextStyle(.caption)
-              .foregroundStyle(NomiColor.textTertiary)
-          }
+        Spacer()
+        VStack(alignment: .trailing, spacing: NomiSpacing.xxs) {
+          Text("Days left")
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.inkSecondary)
+          Text("\(daysLeft) days")
+            .nomiTextStyle(.rowTitle)
+            .foregroundStyle(NomiColor.ink)
         }
       }
+      ZStack {
+        NomiRingGauge(fraction: totals.fraction, lineWidth: 14)
+          .frame(width: 150, height: 150)
+        VStack(spacing: NomiSpacing.xxs) {
+          Text(centreCaption)
+            .nomiTextStyle(.footnote)
+            .foregroundStyle(NomiColor.inkSecondary)
+          SizedAmountText(minor: centreAmount, fontName: NomiFont.interRegular, size: 22)
+          Text("\(BudgetGaugeText.percentUsed(fraction: totals.fraction))% used")
+            .nomiTextStyle(.footnote)
+            .foregroundStyle(NomiColor.inkSecondary)
+        }
+        .frame(maxWidth: 124)
+      }
+      .frame(maxWidth: .infinity)
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(
+        "\(BudgetGaugeText.spokenPercent(fraction: totals.fraction)), \(centreCaption) \(NomiFormatters.amountString(minor: centreAmount))"
+      )
+      Text(pace.line(overByMinor: -totals.remainingMinor))
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.dayHeader)
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
     }
+    .nomiCard(padding: EdgeInsets(top: 18, leading: 18, bottom: 18, trailing: 18))
   }
 
   private func categoryBudgetsSection(for progress: [BudgetProgress]) -> some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.sm) {
+    let columns = [
+      GridItem(.flexible(), spacing: NomiSpacing.cardGap),
+      GridItem(.flexible(), spacing: NomiSpacing.cardGap),
+    ]
+    return VStack(alignment: .leading, spacing: NomiSpacing.cardGap) {
       Text("Category budgets")
         .nomiTextStyle(.title)
-        .foregroundStyle(NomiColor.textPrimary)
-      LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: NomiSpacing.sm) {
+        .foregroundStyle(NomiColor.ink)
+        .accessibilityAddTraits(.isHeader)
+      LazyVGrid(columns: columns, spacing: NomiSpacing.cardGap) {
         ForEach(progress) { item in
           budgetTile(for: item)
-            .contentShape(Rectangle())
-            .onTapGesture {
-              if let category = categories.first(where: { $0.id == item.id }) {
-                editingCategory = category
-              }
-            }
         }
+      }
+      if !showsAddButton {
+        Text(BudgetsLogic.everyCategoryBudgetedCaption)
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .frame(maxWidth: .infinity)
+          .padding(.top, NomiSpacing.xs)
       }
     }
   }
 
   private func budgetTile(for item: BudgetProgress) -> some View {
-    let caption = BudgetTileCaption.text(item.budgetMinor - item.spentMinor)
-    let isAtThreshold = BudgetRowEmphasis.isAtOrAboveThreshold(item)
-    return VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-      NomiCategoryBadge(symbolName: item.symbolName, paletteSlot: item.paletteSlot, size: 40)
-      Text(item.categoryName)
-        .nomiTextStyle(.body)
-        .foregroundStyle(NomiColor.textPrimary)
-        .lineLimit(1)
-      Text(NomiFormatters.amountString(minor: item.spentMinor))
-        .nomiTextStyle(.title)
-        .foregroundStyle(NomiColor.textPrimary)
-      Text(caption.text)
-        .nomiTextStyle(.caption)
-        .foregroundStyle(caption.isOver || isAtThreshold ? NomiColor.overBudget : NomiColor.textTertiary)
+    let remaining = item.budgetMinor - item.spentMinor
+    let caption = BudgetTileCaption.text(remaining)
+    return Button {
+      if let category = categories.first(where: { $0.id == item.id }) {
+        editingCategory = category
+      }
+    } label: {
+      VStack(alignment: .leading, spacing: 0) {
+        NomiCategoryBadge(symbolName: item.symbolName, paletteSlot: item.paletteSlot, size: 40)
+        Text(item.categoryName)
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(NomiColor.ink)
+          .lineLimit(1)
+          .padding(.top, 10)
+        SizedAmountText(minor: item.spentMinor, fontName: NomiFont.interRegular, size: 20)
+          .padding(.top, 4)
+        tileCaption(caption)
+          .padding(.top, 8)
+        NomiProgressBar(fraction: item.fraction)
+          .padding(.top, 8)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .nomiCard(padding: EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14))
     }
-    .padding(NomiSpacing.cardPadding)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(NomiColor.surfaceRow)
-    .nomiCornerRadius(NomiRadius.inset)
+    .buttonStyle(.plain)
+    .accessibilityLabel(
+      BudgetTileSpeech.label(
+        name: item.categoryName,
+        spentMinor: item.spentMinor,
+        remainingMinor: remaining,
+        fraction: item.fraction
+      )
+    )
   }
 
-  private var addBudgetButton: some View {
-    Button {
-      isAddingBudget = true
-    } label: {
-      Text("Add Budget")
-        .nomiTextStyle(.body)
-        .foregroundStyle(NomiColor.textPrimary)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, NomiSpacing.xs)
-        .background(NomiColor.accent)
-        .clipShape(Capsule(style: .continuous))
+  /// "₹600.00 over" carries a "!" glyph and the error red, so over-budget
+  /// never rests on colour alone. Under budget the caption is plain.
+  @ViewBuilder
+  private func tileCaption(_ caption: (text: String, isOver: Bool)) -> some View {
+    if caption.isOver {
+      HStack(spacing: 4) {
+        Text("!")
+          .font(.custom(NomiFont.interSemiBold, size: 10, relativeTo: .caption2))
+          .foregroundStyle(NomiColor.onPrimary)
+          .frame(width: 14, height: 14)
+          .background(Circle().fill(NomiColor.error))
+          .accessibilityHidden(true)
+        Text(caption.text)
+          .nomiTextStyle(.footnote)
+          .foregroundStyle(NomiColor.error)
+      }
+    } else {
+      Text(caption.text)
+        .nomiTextStyle(.footnote)
+        .foregroundStyle(NomiColor.inkSecondary)
     }
-    .disabled(unbudgetedCategories.isEmpty)
   }
 }
 
-/// The gauge card's date-range caption — "1 Sep – 30 Sep", the current
+/// An amount drawn at an exact artboard size, with the decimals dimmed to the
+/// ground's 65% ink (SIMP §1 rule 4). `NomiAmountText` takes only `NomiTextStyle`
+/// roles, and the Budgets and Subscriptions artboards set 20, 22 and 32 Regular,
+/// which no role names. The split still comes from `NomiAmountFormat`, so the
+/// sign and grouping match every other amount. Shared with `SubscriptionsScreen`.
+struct SizedAmountText: View {
+  let minor: Int
+  let fontName: String
+  let size: CGFloat
+  var tracking: CGFloat = 0
+
+  var body: some View {
+    let parts = NomiAmountFormat.parts(minor: minor)
+    (Text(parts.sign + parts.integer)
+      .font(.custom(fontName, size: size, relativeTo: .body))
+      .foregroundStyle(NomiColor.ink)
+      + Text(parts.decimals)
+      .font(.custom(fontName, size: size, relativeTo: .body))
+      .foregroundStyle(NomiColor.ink.opacity(NomiColor.decimalOpacityGround)))
+      .tracking(tracking)
+      .lineLimit(1)
+      .minimumScaleFactor(0.5)
+  }
+}
+
+/// The gauge card's date-range caption: "1 Sep – 30 Sep", the current
 /// month's first and last day.
 enum BudgetPeriodText {
   static func monthRange(for date: Date, calendar: Calendar = .current) -> String {
@@ -236,15 +301,15 @@ enum BudgetPeriodText {
   }
 }
 
-#Preview("Budgets — no budgets set, dark") {
+#Preview("Budgets — no budgets set") {
   NavigationStack {
     BudgetsScreen(budgetStore: FakeBudgetStore(budgets: []), insightsStore: BudgetsPreviewSupport.makeInsightsStore(progress: []))
   }
   .modelContainer(BudgetsPreviewSupport.makeContainer(budgets: []))
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Budgets — mixed thresholds, dark") {
+#Preview("Budgets — mixed thresholds") {
   NavigationStack {
     BudgetsScreen(
       budgetStore: FakeBudgetStore(budgets: BudgetsPreviewSupport.sampleBudgets),
@@ -252,12 +317,12 @@ enum BudgetPeriodText {
     )
   }
   .modelContainer(BudgetsPreviewSupport.makeContainer(budgets: BudgetsPreviewSupport.sampleBudgets))
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
 private struct BudgetsScreenLoadFailure: Error {}
 
-/// Only `budgetProgress` throws — this screen never calls the other
+/// Only `budgetProgress` throws. This screen never calls the other
 /// `InsightsStore` methods, so they can return empty rather than also throw.
 @MainActor
 private final class FailingBudgetProgressInsightsStore: InsightsStore {
@@ -268,10 +333,10 @@ private final class FailingBudgetProgressInsightsStore: InsightsStore {
   func transactions(in period: InsightPeriod) throws -> [NomiCore.Transaction] { [] }
 }
 
-#Preview("Budgets — failed to load, dark") {
+#Preview("Budgets — failed to load") {
   NavigationStack {
     BudgetsScreen(budgetStore: FakeBudgetStore(budgets: []), insightsStore: FailingBudgetProgressInsightsStore())
   }
   .modelContainer(BudgetsPreviewSupport.makeContainer(budgets: []))
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }

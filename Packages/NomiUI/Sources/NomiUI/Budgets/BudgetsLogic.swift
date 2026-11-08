@@ -119,3 +119,53 @@ enum BudgetTileCaption {
       : ("\(NomiFormatters.amountString(minor: -remainingMinor)) over", true)
   }
 }
+
+/// Screen-level rules for the Budgets page: when the nav "+" exists and the
+/// caption that replaces it once every category is budgeted (SIMP §3 item 12).
+enum BudgetsLogic {
+  /// The nav "+" is shown only while some category has no budget yet.
+  static func showsAddButton(unbudgetedCount: Int) -> Bool {
+    unbudgetedCount > 0
+  }
+
+  static let everyCategoryBudgetedCaption = "Every category has a budget."
+}
+
+/// The confirmation copy for the editor's "Remove budget" row. The alert is
+/// the one place this sentence lives.
+enum BudgetRemoveConfirmation {
+  static func message(categoryName: String) -> String {
+    "\(categoryName) stops tracking against a monthly limit. Your transactions are not changed."
+  }
+}
+
+/// The gauge card's centre label and percentages. The centre never prints a
+/// bare absolute value under "Left to spend": past the limit it reads
+/// "Over budget", so the number cannot be read as money still to spend.
+enum BudgetGaugeText {
+  static func centreCaption(remainingMinor: Int) -> String {
+    remainingMinor >= 0 ? "Left to spend" : "Over budget"
+  }
+
+  /// Whole percent of budget used, for the visible "66% used" caption.
+  static func percentUsed(fraction: Double) -> Int {
+    Int((fraction * 100).rounded())
+  }
+
+  /// The same figure spoken, so the gauge is not read as a bare ratio
+  /// (N10: "N percent of budget").
+  static func spokenPercent(fraction: Double) -> String {
+    "\(percentUsed(fraction: fraction)) percent of budget used"
+  }
+}
+
+/// The spoken summary of one category tile. A tile is one button, so its
+/// VoiceOver label carries the figures the caption and colour show, and says
+/// "over" in words rather than leaving it to the red colour or the "!" glyph.
+enum BudgetTileSpeech {
+  static func label(name: String, spentMinor: Int, remainingMinor: Int, fraction: Double) -> String {
+    let spent = NomiFormatters.amountString(minor: spentMinor)
+    let caption = BudgetTileCaption.text(remainingMinor).text
+    return "\(name), \(spent) spent, \(caption), \(BudgetGaugeText.spokenPercent(fraction: fraction))"
+  }
+}
