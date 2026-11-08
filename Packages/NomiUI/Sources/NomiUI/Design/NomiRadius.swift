@@ -1,22 +1,30 @@
+// clt-harness: include
 import CoreGraphics
 import SwiftUI
 
-/// Radius scale — 8 tiles, 16 inset, 24 cards/bars/nav/sheets, full pill for
-/// buttons/chips/avatars. Nothing below 8, one flagged exception: chart bar
-/// caps at 4pt (declared in `NomiChart`-adjacent code, not here — the floor
-/// this type expresses is the one every surface, control, chip and sheet obeys).
-/// v5 (`nomi-ui-refresh`): `card` 16 → 24, restoring the v4 ruling that
-/// never shipped. Concentric rule: card 24 → inset 16 → tile 8.
+/// Radius scale (F1 of nomi-ios-build-plan, I-2): tile 8, inset 16, card 24,
+/// sheet 32, chip 18 (a 36-high chip), control 22 (a 44-high pill), and a full
+/// pill. Concentric rule: card 24 -> inset 16 -> tile 8.
 public enum NomiRadius {
   public static let tile: CGFloat = 8
-  /// v5, new: tiles inside a card (hero Income/Expenses), ledger row cards,
+  /// Tiles inside a card: hero Income and Expenses, ledger row cards,
   /// subscription row cards, per-category budget cards.
   public static let inset: CGFloat = 16
   public static let card: CGFloat = 24
+  /// Sheets, from the light restyle (presented by `nomiSheet`).
+  public static let sheet: CGFloat = 32
+  /// A 36-high chip.
+  public static let chip: CGFloat = 18
+  /// A 44-high pill control.
+  public static let control: CGFloat = 22
+
+  /// Legacy name for sheets and bars. Keeps its value of 24 so the tab shell
+  /// draws unchanged until its own unit; new sheets use `sheet`.
+  @available(*, deprecated, message: "Use NomiRadius.sheet")
   public static let bar: CGFloat = 24
   public static let pill: CGFloat = .infinity
 
-  /// Cards and sheets round at 24, `.continuous`, per the design doc.
+  /// Cards and sheets round `.continuous`, per the design doc.
   public static let cardSheetStyle: RoundedCornerStyle = .continuous
 }
 

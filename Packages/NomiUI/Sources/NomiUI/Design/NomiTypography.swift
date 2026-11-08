@@ -1,3 +1,4 @@
+// clt-harness: include
 import CoreText
 import SwiftUI
 
@@ -9,40 +10,54 @@ import AppKit
 public typealias NomiPlatformFont = NSFont
 #endif
 
-/// Montserrat is Nomi's primary face (Estate-Ease's Tailwind `sans` default,
-/// same geometric-sans genre as Gilroy, OFL-licensed so embedding is
-/// unambiguous). Inter is the secondary face for captions and small text.
+/// Inter only (F1 of nomi-ios-build-plan, I-3). Montserrat is retired: its
+/// names remain as deprecated aliases that point at Inter, and X1 removes the
+/// font files once nothing references them.
+///
 /// Font files ship in `Resources/Fonts/**` as package resources, not app
-/// resources — `UIAppFonts` only covers fonts in the *app* bundle, so
-/// `App/Info.plist` does not declare them (U18); `registerIfNeeded` below is
-/// the only thing that puts these on the process font table. These exact
-/// filenames are frozen (U0) — this type must not invent a different one.
+/// resources. `UIAppFonts` only covers fonts in the *app* bundle, so
+/// `App/Info.plist` does not declare them (U18). `registerIfNeeded` below is
+/// the only thing that puts these on the process font table.
+///
+/// Inter Medium and Inter SemiBold are not in the repo yet (Q2, pending). Until
+/// F2F adds them, `Font.custom` falls back to the system font for those two
+/// faces. That fallback is visible and is flagged in the PR. Do not add font
+/// files here without the approval.
 ///
 /// This file targets iOS at runtime but also compiles under plain macOS
-/// (`swift test` on the CI runner has no iOS simulator attached) — the
-/// platform font APIs are bridged via `NomiPlatformFont` for that reason.
+/// (`swift test` on the CI runner has no iOS simulator attached). The platform
+/// font APIs are bridged via `NomiPlatformFont` for that reason.
 public enum NomiFont {
-  public static let montserratMedium = "Montserrat-Medium"
-  public static let montserratSemiBold = "Montserrat-SemiBold"
-  public static let montserratBold = "Montserrat-Bold"
   public static let interRegular = "Inter-Regular"
+  public static let interMedium = "Inter-Medium"
+  public static let interSemiBold = "Inter-SemiBold"
 
-  /// One-time registration for the four bundled font files — see the type
+  @available(*, deprecated, message: "Use NomiFont.interMedium")
+  public static let montserratMedium = interMedium
+  @available(*, deprecated, message: "Use NomiFont.interSemiBold")
+  public static let montserratSemiBold = interSemiBold
+  @available(*, deprecated, message: "Use NomiFont.interSemiBold")
+  public static let montserratBold = interSemiBold
+
+  /// Font files present in `Resources/Fonts`. F1 lists the four files that
+  /// exist today: Inter Regular and three Montserrat, which X1 removes.
+  public static let bundledFileNames: [String] = [
+    "Montserrat-Medium.otf",
+    "Montserrat-SemiBold.otf",
+    "Montserrat-Bold.otf",
+    "Inter-Regular.otf",
+  ]
+
+  /// One-time registration for every file in `bundledFileNames`. See the type
   /// doc above for why nothing else registers them.
   public static func registerIfNeeded() {
-    let names = [
-      "Montserrat-Medium.otf",
-      "Montserrat-SemiBold.otf",
-      "Montserrat-Bold.otf",
-      "Inter-Regular.otf",
-    ]
-    for name in names {
+    for name in bundledFileNames {
       guard let url = Bundle.module.url(forResource: name, withExtension: nil) else { continue }
       var registrationError: Unmanaged<CFError>?
       let didRegister = CTFontManagerRegisterFontsForURL(url as CFURL, .process, &registrationError)
       guard !didRegister else { continue }
       // A second call in the same process re-registers nothing already
-      // registered — `didRegister` is false, but the font resolves by name
+      // registered. `didRegister` is false, but the font resolves by name
       // just fine, so that's a repeat call, not a failure.
       let postScriptName = name.hasSuffix(".otf") ? String(name.dropLast(4)) : name
       let alreadyResolves = NomiPlatformFont(name: postScriptName, size: 12) != nil
@@ -51,41 +66,109 @@ public enum NomiFont {
   }
 }
 
-/// Type roles mapped from DESIGN.md's Figma-derived scale, negative tracking preserved.
+/// Type roles from the approved light system (I-3). Negative tracking is kept where
+/// the artboards set it.
 public enum NomiTextStyle {
-  /// v5 (`nomi-ui-refresh`): Montserrat-Bold 44, up from SemiBold 39 — "bold
-  /// white text" moving to the Bold cut, shipped in the bundle since U5 with
-  /// zero call sites until now.
-  case dashboardHeroTotal
-  case title
-  case body
-  case caption
-  /// v5, new: Montserrat-Bold 28. Gauge centre, remaining-budget figure,
-  /// sheet amount, subscriptions monthly total. v3 listed "Card value Bold
-  /// 28" and no case was ever added until this one.
+  /// Large title (H0 nav bar, via the appearance proxy): SemiBold 34, tracking -0.4.
+  case largeTitle
+  /// Hero amount: Regular 48, tracking -1.4.
+  case heroAmount
+  /// Accounts hero title: SemiBold 24.
+  case heroTitle
+  /// Gauge centre, sheet amount. Regular 28, tracking -0.6. Remapped.
   case displayValue
+  /// Section and card titles. SemiBold 20. Remapped.
+  case title
+  /// Card titles and sheet titles: SemiBold 17.
+  case headline
+  /// Body text. Medium 16. Remapped.
+  case body
+  /// Merchant and row labels: Medium 15.
+  case rowTitle
+  /// Settings rows: Regular 15.
+  case rowBody
+  /// Row amounts: Medium 16, monospaced digits.
+  case amount
+  /// Credit amounts: SemiBold 16, monospaced digits.
+  case amountStrong
+  /// The black pill button: SemiBold 16.
+  case button
+  /// Cancel: Medium 17.
+  case navAction
+  /// Save: SemiBold 17.
+  case navActionStrong
+  /// Filter chips: Medium 14.
+  case chip
+  /// The selected filter chip: SemiBold 14.
+  case chipSelected
+  /// Hero label row: Medium 13.
+  case subhead
+  /// Read-only chip on a hero: Medium 12.
+  case heroChip
+  /// Section labels: SemiBold 13.
+  case label
+  /// Small body text: Regular 13. Kept unchanged.
+  case caption
+  /// Row subtitles and card captions: Regular 12.
+  case footnote
+  /// Chart ticks: Medium 11.
+  case micro
+  /// Tab bar labels: Medium 10.5.
+  case tabLabel
+  /// Retired. Use `heroAmount`.
+  @available(*, deprecated, message: "Use NomiTextStyle.heroAmount")
+  case dashboardHeroTotal
 
   public var font: Font {
     switch self {
-    case .dashboardHeroTotal: return .custom(NomiFont.montserratBold, size: 44)
-    case .title: return .custom(NomiFont.montserratSemiBold, size: 20)
-    case .body: return .custom(NomiFont.montserratMedium, size: 16)
-    case .caption: return .custom(NomiFont.interRegular, size: 13)
-    case .displayValue: return .custom(NomiFont.montserratBold, size: 28)
+    case .largeTitle: return .custom(NomiFont.interSemiBold, size: 34, relativeTo: .largeTitle)
+    case .heroAmount: return .custom(NomiFont.interRegular, size: 48, relativeTo: .largeTitle)
+    case .heroTitle: return .custom(NomiFont.interSemiBold, size: 24, relativeTo: .title)
+    case .displayValue: return .custom(NomiFont.interRegular, size: 28, relativeTo: .title)
+    case .title: return .custom(NomiFont.interSemiBold, size: 20, relativeTo: .title3)
+    case .headline: return .custom(NomiFont.interSemiBold, size: 17, relativeTo: .headline)
+    case .body: return .custom(NomiFont.interMedium, size: 16, relativeTo: .body)
+    case .rowTitle: return .custom(NomiFont.interMedium, size: 15, relativeTo: .body)
+    case .rowBody: return .custom(NomiFont.interRegular, size: 15, relativeTo: .body)
+    case .amount: return .custom(NomiFont.interMedium, size: 16, relativeTo: .body).monospacedDigit()
+    case .amountStrong: return .custom(NomiFont.interSemiBold, size: 16, relativeTo: .body).monospacedDigit()
+    case .button: return .custom(NomiFont.interSemiBold, size: 16, relativeTo: .body)
+    case .navAction: return .custom(NomiFont.interMedium, size: 17, relativeTo: .body)
+    case .navActionStrong: return .custom(NomiFont.interSemiBold, size: 17, relativeTo: .body)
+    case .chip: return .custom(NomiFont.interMedium, size: 14, relativeTo: .subheadline)
+    case .chipSelected: return .custom(NomiFont.interSemiBold, size: 14, relativeTo: .subheadline)
+    case .subhead: return .custom(NomiFont.interMedium, size: 13, relativeTo: .subheadline)
+    case .heroChip: return .custom(NomiFont.interMedium, size: 12, relativeTo: .caption)
+    case .label: return .custom(NomiFont.interSemiBold, size: 13, relativeTo: .footnote)
+    case .caption: return .custom(NomiFont.interRegular, size: 13, relativeTo: .caption)
+    case .footnote: return .custom(NomiFont.interRegular, size: 12, relativeTo: .caption)
+    case .micro: return .custom(NomiFont.interMedium, size: 11, relativeTo: .caption2)
+    case .tabLabel: return .custom(NomiFont.interMedium, size: 10.5, relativeTo: .caption2)
+    case .dashboardHeroTotal: return NomiTextStyle.heroAmount.font
+    }
+  }
+
+  public var tracking: CGFloat {
+    switch self {
+    case .largeTitle: return -0.4
+    case .heroAmount: return -1.4
+    case .displayValue: return -0.6
+    case .dashboardHeroTotal: return NomiTextStyle.heroAmount.tracking
+    default: return 0
     }
   }
 }
 
 public extension View {
   func nomiTextStyle(_ style: NomiTextStyle) -> some View {
-    font(style.font)
+    font(style.font).tracking(style.tracking)
   }
 }
 
 /// Montserrat is wider than Inter at the same size, and `.monospacedDigit()`
 /// is a system-font modifier that does not apply to a custom face. Reaching
 /// Montserrat's `tnum` needs an explicit font descriptor with
-/// `kNumberSpacingType`/`kMonospacedNumbersSelector` — written once, here.
+/// `kNumberSpacingType`/`kMonospacedNumbersSelector`, written once, here.
 public enum TabularFigures {
   public static func platformFont(name: String, size: CGFloat) -> NomiPlatformFont {
     #if canImport(UIKit)
