@@ -110,6 +110,17 @@ enum BackfillCompletionSummary {
     var lines = [
       "\(summary.scanned) emails scanned",
       "\(summary.created) transactions found",
+    ]
+    lines.append(contentsOf: detailLines(for: summary))
+    return lines
+  }
+
+  /// The lines under the Backfill count on the Done frame. The count line
+  /// already says how many were scanned and found, so only the match
+  /// breakdown and the unmatched senders are added here. Those two are the only
+  /// place the scan reports them, so they stay on the screen.
+  static func detailLines(for summary: SyncSummary) -> [String] {
+    var lines = [
       "\(summary.packMatched) matched a known bank format, \(summary.heuristicMatched) matched generically",
     ]
     if !summary.unmatchedSenders.isEmpty {
@@ -118,4 +129,109 @@ enum BackfillCompletionSummary {
     }
     return lines
   }
+}
+
+/// The Backfill screen's controls for each phase (DEC-09, A-09 item 3). Every
+/// state shows at most one white primary, or the glass Cancel while a scan
+/// runs, never both. `showsLeave` is the plain white "Done" text that leaves
+/// the screen while the scan carries on; it is not a button in the capsule
+/// style and is absent once the scan has finished, because the white Done is
+/// then the exit.
+struct BackfillControls: Equatable {
+  let primary: BackfillControl?
+  let secondary: BackfillControl?
+  let showsLeave: Bool
+
+  static func forPhase(_ phase: BackfillPhase) -> BackfillControls {
+    switch phase {
+    case .notStarted, .running:
+      return BackfillControls(primary: nil, secondary: .cancel, showsLeave: true)
+    case .cancelled:
+      return BackfillControls(primary: .resume, secondary: nil, showsLeave: true)
+    case .completed:
+      return BackfillControls(primary: .done, secondary: nil, showsLeave: false)
+    case .failed:
+      return BackfillControls(primary: .retry, secondary: nil, showsLeave: true)
+    }
+  }
+}
+
+enum BackfillControl: Equatable {
+  case cancel, resume, done, retry
+
+  var title: String {
+    switch self {
+    case .cancel: return "Cancel"
+    case .resume: return "Resume"
+    case .done: return "Done"
+    case .retry: return "Retry"
+    }
+  }
+
+  /// Cancel is the only secondary. Cancelling a scan only pauses it, so it is
+  /// dark glass, never a red destructive control (DEC-09).
+  var kind: NomiHeroButtonStyle.Kind {
+    switch self {
+    case .cancel: return .secondary
+    case .resume, .done, .retry: return .primary
+    }
+  }
+}
+
+/// The attention card on Connect mail (ConnectMailAttention artboard). Keyed
+/// on the state stream plus what this screen has already seen: the stream
+/// carries `lastSync` only while connected, so the "Last synced" sentence needs
+/// a connection observed in this screen's lifetime.
+struct MailAttentionCopy: Equatable {
+  let title: String
+  let message: String
+}
+
+enum MailAttentionLogic {
+  static func copy(
+    for state: MailConnectionState,
+    hadConnection: Bool,
+    lastSync: Date?,
+    now: Date
+  ) -> MailAttentionCopy? {
+    switch state {
+    case .connected, .connecting:
+      return nil
+    case .disconnected:
+      guard hadConnection else { return nil }
+      let next = "Connect again to keep your numbers current."
+      guard let lastSync else {
+        return MailAttentionCopy(title: "Mail disconnected", message: next)
+      }
+      let relative = NomiFormatters.relativeTime.localizedString(for: lastSync, relativeTo: now)
+      return MailAttentionCopy(title: "Mail disconnected", message: "Last synced \(relative). \(next)")
+    case .failed(let error):
+      return MailAttentionCopy(
+        title: "Couldn’t reach your mail",
+        message: SyncStatusRow.failureMessage(for: error)
+      )
+    }
+  }
+}
+
+/// Copy that makes a claim about the mail credential (Amendment 4, R2). Each
+/// clause is checked against the code, so a change here must be re-checked:
+/// the item is saved with `kSecAttrSynchronizable: false`, so it does not sync
+/// (NomiIngest, KeychainCredentialStore.swift:106). It is saved after first
+/// unlock and is not ThisDeviceOnly (line 59), so an encrypted device backup
+/// restored to a replacement device can carry it. That is why the sentence
+/// says only "kept in" and "may need to". The only network code is the IMAP
+/// fetcher (no HTTP client in any Sources file; gate G8 counts zero), and
+/// transactions reach another device only through CloudKit (NomiModelContainer
+/// makeCloudKit, used when the user is signed in to iCloud).
+enum ConnectMailCopy {
+  static let credentialCaption =
+    "Your mail password is kept in this device’s Keychain. It does not sync, so you may need to enter it again on another device. Your transactions sync only if you use iCloud."
+}
+
+/// Chrome for the Backfill moment (Amendment 4, R3). The status bar is hidden
+/// for all five phases, so the layout does not move when the state changes. The
+/// modifier that applies this is in BackfillScreen, iOS only.
+enum BackfillChrome {
+  static let hidesStatusBar = true
 }

@@ -118,4 +118,132 @@ final class OnboardingLogicTests: XCTestCase {
     let lines = BackfillCompletionSummary.lines(for: summary)
     XCTAssertFalse(lines.contains { $0.contains("@") })
   }
+
+  /// The Done frame's count line already says scanned and found, so the detail
+  /// lines must not repeat them. They keep the match breakdown and the unmatched
+  /// senders, which the scan reports nowhere else on this screen.
+  func testDetailLinesOmitTheCountsTheCountLineAlreadyShows() {
+    let summary = SyncSummary(scanned: 1200, created: 91, merged: 4, flagged: 6, packMatched: 70, heuristicMatched: 21, unmatchedSenders: [])
+    let lines = BackfillCompletionSummary.detailLines(for: summary)
+    XCTAssertEqual(lines, ["70 matched a known bank format, 21 matched generically"])
+  }
+
+  func testDetailLinesKeepTheUnmatchedSenders() {
+    let summary = SyncSummary(scanned: 1200, created: 91, merged: 4, flagged: 6, packMatched: 70, heuristicMatched: 21,
+                              unmatchedSenders: [UnmatchedSender(domain: "boa.com", count: 1)])
+    XCTAssertTrue(BackfillCompletionSummary.detailLines(for: summary).contains("Not matched: boa.com (1)"))
+  }
+
+  // MARK: - One primary per Backfill state (DEC-09, A-09 item 3)
+
+  /// Each state shows exactly one white primary or the glass Cancel, never both.
+  func testEveryBackfillStateShowsExactlyOneWhitePrimaryOrTheGlassCancel() {
+    let running = BackfillControls.forPhase(.running)
+    XCTAssertNil(running.primary)
+    XCTAssertEqual(running.secondary, .cancel)
+
+    for phase in [BackfillPhase.cancelled, .completed, .failed] {
+      let controls = BackfillControls.forPhase(phase)
+      XCTAssertNotNil(controls.primary, "\(phase) needs one white primary")
+      XCTAssertNil(controls.secondary, "\(phase) must not also show Cancel")
+    }
+  }
+
+  func testPausedShowsResumeAsThePrimary() {
+    XCTAssertEqual(BackfillControls.forPhase(.cancelled).primary, .resume)
+  }
+
+  func testCompletedShowsDoneAsThePrimaryAndNoLeaveText() {
+    let controls = BackfillControls.forPhase(.completed)
+    XCTAssertEqual(controls.primary, .done)
+    XCTAssertFalse(controls.showsLeave, "the white Done is the exit once the scan has finished")
+  }
+
+  func testFailedShowsRetryAsThePrimary() {
+    XCTAssertEqual(BackfillControls.forPhase(.failed).primary, .retry)
+  }
+
+  /// Leaving while a scan runs must stay possible, because the scan carries on
+  /// after the screen is gone. Only the finished frame has no leave text.
+  func testLeaveIsAvailableUntilTheScanFinishes() {
+    XCTAssertTrue(BackfillControls.forPhase(.notStarted).showsLeave)
+    XCTAssertTrue(BackfillControls.forPhase(.running).showsLeave)
+    XCTAssertTrue(BackfillControls.forPhase(.cancelled).showsLeave)
+    XCTAssertTrue(BackfillControls.forPhase(.failed).showsLeave)
+  }
+
+  func testOnlyCancelIsSecondaryAndSecondaryIsGlassNotNavy() {
+    XCTAssertEqual(BackfillControl.cancel.kind, .secondary)
+    for control in [BackfillControl.resume, .done, .retry] {
+      XCTAssertEqual(control.kind, .primary, "\(control) must be the white primary")
+    }
+  }
+
+  func testBackfillControlTitlesAreTheShippedWords() {
+    XCTAssertEqual(BackfillControl.cancel.title, "Cancel")
+    XCTAssertEqual(BackfillControl.resume.title, "Resume")
+    XCTAssertEqual(BackfillControl.done.title, "Done")
+    XCTAssertEqual(BackfillControl.retry.title, "Retry")
+  }
+
+  // MARK: - Mail attention card (ConnectMailAttention)
+
+  func testNoAttentionCardWhileConnectedOrConnecting() {
+    let now = Date()
+    XCTAssertNil(MailAttentionLogic.copy(for: .connected(address: "a@b.com", lastSync: now), hadConnection: true, lastSync: now, now: now))
+    XCTAssertNil(MailAttentionLogic.copy(for: .connecting, hadConnection: true, lastSync: now, now: now))
+  }
+
+  /// A first-run user who has never connected has nothing to attend to yet.
+  func testNoAttentionCardForDisconnectedWithoutAPriorConnection() {
+    XCTAssertNil(MailAttentionLogic.copy(for: .disconnected, hadConnection: false, lastSync: nil, now: Date()))
+  }
+
+  func testDisconnectedAfterAConnectionSaysLastSyncedRelativeToNow() throws {
+    let now = Date()
+    let lastSync = now.addingTimeInterval(-2 * 86_400)
+    let copy = try XCTUnwrap(MailAttentionLogic.copy(for: .disconnected, hadConnection: true, lastSync: lastSync, now: now))
+    XCTAssertEqual(copy.title, "Mail disconnected")
+    XCTAssertTrue(copy.message.hasPrefix("Last synced "), copy.message)
+    XCTAssertTrue(copy.message.hasSuffix(" ago. Connect again to keep your numbers current."), copy.message)
+  }
+
+  func testDisconnectedAfterAConnectionWithoutASyncOmitsTheSyncSentence() throws {
+    let copy = try XCTUnwrap(MailAttentionLogic.copy(for: .disconnected, hadConnection: true, lastSync: nil, now: Date()))
+    XCTAssertEqual(copy.message, "Connect again to keep your numbers current.")
+  }
+
+  func testFailedStateGetsTheSettingsFailureCopy() throws {
+    let copy = try XCTUnwrap(MailAttentionLogic.copy(for: .failed(.authenticationFailed), hadConnection: true, lastSync: nil, now: Date()))
+    XCTAssertEqual(copy.title, "Couldn’t reach your mail")
+    XCTAssertEqual(copy.message, SyncStatusRow.failureMessage(for: .authenticationFailed))
+  }
+
+  // MARK: - Credential claim (DEC-07, checked against the code)
+
+  /// Pins the caption to Amendment 4 (R2), character for character, and to the
+  /// clauses the code supports. The item does not sync
+  /// (`kSecAttrSynchronizable` is false, KeychainCredentialStore.swift:106), and
+  /// it is not ThisDeviceOnly (line 59), so the sentence says "kept in" and
+  /// "may need to", never "stays" or "each device". Transactions sync only
+  /// through iCloud.
+  func testCredentialCaptionClaimsOnlyWhatTheCodeSupports() {
+    let caption = ConnectMailCopy.credentialCaption
+    XCTAssertEqual(
+      caption,
+      "Your mail password is kept in this device’s Keychain. It does not sync, so you may need to enter it again on another device. Your transactions sync only if you use iCloud.")
+    let lowered = caption.lowercased()
+    for required in ["Keychain", "does not sync", "may need to", "Your transactions sync only if you use iCloud."] {
+      XCTAssertTrue(caption.contains(required), "missing: \(required)")
+    }
+    for banned in ["stays", "each device", "never leave", "icloud keychain"] {
+      XCTAssertFalse(lowered.contains(banned), "overstates the credential: \(banned)")
+    }
+  }
+
+  /// The Backfill moment hides the status bar on every phase, so the layout does
+  /// not move between frames (Amendment 4, R3). The modifier reads this constant.
+  func testBackfillHidesTheStatusBarOnEveryPhase() {
+    XCTAssertTrue(BackfillChrome.hidesStatusBar)
+  }
 }
