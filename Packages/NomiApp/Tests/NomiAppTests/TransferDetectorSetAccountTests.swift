@@ -16,6 +16,8 @@ import XCTest
 final class TransferDetectorSetAccountTests: XCTestCase {
 
   private var keepAlive: ModelContainer?
+  /// Makes the one save `setAccount` makes fail while `refuses` is true (TR4 rollback).
+  private let saveGate = SaveGate()
 
   private let savings = UUID(uuidString: "AC000000-0000-0000-0000-00000000000A")!
   private let card = UUID(uuidString: "AC000000-0000-0000-0000-00000000000C")!
@@ -52,12 +54,37 @@ final class TransferDetectorSetAccountTests: XCTestCase {
     context.insert(Account(id: savings, displayName: "Savings", institution: "HDFC", lastFour: "2210", kindRaw: "bank"))
     context.insert(Account(id: card, displayName: "Card", institution: "HDFC", lastFour: "4471", kindRaw: "card"))
     let coordinator = WriteCoordinator(cache: InsightsCache())
+    let gate = saveGate
     let store = SwiftDataTransactionStore(
       context: context,
       coordinator: coordinator,
       transferCalendar: calendar,
-      now: { self.commitTime })
+      now: { self.commitTime },
+      saveAccountWrite: { context in
+        if gate.refuses { throw ForcedSaveFailure() }
+        try context.save()
+      })
     return (store, context, coordinator)
+  }
+
+  /// An email row from a card alert, the kind `setAccount` learns a binding from.
+  private func emailRow(_ id: UUID, account: UUID?) -> Transaction {
+    Transaction(
+      id: id,
+      date: calendar.date(from: DateComponents(year: 2026, month: 11, day: 12, hour: 12))!,
+      descriptionText: "HDFC CARD ALERT",
+      normalizedDescription: "HDFC CARD ALERT",
+      amountMinor: 75_000,
+      directionRaw: Direction.debit.rawValue,
+      categorySourceRaw: CategorySource.none.rawValue,
+      accountID: account,
+      sourceRaw: IngestSource.email.rawValue,
+      dedupeKey: id.uuidString,
+      createdAt: commitTime,
+      updatedAt: commitTime,
+      senderDomain: "hdfcbank.net",
+      cardFragment: "4471"
+    )
   }
 
   private func row(
@@ -186,6 +213,97 @@ final class TransferDetectorSetAccountTests: XCTestCase {
     await fulfillment(of: [recorder.received], timeout: 5)
     XCTAssertEqual(recorder.calls, [Set([categoryS, categoryC])])
   }
+
+  // MARK: - Rollback (TR4)
+
+  /// The save fails after the card is assigned and the pair is marked. Neither
+  /// the assignment nor the marks are left dirty in the context, and nothing
+  /// reaches the store.
+  func testAFailedSaveRollsBackTheAccountAndTheMarks() throws {
+    let (store, context, _) = try makeStore()
+    context.insert(row(s, .debit, "HDFC CREDIT CARD PAYMENT", day: 10, account: savings))
+    context.insert(row(c, .credit, "PAYMENT RECEIVED - THANK YOU", day: 11, account: nil))
+    try context.save()
+
+    saveGate.refuses = true
+    XCTAssertThrowsError(try store.setAccount(c, to: card)) { error in
+      XCTAssertTrue(error is ForcedSaveFailure)
+    }
+
+    let inMemory = try rows(context)
+    XCTAssertNil(inMemory[c]?.accountID, "the assignment must not stay dirty in the context")
+    XCTAssertNil(inMemory[c]?.transferGroupID)
+    XCTAssertNil(inMemory[c]?.transferSourceRaw)
+    XCTAssertNil(inMemory[s]?.transferGroupID)
+    XCTAssertNil(inMemory[s]?.transferSourceRaw)
+
+    let stored = try rows(ModelContext(try XCTUnwrap(keepAlive)))
+    XCTAssertNil(stored[c]?.accountID)
+    XCTAssertNil(stored[s]?.transferSourceRaw)
+    XCTAssertNil(stored[c]?.transferSourceRaw)
+  }
+
+  /// The defect the rollback prevents: a failed assignment left dirty in the
+  /// context is flushed by the next save through the store. After the failure
+  /// and a successful unrelated write, neither the card nor the marks persist.
+  func testALaterSaveDoesNotFlushTheFailedAssignment() throws {
+    let (store, context, _) = try makeStore()
+    let other = UUID(uuidString: "0B000000-0000-0000-0000-000000000001")!
+    let userCategory = UUID(uuidString: "CA000000-0000-0000-0000-0000000000AA")!
+    context.insert(row(s, .debit, "HDFC CREDIT CARD PAYMENT", day: 10, account: savings))
+    context.insert(row(c, .credit, "PAYMENT RECEIVED - THANK YOU", day: 11, account: nil))
+    context.insert(row(other, .debit, "UNRELATED GROCERIES", day: 12, account: savings))
+    try context.save()
+
+    saveGate.refuses = true
+    XCTAssertThrowsError(try store.setAccount(c, to: card))
+
+    saveGate.refuses = false
+    try store.setCategory(other, to: userCategory)
+
+    let stored = try rows(ModelContext(try XCTUnwrap(keepAlive)))
+    XCTAssertEqual(stored[other]?.categoryID, userCategory, "the later save did happen")
+    XCTAssertNil(stored[c]?.accountID, "the failed assignment must not be flushed")
+    XCTAssertNil(stored[s]?.transferSourceRaw)
+    XCTAssertNil(stored[c]?.transferSourceRaw)
+  }
+
+  /// An email row's assignment also teaches a binding and applies to its
+  /// unassigned siblings. A failed save reverts all of it, not only the marks.
+  func testAFailedSaveRevertsTheLearnedBindingAndTheSiblings() throws {
+    let (store, context, _) = try makeStore()
+    let first = UUID(uuidString: "E0000000-0000-0000-0000-000000000001")!
+    let sibling = UUID(uuidString: "E0000000-0000-0000-0000-000000000002")!
+    context.insert(emailRow(first, account: nil))
+    context.insert(emailRow(sibling, account: nil))
+    try context.save()
+
+    saveGate.refuses = true
+    XCTAssertThrowsError(try store.setAccount(first, to: card))
+
+    XCTAssertTrue(
+      try context.fetch(FetchDescriptor<AccountBinding>()).isEmpty,
+      "the learned binding must be rolled back in the context")
+    let inMemory = try rows(context)
+    XCTAssertNil(inMemory[first]?.accountID)
+    XCTAssertNil(inMemory[sibling]?.accountID, "the sibling must not keep the rolled-back account")
+
+    let container = try XCTUnwrap(keepAlive)
+    let freshContext = ModelContext(container)
+    XCTAssertTrue(try freshContext.fetch(FetchDescriptor<AccountBinding>()).isEmpty)
+    let stored = try rows(freshContext)
+    XCTAssertNil(stored[first]?.accountID)
+    XCTAssertNil(stored[sibling]?.accountID)
+  }
+}
+
+/// A save the test refuses on purpose. Shared by the setAccount rollback tests.
+private struct ForcedSaveFailure: Error {}
+
+/// Holds the test's switch for the one save `setAccount` makes. A class so the
+/// closure the store keeps and the test both see the same flag.
+private final class SaveGate {
+  var refuses = false
 }
 
 /// Records each category set the coordinator hands the observer. Calls are

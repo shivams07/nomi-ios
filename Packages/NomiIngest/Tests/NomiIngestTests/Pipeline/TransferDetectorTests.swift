@@ -831,7 +831,43 @@ final class TransferDetectorStoreTests: XCTestCase {
     XCTAssertEqual(rows[s]?.transferSourceRaw, "auto")
     XCTAssertEqual(rows[s]?.transferGroupID, pairGroupSC)
   }
+
+  /// TR4. The save fails after both legs are mutated. `applyTransferMarks`
+  /// rethrows, neither leg persists, and the next save through the same store
+  /// does not flush the rolled-back marks.
+  func testAFailedSaveAfterAcceptedWritesNeitherLeg() async throws {
+    let container = try makeContainer()
+    keepAlive = container
+    let store = SwiftDataPipelineStore(modelContainer: container)
+    try await insertFixtureF(store)
+    let writes = try await decide(store, touching: [s, c])
+    XCTAssertEqual(writes.count, 1)
+    let unrelated = UUID(uuidString: "0B000000-0000-0000-0000-000000000001")!
+
+    await store.failTransferSaves(with: ForcedSaveFailure())
+    do {
+      _ = try await store.applyTransferMarks(writes, updatedAt: Fixture.commitTime)
+      XCTFail("a failed save must be rethrown")
+    } catch {
+      XCTAssertTrue(error is ForcedSaveFailure)
+    }
+    await store.failTransferSaves(with: nil)
+
+    try await store.apply(CommitPlan(inserts: [
+      stored(unrelated, .debit, "GROCERY STORE", day: 12, account: savingsAccount)
+    ]))
+
+    let rows = try storedRows(container)
+    XCTAssertNotNil(rows[unrelated], "the later save did happen")
+    XCTAssertNil(rows[s]?.transferGroupID)
+    XCTAssertNil(rows[s]?.transferSourceRaw)
+    XCTAssertNil(rows[c]?.transferGroupID)
+    XCTAssertNil(rows[c]?.transferSourceRaw)
+  }
 }
+
+/// A save the test forces to fail, after the store has mutated the rows.
+private struct ForcedSaveFailure: Error {}
 
 // MARK: - Pipeline (TR5)
 

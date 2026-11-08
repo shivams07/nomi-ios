@@ -36,19 +36,24 @@ public final class SwiftDataTransactionStore: TransactionStore {
   /// DEC-05's device calendar, for the transfer window and its read (TR1).
   private let transferCalendar: Calendar
   private let now: () -> Date
+  /// The one save `setAccount` makes. A seam so a test can make it fail and
+  /// prove the rollback; production passes the real `save()`.
+  private let saveAccountWrite: (ModelContext) throws -> Void
 
   public init(
     context: ModelContext,
     coordinator: WriteCoordinator,
     calendar: Calendar = NomiCalendar.india,
     transferCalendar: Calendar = .current,
-    now: @escaping () -> Date = { Date() }
+    now: @escaping () -> Date = { Date() },
+    saveAccountWrite: @escaping (ModelContext) throws -> Void = { try $0.save() }
   ) {
     self.context = context
     self.coordinator = coordinator
     self.calendar = calendar
     self.transferCalendar = transferCalendar
     self.now = now
+    self.saveAccountWrite = saveAccountWrite
   }
 
   public func add(_ draft: ManualTransactionDraft) throws -> Transaction {
@@ -202,7 +207,16 @@ public final class SwiftDataTransactionStore: TransactionStore {
       ? Set<UUID>()
       : ((try? markTransfers(touching: touched, at: timestamp)) ?? [])
 
-    try context.save()
+    // A failed save must not leave the account change or the marks dirty in
+    // this context, where a later save would flush them half-applied (TR4, the
+    // same rollback `SwiftDataPipelineStore.applyTransferMarks` makes). Rolled
+    // back and rethrown: nothing persists and the coordinator hears nothing.
+    do {
+      try saveAccountWrite(context)
+    } catch {
+      context.rollback()
+      throw error
+    }
     // Only the categories of legs this call marked are reported. The rest of
     // the write moved no category.
     coordinator.didWrite(affectedCategoryIDs: marked)

@@ -25,6 +25,15 @@ public actor SwiftDataPipelineStore: PipelineStore {
   /// `nonisolated(unsafe)` and one store's count never includes another's.
   private(set) var fetchCount = 0
 
+  /// Test seam for `applyTransferMarks`. When set, the save after the legs are
+  /// mutated throws this instead of saving, so a test can prove the rollback
+  /// (TR4). Nil in production; set only through `failTransferSaves(with:)`.
+  private var transferSaveFailure: Error?
+
+  func failTransferSaves(with error: Error?) {
+    transferSaveFailure = error
+  }
+
   public func rules() async throws -> [RuleSnapshot] {
     let descriptor = FetchDescriptor<Rule>(predicate: #Predicate<Rule> { $0.isEnabled })
     return try fetch(descriptor).map(RuleSnapshot.init)
@@ -151,6 +160,7 @@ public actor SwiftDataPipelineStore: PipelineStore {
           row.updatedAt = updatedAt
         }
       }
+      if let transferSaveFailure { throw transferSaveFailure }
       try modelContext.save()
     } catch {
       modelContext.rollback()
