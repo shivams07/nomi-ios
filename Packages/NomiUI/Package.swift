@@ -20,6 +20,9 @@ let package = Package(
         .copy("Resources/Fonts/Montserrat-SemiBold.otf"),
         .copy("Resources/Fonts/Montserrat-Bold.otf"),
         .copy("Resources/Fonts/Inter-Regular.otf"),
+        .copy("Resources/Fonts/Inter-Medium.otf"),
+        .copy("Resources/Fonts/Inter-SemiBold.otf"),
+        .copy("Resources/Fonts/OFL-Inter.txt"),
       ],
       swiftSettings: [.enableExperimentalFeature("StrictConcurrency=targeted")]
     ),
