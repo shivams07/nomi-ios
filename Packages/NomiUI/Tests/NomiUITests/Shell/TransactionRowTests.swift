@@ -141,7 +141,7 @@ final class TransactionRowTests: XCTestCase {
   func testDebitLabelSaysDebitAndNeverMinus() {
     let label = TransactionRow.accessibilityLabel(
       title: "Swiggy", subtitle: "Food · HDFC", direction: .debit, minor: 648_00,
-      upiKind: nil, needsReview: false, mergedSourceCount: nil
+      isTransfer: false, upiKind: nil, needsReview: false, mergedSourceCount: nil
     )
     XCTAssertTrue(label.contains("debit"))
     XCTAssertFalse(label.contains("credit"))
@@ -152,7 +152,7 @@ final class TransactionRowTests: XCTestCase {
   func testCreditLabelSaysCredit() {
     let label = TransactionRow.accessibilityLabel(
       title: "Acme Payroll", subtitle: "Salary", direction: .credit, minor: 38_500_00,
-      upiKind: nil, needsReview: false, mergedSourceCount: nil
+      isTransfer: false, upiKind: nil, needsReview: false, mergedSourceCount: nil
     )
     XCTAssertTrue(label.contains("credit"))
     XCTAssertFalse(label.contains("debit"))
@@ -161,7 +161,7 @@ final class TransactionRowTests: XCTestCase {
   func testLabelAddsReviewAndMergeFactsWhenPresent() {
     let label = TransactionRow.accessibilityLabel(
       title: "Amazon", subtitle: "Uncategorized", direction: .debit, minor: 1_299_00,
-      upiKind: "Merchant", needsReview: true, mergedSourceCount: 2
+      isTransfer: false, upiKind: "Merchant", needsReview: true, mergedSourceCount: 2
     )
     XCTAssertTrue(label.hasSuffix("Merchant, Merged from 2 sources, Needs review"))
   }
@@ -182,5 +182,45 @@ final class TransactionRowTests: XCTestCase {
 
   func testInitialsIgnoreExtraWhitespace() {
     XCTAssertEqual(TransactionRow.initials(for: "  Manual   entry "), "ME")
+  }
+
+  // MARK: - DEC-05 T3: the Transfer tag (words, not colour)
+
+  func testTransferTagTextIsTransferForAMarkedRow() {
+    XCTAssertEqual(TransactionRow.transferTagText(isTransfer: true), "Transfer")
+  }
+
+  func testTransferTagTextIsNilForAnUnmarkedRow() {
+    XCTAssertNil(TransactionRow.transferTagText(isTransfer: false))
+  }
+
+  /// The tag sits in the one VoiceOver element after the amount, so the state is
+  /// spoken and never left to colour or position alone.
+  func testTransferLabelSaysTransferAfterTheAmount() {
+    let label = TransactionRow.accessibilityLabel(
+      title: "HDFC CREDIT CARD PAYMENT", subtitle: "Uncategorized · HDFC", direction: .debit, minor: 20_000_00,
+      isTransfer: true, upiKind: nil, needsReview: false, mergedSourceCount: nil
+    )
+    XCTAssertEqual(
+      label,
+      "HDFC CREDIT CARD PAYMENT, Uncategorized · HDFC, debit, \(NomiFormatters.amountString(minor: 20_000_00)), Transfer")
+  }
+
+  func testUnmarkedLabelNeverSaysTransfer() {
+    let label = TransactionRow.accessibilityLabel(
+      title: "Swiggy", subtitle: "Food · HDFC", direction: .debit, minor: 648_00,
+      isTransfer: false, upiKind: nil, needsReview: false, mergedSourceCount: nil
+    )
+    XCTAssertFalse(label.contains("Transfer"))
+  }
+
+  /// A transfer's credit leg keeps its direction word: the tag adds to it and never replaces it.
+  func testTransferCreditLabelKeepsItsDirectionWord() {
+    let label = TransactionRow.accessibilityLabel(
+      title: "PAYMENT RECEIVED", subtitle: "Uncategorized · HDFC CC", direction: .credit, minor: 20_000_00,
+      isTransfer: true, upiKind: nil, needsReview: false, mergedSourceCount: nil
+    )
+    XCTAssertTrue(label.contains(", credit, "))
+    XCTAssertTrue(label.hasSuffix(", Transfer"))
   }
 }

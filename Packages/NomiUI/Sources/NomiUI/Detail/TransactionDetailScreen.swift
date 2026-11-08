@@ -54,6 +54,9 @@ public struct TransactionDetailScreen: View {
   @Query(sort: \NomiCore.Account.displayName) private var accounts: [NomiCore.Account]
 
   @Environment(\.dismiss) private var dismiss
+  /// Read only: the transfer partner is found by the shared group id (DEC-05 T3).
+  /// The screen writes through `editor`, never through this context.
+  @Environment(\.modelContext) private var modelContext
 
   /// Medium is the opening detent; Edit forces large (the artboard's edit state
   /// sits at the large top) and Cancel or Save returns to medium.
@@ -70,6 +73,10 @@ public struct TransactionDetailScreen: View {
   @State private var isConfirmingDelete = false
   @State private var errorMessage: String?
   @State private var suggestion: CategorySuggestion?
+  /// What the last mark or unmark made on this screen did (DEC-05 T3). Held
+  /// for this sheet only, so it does not survive a reopen; the sentence that
+  /// stays is the one that reads `isTransfer`.
+  @State private var transferNote: String?
 
   @State private var amountText = ""
   @State private var editedDescription = ""
@@ -338,11 +345,12 @@ public struct TransactionDetailScreen: View {
   }
 
   /// Read-only flags: "Needs review", "Merged from N sources", "No account
-  /// assigned". Inline when they fit, one per line at large text sizes.
+  /// assigned", "Transfer". Inline when they fit, one per line at large text sizes.
   @ViewBuilder
   private func flagChips(_ transaction: NomiCore.Transaction) -> some View {
     let reasons = TransactionDetailLogic.flagReasons(
-      accountID: transaction.accountID, needsReview: transaction.needsReview, mergedCount: transaction.mergedCount)
+      accountID: transaction.accountID, needsReview: transaction.needsReview, mergedCount: transaction.mergedCount,
+      isTransfer: transaction.isTransfer)
     if !reasons.isEmpty {
       ViewThatFits(in: .horizontal) {
         HStack(spacing: NomiSpacing.xxs) {
@@ -472,6 +480,7 @@ public struct TransactionDetailScreen: View {
         pickedDate = transaction.date
         isDatePickerPresented = true
       }
+      transferSection(transaction)
       if TransactionDetailLogic.availableActions(needsReview: transaction.needsReview).contains(.markReviewed) {
         markReviewedButton(isPrimary: primary == .markReviewed)
           .padding(.top, NomiSpacing.xxs)
@@ -505,6 +514,43 @@ public struct TransactionDetailScreen: View {
     }
     .buttonStyle(.plain)
     .nomiCard(padding: EdgeInsets())
+  }
+
+  /// The transfer control and the copy that goes with it (DEC-05 T3). It is a
+  /// secondary action, so it never takes the screen's single primary. The
+  /// sentence stands while the row is a transfer; the note is what the last
+  /// mark or unmark on this screen did.
+  private func transferSection(_ transaction: NomiCore.Transaction) -> some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+      transferButton(isTransfer: transaction.isTransfer)
+      if transaction.isTransfer {
+        Text(TransactionDetailLogic.transferSentence)
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      if let transferNote {
+        Text(transferNote)
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.top, NomiSpacing.xxs)
+  }
+
+  private func transferButton(isTransfer: Bool) -> some View {
+    Button(TransactionDetailLogic.transferButtonTitle(isTransfer: isTransfer)) {
+      if isTransfer {
+        unmarkTransfer()
+      } else {
+        markTransfer()
+      }
+    }
+    .buttonStyle(NomiSecondaryButtonStyle())
+    .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight)
+    .background(Capsule().fill(NomiColor.track))
   }
 
   /// Primary when `primary == .markReviewed`, else the pale secondary pill.
@@ -741,6 +787,56 @@ public struct TransactionDetailScreen: View {
     } catch {
       errorMessage = "Could not mark this reviewed."
     }
+  }
+
+  /// DEC-05 T3: marks this row through the editor, then reads back the partner
+  /// the same write marked, so the note names it. If the read fails after the
+  /// write, the note is dropped and the alert says the mark happened, since
+  /// the write did not fail.
+  private func markTransfer() {
+    do {
+      try editor.setTransfer(transactionID, isTransfer: true)
+    } catch {
+      errorMessage = "Could not mark this as a transfer."
+      return
+    }
+    do {
+      let partner = try transferPartner(of: transactionID)
+      transferNote = TransactionDetailLogic.markOutcome(partner: partner)
+    } catch {
+      transferNote = nil
+      errorMessage = "Marked as a transfer, but could not read the matching payment."
+    }
+  }
+
+  /// DEC-05 T3: unmarking clears the partner too, so the partner is read before
+  /// the write. If that read fails, nothing is written: the copy must name every
+  /// row the write changes, so an unreadable partner stops the unmark.
+  private func unmarkTransfer() {
+    let partner: TransactionDetailLogic.TransferPartner?
+    do {
+      partner = try transferPartner(of: transactionID)
+      try editor.setTransfer(transactionID, isTransfer: false)
+    } catch {
+      errorMessage = "Could not unmark this transfer."
+      return
+    }
+    transferNote = TransactionDetailLogic.unmarkOutcome(partner: partner)
+  }
+
+  /// The other row in this row's transfer group, read by the shared group id
+  /// only (U6: never `transferSource`). `nil` when the row is not a transfer or
+  /// has no other leg, which is the "only this transaction" case.
+  private func transferPartner(of id: UUID) throws -> TransactionDetailLogic.TransferPartner? {
+    var rowDescriptor = FetchDescriptor<NomiCore.Transaction>(predicate: #Predicate { $0.id == id })
+    rowDescriptor.fetchLimit = 1
+    guard let group = try modelContext.fetch(rowDescriptor).first?.transferGroupID else { return nil }
+    let target: UUID? = group
+    let partners = try modelContext.fetch(
+      FetchDescriptor<NomiCore.Transaction>(predicate: #Predicate { $0.transferGroupID == target && $0.id != id })
+    )
+    guard let partner = partners.first else { return nil }
+    return TransactionDetailLogic.TransferPartner(narration: partner.descriptionText, date: partner.date)
   }
 
   private func performDelete() {

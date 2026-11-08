@@ -240,6 +240,47 @@ final class LedgerPeriodParityTests: XCTestCase {
       }
     }
   }
+
+  /// DEC-05 A-05 item 14 (T3): a transfer pair is out of both sides. Its legs are
+  /// unequal on purpose, so a missing exclusion moves the figures (equal legs
+  /// would cancel). Hand vector, recomputed in stdlib Python: debit 1,000.00,
+  /// credit 3,000.00, net 2,000.00 over two counted rows; day totals 2 Nov
+  /// +3,000.00, 10 and 11 Nov zero (transfer legs only), 12 Nov -1,000.00.
+  func testTransferPairIsOutOfBothTotalsAtTheExactVectors() {
+    for zone in Self.zones {
+      let cal = Self.calendar(zone)
+      let now = Self.at(cal, 2026, 11, 20)
+      let range = LedgerPeriod.range(
+        basis: .calendarMonth, anchor: Self.at(cal, 2026, 11, 15), calendar: cal, now: now)
+      let specs = [
+        Spec(date: Self.at(cal, 2026, 11, 2), minor: 300_000, credit: true),
+        Spec(date: Self.at(cal, 2026, 11, 10), minor: 2_000_000, transfer: true),
+        Spec(date: Self.at(cal, 2026, 11, 11), minor: 500_000, credit: true, transfer: true),
+        Spec(date: Self.at(cal, 2026, 11, 12), minor: 100_000),
+      ]
+
+      let inPeriod = Self.ledgerRows(specs).filter { range.contains($0.date) }
+      let groups = LedgerGrouping.byDay(inPeriod, calendar: cal)
+      let totalsByDay = Dictionary(
+        uniqueKeysWithValues: groups.map { (cal.component(.day, from: $0.day), $0.totalMinor) })
+      XCTAssertEqual(totalsByDay, [2: 300_000, 10: 0, 11: 0, 12: -100_000], zone)
+      let ledgerNet = groups.reduce(0) { $0 + $1.totalMinor }
+      XCTAssertEqual(ledgerNet, 200_000, zone)
+
+      let home = InsightsAggregator.insights(
+        period: .month(year: 2026, month: 11),
+        rows: Self.homeRows(specs),
+        categories: [:],
+        priorRows: nil,
+        calendar: cal
+      )
+      XCTAssertEqual(home.debitMinor, 100_000, zone)
+      XCTAssertEqual(home.creditMinor, 300_000, zone)
+      XCTAssertEqual(home.netMinor, 200_000, zone)
+      XCTAssertEqual(home.transactionCount, 2, zone)
+      XCTAssertEqual(ledgerNet, home.netMinor, "a Ledger month equals Home with a transfer pair present, zone \(zone)")
+    }
+  }
 }
 
 /// The store and the predicate, over real `Transaction` rows. Home here is
@@ -264,13 +305,19 @@ final class LedgerPeriodStoreParityTests: XCTestCase {
     )
   }
 
+  /// The container is held by the test case as well as the context. A container
+  /// that is released while its `mainContext` is still in use is the lifetime
+  /// trap that kills the process on this Mac (the NomiApp test-helper trap).
+  private var containers: [ModelContainer] = []
+
   private func makeContext() throws -> ModelContext {
-    let schema = Schema([Transaction.self, NomiCore.Category.self])
+    let schema = Schema([Transaction.self, NomiCore.Category.self, NomiCore.Account.self])
     let container = try ModelContainer(
       for: schema,
       configurations: [
         ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
       ])
+    containers.append(container)
     return container.mainContext
   }
 
@@ -349,6 +396,121 @@ final class LedgerPeriodStoreParityTests: XCTestCase {
         LedgerFilterPredicate.matches($0, filter: TransactionFilter(needsReviewOnly: true), within: november)
       }
       XCTAssertEqual(inNovember.count, 1, "only the November flag falls inside the period, zone \(zone)")
+    }
+  }
+
+  /// DEC-05 A-05 items 1 and 3 (T3), store level. Two accounts, one unequal
+  /// transfer pair (a stress vector: `setTransfer` pairs equal amounts only, so
+  /// this group is not reachable through the UI). Before the mark both legs
+  /// count; after it, both are out of Home and out of the Ledger, and the
+  /// account balances are identical before and after. Hand vector, recomputed in
+  /// stdlib Python. Paise throughout.
+  ///   Unmarked: debit 2,100,000, credit 800,000, net -1,300,000 (4 rows).
+  ///   Marked:   debit 100,000, credit 300,000, net 200,000 (2 rows).
+  ///   Ledger day totals marked: 2 Nov 300,000; 10 and 11 Nov 0; 12 Nov -100,000.
+  ///   Balances (both states): savings 8,300,000; card 400,000; total 8,700,000.
+  func testTransferPairIsOutOfBothTotalsAndLeavesBalancesUnchanged() throws {
+    try assertPairLeavesTotalsAndBalances(
+      incoming: 500_000, unmarkedDebit: 2_100_000, unmarkedCredit: 800_000,
+      unmarkedDays: [2: 300_000, 10: -2_000_000, 11: 500_000, 12: -100_000], card: "400000/2")
+  }
+
+  /// DEC-05 A-05 item 2 (T3): the pair `setTransfer` can actually create, equal
+  /// amounts across two accounts (20,000.00 out of savings, 20,000.00 into the
+  /// card). Hand vector, stdlib Python. Before the mark: debit 2,100,000, credit
+  /// 2,300,000, net +200,000 (4 rows); day totals 2 Nov 300,000, 10 Nov
+  /// -2,000,000, 11 Nov +2,000,000, 12 Nov -100,000. After the mark: debit
+  /// 100,000, credit 300,000, net +200,000 (2 rows); the net is unchanged because
+  /// the legs are equal. Balances, both states: savings 8,300,000; card 1,900,000.
+  func testEqualTransferPairIsOutOfBothTotalsAndLeavesBalancesUnchanged() throws {
+    try assertPairLeavesTotalsAndBalances(
+      incoming: 2_000_000, unmarkedDebit: 2_100_000, unmarkedCredit: 2_300_000,
+      unmarkedDays: [2: 300_000, 10: -2_000_000, 11: 2_000_000, 12: -100_000], card: "1900000/2")
+  }
+
+  private func assertPairLeavesTotalsAndBalances(
+    incoming incomingMinor: Int, unmarkedDebit: Int, unmarkedCredit: Int, unmarkedDays: [Int: Int], card cardBalance: String
+  ) throws {
+    for zone in LedgerPeriodParityTests.zones {
+      let cal = LedgerPeriodParityTests.calendar(zone)
+      let context = try makeContext()
+      let now = LedgerPeriodParityTests.at(cal, 2026, 11, 20)
+      let range = LedgerPeriod.range(
+        basis: .calendarMonth, anchor: LedgerPeriodParityTests.at(cal, 2026, 11, 15), calendar: cal, now: now)
+
+      let savings = NomiCore.Account(displayName: "Savings", kindRaw: "bank", openingBalanceMinor: 10_000_000)
+      let card = NomiCore.Account(displayName: "Card", kindRaw: "card", openingBalanceMinor: 0)
+      context.insert(savings)
+      context.insert(card)
+      let salary = Transaction(
+        date: LedgerPeriodParityTests.at(cal, 2026, 11, 2), descriptionText: "salary", amountMinor: 300_000,
+        directionRaw: Direction.credit.rawValue, accountID: savings.id)
+      let outgoing = Transaction(
+        date: LedgerPeriodParityTests.at(cal, 2026, 11, 10), descriptionText: "HDFC CREDIT CARD PAYMENT",
+        amountMinor: 2_000_000, directionRaw: Direction.debit.rawValue, accountID: savings.id)
+      let incoming = Transaction(
+        date: LedgerPeriodParityTests.at(cal, 2026, 11, 11), descriptionText: "PAYMENT RECEIVED",
+        amountMinor: incomingMinor, directionRaw: Direction.credit.rawValue, accountID: card.id)
+      let amazon = Transaction(
+        date: LedgerPeriodParityTests.at(cal, 2026, 11, 12), descriptionText: "AMAZON", amountMinor: 100_000,
+        directionRaw: Direction.debit.rawValue, accountID: card.id)
+      [salary, outgoing, incoming, amazon].forEach { context.insert($0) }
+      try context.save()
+
+      func homeNovember() throws -> PeriodInsights {
+        try SwiftDataInsightsStore(context: context, cache: InsightsCache(), calendar: cal, now: { now })
+          .insights(for: .month(year: 2026, month: 11))
+      }
+      func balances() throws -> [AccountSummary] {
+        try SwiftDataInsightsStore(context: context, cache: InsightsCache(), calendar: cal, now: { now })
+          .accountSummaries(includeArchived: false)
+      }
+      func ledgerDayTotals() throws -> ([Int: Int], Int) {
+        let rows = try context.fetch(FetchDescriptor<Transaction>(predicate: LedgerFilterPredicate.make(range: range)))
+        let groups = LedgerGrouping.byDay(rows, calendar: cal)
+        let byDay = Dictionary(
+          uniqueKeysWithValues: groups.map { (cal.component(.day, from: $0.day), $0.totalMinor) })
+        return (byDay, groups.reduce(0) { $0 + $1.totalMinor })
+      }
+
+      // Before the mark: both legs count.
+      let unmarkedHome = try homeNovember()
+      XCTAssertEqual(unmarkedHome.debitMinor, unmarkedDebit, zone)
+      XCTAssertEqual(unmarkedHome.creditMinor, unmarkedCredit, zone)
+      XCTAssertEqual(unmarkedHome.netMinor, unmarkedCredit - unmarkedDebit, zone)
+      let unmarkedBalances = try balances()
+      let (unmarkedDaysActual, unmarkedNet) = try ledgerDayTotals()
+      XCTAssertEqual(unmarkedNet, unmarkedCredit - unmarkedDebit, zone)
+      XCTAssertEqual(unmarkedDaysActual, unmarkedDays, zone)
+
+      // The mark: one group on both legs, written the way `setTransfer` writes a manual pair.
+      let group = UUID()
+      for leg in [outgoing, incoming] {
+        leg.transferGroupID = group
+        leg.transferSourceRaw = TransferSource.manual.rawValue
+      }
+      try context.save()
+
+      // After the mark: both legs are out of Home and out of the Ledger.
+      let markedHome = try homeNovember()
+      XCTAssertEqual(markedHome.debitMinor, 100_000, zone)
+      XCTAssertEqual(markedHome.creditMinor, 300_000, zone)
+      XCTAssertEqual(markedHome.netMinor, 200_000, zone)
+      XCTAssertEqual(markedHome.transactionCount, 2, zone)
+      let (markedDays, markedNet) = try ledgerDayTotals()
+      XCTAssertEqual(markedDays, [2: 300_000, 10: 0, 11: 0, 12: -100_000], zone)
+      XCTAssertEqual(markedNet, markedHome.netMinor, "a Ledger month equals Home after the mark, zone \(zone)")
+
+      // Balances never move with a mark: the same balance and row count per account, before and after.
+      func summaryKey(_ summaries: [AccountSummary]) -> [String: String] {
+        Dictionary(
+          uniqueKeysWithValues: summaries.map {
+            ($0.displayName, "\($0.trackedBalanceMinor)/\($0.transactionCount)")
+          })
+      }
+      let markedBalances = try balances()
+      XCTAssertEqual(summaryKey(markedBalances), summaryKey(unmarkedBalances), zone)
+      XCTAssertEqual(summaryKey(markedBalances), ["Savings": "8300000/2", "Card": cardBalance], zone)
     }
   }
 }
