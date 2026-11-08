@@ -238,4 +238,15 @@ struct EmptyPipelineStore: PipelineStore {
 
   func duplicateGroups() async throws -> [[TransactionSnapshot]] { [] }
   func apply(_ plan: CommitPlan) async throws {}
+  func accountFacts() async throws -> [UUID: TransferAccount] { [:] }
+
+  func transferCandidates(
+    amountMinor: Int,
+    dateRange: ClosedRange<Date>
+  ) async throws -> [TransactionSnapshot] { [] }
+
+  func applyTransferMarks(
+    _ writes: [TransferPairWrite],
+    updatedAt: Date
+  ) async throws -> [TransferPairWrite] { [] }
 }

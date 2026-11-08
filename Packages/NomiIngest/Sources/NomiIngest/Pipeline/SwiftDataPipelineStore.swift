@@ -99,6 +99,66 @@ public actor SwiftDataPipelineStore: PipelineStore {
     try modelContext.save()
   }
 
+  public func accountFacts() async throws -> [UUID: TransferAccount] {
+    let accounts = try fetch(FetchDescriptor<Account>())
+    return TransferAccount.byID(accounts.map { ($0.id, TransferAccount(kind: $0.kind, lastFour: $0.lastFour)) })
+  }
+
+  /// Both directions by design: the detector needs the opposite leg of a seed
+  /// and every competitor of that leg, so the caller reads one amount in one
+  /// window. Snapshots come through `init(_:)`, which sets `transferPairAtRead`.
+  public func transferCandidates(
+    amountMinor: Int,
+    dateRange: ClosedRange<Date>
+  ) async throws -> [TransactionSnapshot] {
+    let lower = dateRange.lowerBound
+    let upper = dateRange.upperBound
+    let descriptor = FetchDescriptor<Transaction>(
+      predicate: #Predicate<Transaction> {
+        $0.amountMinor == amountMinor && $0.date >= lower && $0.date <= upper
+      }
+    )
+    return try fetch(descriptor).map(TransactionSnapshot.init)
+  }
+
+  /// TR4. Every leg is fetched and judged before the first mutation. Only the
+  /// transfer pair and `updatedAt` change, on both legs of each accepted write,
+  /// then one save. A failed save rolls the context back and rethrows, so
+  /// neither leg of a pair persists alone.
+  public func applyTransferMarks(
+    _ writes: [TransferPairWrite],
+    updatedAt: Date
+  ) async throws -> [TransferPairWrite] {
+    var rows: [UUID: Transaction] = [:]
+    var now: [UUID: TransferLegState] = [:]
+    for write in writes {
+      for id in [write.first.id, write.second.id] where rows[id] == nil {
+        guard let row = try fetchRow(id: id) else { continue }
+        rows[id] = row
+        now[id] = TransferLegState(id: row.id, accountID: row.accountID, pair: row.transferPair)
+      }
+    }
+
+    let landed = TransferPairWrite.accepted(writes, now: now)
+    guard !landed.isEmpty else { return [] }
+
+    do {
+      for write in landed {
+        for id in [write.first.id, write.second.id] {
+          guard let row = rows[id] else { continue }
+          row.transferGroupID = write.pair.groupID
+          row.transferSourceRaw = write.pair.sourceRaw
+          row.updatedAt = updatedAt
+        }
+      }
+      try modelContext.save()
+    } catch {
+      modelContext.rollback()
+      throw error
+    }
+    return landed
+  }
+
   private func fetchRow(id: UUID) throws -> Transaction? {
     var descriptor = FetchDescriptor<Transaction>(
       predicate: #Predicate<Transaction> { $0.id == id }

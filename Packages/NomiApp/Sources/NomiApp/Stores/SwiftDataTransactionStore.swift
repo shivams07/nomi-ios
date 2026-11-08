@@ -33,17 +33,21 @@ public final class SwiftDataTransactionStore: TransactionStore {
   private let context: ModelContext
   private let coordinator: WriteCoordinator
   private let calendar: Calendar
+  /// DEC-05's device calendar, for the transfer window and its read (TR1).
+  private let transferCalendar: Calendar
   private let now: () -> Date
 
   public init(
     context: ModelContext,
     coordinator: WriteCoordinator,
     calendar: Calendar = NomiCalendar.india,
+    transferCalendar: Calendar = .current,
     now: @escaping () -> Date = { Date() }
   ) {
     self.context = context
     self.coordinator = coordinator
     self.calendar = calendar
+    self.transferCalendar = transferCalendar
     self.now = now
   }
 
@@ -191,11 +195,85 @@ public final class SwiftDataTransactionStore: TransactionStore {
       transaction.needsReview = false
     }
 
+    // DEC-05 detector (TR2). Assigning an account can complete a pair. Marks
+    // are decided before the first write, in the same span, and land in the
+    // save below. Unassigning marks nothing.
+    let marked = accountID == nil
+      ? Set<UUID>()
+      : ((try? markTransfers(touching: touched, at: timestamp)) ?? [])
+
     try context.save()
-    // No category moved, so the observer gets an empty set rather than a wrong
-    // one — `IngestPipeline.ruleDeleted` makes the same call for the same
-    // reason.
-    coordinator.didWrite()
+    // Only the categories of legs this call marked are reported. The rest of
+    // the write moved no category.
+    coordinator.didWrite(affectedCategoryIDs: marked)
+  }
+
+  /// The five steps of `IngestPipeline`'s detection, on the main context (TR2).
+  /// Reads and decisions finish before the first mutation. Returns the categories
+  /// of the legs it marked.
+  private func markTransfers(touching rows: [Transaction], at timestamp: Date) throws -> Set<UUID> {
+    let seeds = rows.filter {
+      $0.currencyCode == "INR" && $0.accountID != nil
+        && TransferRules.state($0.transferPair) == .unmarked
+    }
+    guard !seeds.isEmpty else { return [] }
+
+    // The same two-rule width as the ingest path: six days each way.
+    let window = TransferRules.windowDays
+    var fetched: [UUID: Transaction] = [:]
+    for (amount, group) in Dictionary(grouping: seeds, by: \.amountMinor).sorted(by: { $0.key < $1.key }) {
+      guard
+        let minDate = group.map(\.date).min(),
+        let maxDate = group.map(\.date).max(),
+        let lower = transferCalendar.date(
+          byAdding: .day, value: -(2 * window + 1),
+          to: transferCalendar.startOfDay(for: minDate)),
+        let upper = transferCalendar.date(
+          byAdding: .day, value: 2 * window + 2,
+          to: transferCalendar.startOfDay(for: maxDate))
+      else { continue }
+      var descriptor = FetchDescriptor<Transaction>(
+        predicate: #Predicate<Transaction> {
+          $0.amountMinor == amount && $0.date >= lower && $0.date <= upper
+        }
+      )
+      // The account just assigned is not saved yet; the read must see it.
+      descriptor.includePendingChanges = true
+      for row in try context.fetch(descriptor) { fetched[row.id] = row }
+    }
+    // The touched rows are the same managed objects, but take them by id so the
+    // in-memory state is the one decided on.
+    for row in seeds { fetched[row.id] = row }
+    guard fetched.count >= 2 else { return [] }
+
+    let accounts = TransferAccount.byID(
+      try context.fetch(FetchDescriptor<Account>()).map { ($0.id, TransferAccount(kind: $0.kind, lastFour: $0.lastFour)) }
+    )
+    let snapshots = fetched.values.map { TransactionSnapshot($0) }
+    let marks = TransferDetector.detect(rows: snapshots, accounts: accounts, calendar: transferCalendar)
+
+    // In this span the read and the current state are the same fetch, so the
+    // compare-and-set reduces to the state table. The write still goes through
+    // `accepted`, the same decision the store takes for the ingest path.
+    let states = Dictionary(uniqueKeysWithValues: fetched.values.map {
+      ($0.id, TransferLegState(id: $0.id, accountID: $0.accountID, pair: $0.transferPair))
+    })
+    let writes = TransferPairWrite.writes(
+      from: marks, readStates: states, touching: Set(seeds.map(\.id))
+    )
+    let landed = TransferPairWrite.accepted(writes, now: states)
+
+    var marked: Set<UUID> = []
+    for write in landed {
+      for id in [write.first.id, write.second.id] {
+        guard let row = fetched[id] else { continue }
+        row.transferGroupID = write.pair.groupID
+        row.transferSourceRaw = write.pair.sourceRaw
+        row.updatedAt = timestamp
+        if let category = row.categoryID { marked.insert(category) }
+      }
+    }
+    return marked
   }
 
   /// Upsert. Every duplicate for the key is updated rather than just the first,
