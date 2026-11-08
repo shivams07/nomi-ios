@@ -126,4 +126,32 @@ final class ImportLogicTests: XCTestCase {
     let html = UTType(filenameExtension: "html")!
     XCTAssertTrue(ImportFileTypes.allowed.contains { html.conforms(to: $0) })
   }
+
+  // MARK: - IM: done-state copy (ImportDone artboard)
+
+  func testDoneTitleIsImportedAndSkippedCounts() {
+    let summary = ImportSummary(created: 24, merged: 0, skipped: 2)
+    XCTAssertEqual(ImportDoneCopy.title(summary), "24 imported, 2 skipped")
+  }
+
+  func testDoneDetailNamesTheAccount() {
+    let summary = ImportSummary(created: 24, merged: 0, skipped: 2)
+    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: "HDFC Savings"), "HDFC Savings")
+  }
+
+  func testDoneDetailCountsMergedRowsAfterTheAccount() {
+    let summary = ImportSummary(created: 5, merged: 3, skipped: 0)
+    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: "HDFC Savings"), "HDFC Savings · 3 merged with existing")
+    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: nil), "3 merged with existing")
+  }
+
+  func testDoneDetailIsNilWhenThereIsNothingToSay() {
+    let summary = ImportSummary(created: 24, merged: 0, skipped: 2)
+    XCTAssertNil(ImportDoneCopy.detail(summary, accountName: nil))
+  }
+
+  func testDoneDetailIgnoresAnEmptyAccountName() {
+    let summary = ImportSummary(created: 24, merged: 0, skipped: 2)
+    XCTAssertNil(ImportDoneCopy.detail(summary, accountName: ""))
+  }
 }

@@ -1,3 +1,4 @@
+import Foundation
 import NomiCore
 import SwiftData
 
@@ -41,4 +42,38 @@ enum ImportPreviewSupport {
     ],
     parseableRowCount: 18
   )
+
+  static let noRowsPreview = ImportPreview(
+    formatSignature: "empty-v1",
+    detectedBankLabel: nil,
+    suggestedMapping: nil,
+    headers: ["Date", "Narration", "Amount"],
+    sampleRows: [],
+    parseableRowCount: 0
+  )
+
+  /// Review fixtures for the states that carry a file. The URL is preview-only.
+  static var detectedReview: ImportReview {
+    ImportReview(
+      url: URL(fileURLWithPath: "statement.csv"),
+      preview: detectedPreview,
+      mapping: detectedPreview.suggestedMapping!
+    )
+  }
+
+  static var unknownFormatReview: ImportReview {
+    ImportReview(
+      url: URL(fileURLWithPath: "statement.csv"),
+      preview: unknownFormatPreview,
+      mapping: ColumnMapping(dateColumn: 0, descriptionColumn: 1, amountColumn: 2, referenceColumn: nil, directionStrategy: .signedAmount, dateFormat: "dd/MM/yyyy")
+    )
+  }
+
+  static var noRowsReview: ImportReview {
+    ImportReview(
+      url: URL(fileURLWithPath: "statement.csv"),
+      preview: noRowsPreview,
+      mapping: ColumnMapping(dateColumn: 0, descriptionColumn: 1, amountColumn: 2, referenceColumn: nil, directionStrategy: .signedAmount, dateFormat: "dd/MM/yyyy")
+    )
+  }
 }

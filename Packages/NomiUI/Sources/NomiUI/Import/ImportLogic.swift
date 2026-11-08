@@ -85,3 +85,25 @@ enum ImportPreviewSummary {
     }
   }
 }
+
+/// Copy for the done state (`ImportDone` artboard). Every number is a count
+/// straight from `ImportSummary`; nothing here adds up money.
+enum ImportDoneCopy {
+  /// "24 imported, 2 skipped". `created` is what landed as new transactions.
+  static func title(_ summary: ImportSummary) -> String {
+    "\(summary.created) imported, \(summary.skipped) skipped"
+  }
+
+  /// The account the rows went to, then how many rows merged into existing
+  /// transactions. Nil when there is neither, so the screen draws no line.
+  static func detail(_ summary: ImportSummary, accountName: String?) -> String? {
+    var parts: [String] = []
+    if let accountName, !accountName.isEmpty {
+      parts.append(accountName)
+    }
+    if summary.merged > 0 {
+      parts.append("\(summary.merged) merged with existing")
+    }
+    return parts.isEmpty ? nil : parts.joined(separator: " · ")
+  }
+}
