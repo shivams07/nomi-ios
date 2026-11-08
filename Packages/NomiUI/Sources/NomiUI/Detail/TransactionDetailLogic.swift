@@ -47,6 +47,30 @@ public enum TransactionDetailLogic {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
   }
+
+  /// The one primary control on the sheet (SIMP §4 call 1, DT): Apply when a
+  /// suggestion panel is on screen, else Mark reviewed when the row is
+  /// flagged, else none. `hasSuggestion` means the panel actually shows
+  /// (`SuggestionRow.isShown`), not merely that a suggestion was read — a
+  /// primary on a hidden button would have no action to press.
+  public enum PrimaryAction: Hashable, Sendable {
+    case apply, markReviewed, none
+  }
+
+  public static func primaryAction(hasSuggestion: Bool, needsReview: Bool) -> PrimaryAction {
+    if hasSuggestion { return .apply }
+    if needsReview { return .markReviewed }
+    return .none
+  }
+
+  /// DEC-03 / A-03: a debit is stored and shown negative so its "−" always
+  /// prints; a credit is positive so its "+" prints. Works whether the stored
+  /// `amountMinor` is the magnitude or already signed, so the sign follows
+  /// `direction` and never the stored value.
+  public static func signedMinor(amountMinor: Int, direction: Direction) -> Int {
+    let magnitude = abs(amountMinor)
+    return direction == .debit ? -magnitude : magnitude
+  }
 }
 
 /// M6: the detail screen's "UPI" section prose. Full words, unlike

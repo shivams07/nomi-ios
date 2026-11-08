@@ -3,10 +3,12 @@ import NomiCore
 import SwiftData
 import SwiftUI
 
-/// The Reports/Insights page (U13, v5 new) — the largest of the four new
-/// screens. Calendar-month vs financial-year toggle drives every figure via
-/// `ReportsViewModel`; income-vs-expense trend; category breakdown; CSV
-/// export via `ShareLink`.
+/// The Insights page (the approved Insights artboard; the Reports screen before
+/// the restyle). The period pill sits in the nav row's trailing slot. Below the
+/// large title: the Spent / Received card, the day bars (or the month bars on
+/// the financial-year basis), the category donut, top merchants, and one Export
+/// row whose menu holds the two CSV actions. The screen's figures all come from
+/// `ReportsViewModel`.
 ///
 /// Archived accounts are never excluded here (unlike the dashboard's accounts
 /// card) — `insightsStore.insights(for:)`/`.transactions(in:)` don't filter
@@ -32,6 +34,8 @@ public struct ReportsScreen: View {
   @State private var exportURL: URL?
   @State private var exportAllTimeURL: URL?
   @State private var exportError = false
+  /// Bumped by a load-failed card's Retry, so the body reads the store again.
+  @State private var retryToken = 0
 
   public init(
     insightsStore: InsightsStore,
@@ -51,25 +55,24 @@ public struct ReportsScreen: View {
 
   /// `nil` means `insightsStore.insights(for:)` threw — a real fetch error,
   /// not "no transactions this period" (that case still comes back as a
-  /// successful, all-zero `PeriodInsights`). The body's fallback branch
-  /// reflects that: it reads as a load failure, not an empty state.
-  /// `trend` is no longer threaded through here (H1/L6) — it's its own
-  /// `Load` below, rendered independently of whether the rest of the period
-  /// loaded, so the field is always empty; nothing reads it once `trendModule`
-  /// renders straight from `trendLoad` instead of `viewModel.trend`.
+  /// successful, all-zero `PeriodInsights`). The body shows a load-failed card
+  /// for that case, never the empty state.
   private var viewModel: ReportsViewModel? {
+    _ = retryToken
     guard let insights = try? insightsStore.insights(for: period) else { return nil }
     return ReportsViewModelBuilder.make(period: period, insights: insights, trend: [])
   }
 
-  /// A read that failed is not a read that succeeded and found nothing —
-  /// reuses `DashboardWiring.Load`, the same distinction the dashboard's own
-  /// cards make (H1/L6): `.failed` renders "Couldn't load trend" in the
-  /// card's place instead of silently swallowing a store error into an
-  /// empty chart the way `viewModel`'s old `(try? …) ?? []` did.
-  private var trendLoad: DashboardWiring.Load<[MonthBucket]> {
+  /// The financial-year basis draws monthly bars from the trend (the trend rule
+  /// in `ReportsPeriod.trendMonths`). A calendar month draws its daily bars
+  /// from the period itself, so it never reads the trend. A read that failed is
+  /// not a read that found nothing, so `.failed` is its own case.
+  private var monthlyTrend: DashboardWiring.Load<[MonthBucket]>? {
+    _ = retryToken
+    guard basis == .financialYear else { return nil }
     do {
-      return .loaded(try insightsStore.trend(months: ReportsPeriod.trendMonths(for: basis)))
+      let buckets = try insightsStore.trend(months: ReportsPeriod.trendMonths(for: basis))
+      return .loaded(buckets.sorted { $0.id < $1.id })
     } catch {
       return .failed
     }
@@ -90,139 +93,194 @@ public struct ReportsScreen: View {
 
   public var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: NomiSpacing.cardToCard) {
-        periodSelector
+      VStack(alignment: .leading, spacing: NomiSpacing.xs) {
         if let viewModel {
-          summarySection(viewModel)
-          trendModule
-          ReportsCategoryBreakdownCard(slices: viewModel.categories)
-          exportButton
+          if viewModel.transactionCount == 0 {
+            emptyState
+          } else {
+            summaryCard(viewModel)
+            barsCard(viewModel)
+            ReportsCategoryBreakdownCard(slices: viewModel.categories)
+            TopMerchantsCard(merchants: viewModel.topMerchants)
+          }
         } else {
-          Text("Couldn't load report data")
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.textTertiary)
+          NomiLoadFailedCard(message: "Insights didn’t load.") {
+            retryToken += 1
+          }
         }
         // Independent of `viewModel`/`period` on purpose — a one-off,
         // user-initiated whole-ledger read through `.allTime` (acceptable
         // unlike the dashboard's per-render one, F2) works whether or not
-        // the current period's figures loaded. A second button, not a mode.
-        exportAllTimeButton
+        // the current period's figures loaded.
+        exportRow
       }
       .padding(.horizontal, NomiSpacing.screenGutter)
-      .padding(.vertical, NomiSpacing.screenGutter)
+      .padding(.top, NomiSpacing.xs)
+      .padding(.bottom, NomiSpacing.sm)
     }
-    .background(NomiColor.surfaceCanvas)
-    .navigationTitle("Reports")
+    .background(NomiColor.ground)
+    .navigationTitle("Insights")
+    #if os(iOS)
+    .navigationBarTitleDisplayMode(.large)
+    #endif
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        periodPill
+      }
+    }
     .alert("Could not export CSV", isPresented: $exportError) {
       Button("OK", role: .cancel) {}
     }
   }
 
-  private var periodSelector: some View {
-    HStack(spacing: NomiSpacing.sm) {
-      Button {
-        anchor = ReportsPeriod.shiftedAnchor(anchor, basis: basis, by: -1)
-      } label: {
-        Image(systemName: "chevron.left")
-          .foregroundStyle(NomiColor.textSecondary)
+  /// The period pill's menu: the basis, then the recent periods on that basis
+  /// (12 months or 3 financial years, from `ReportsPeriod.recentAnchors`).
+  private var periodPill: some View {
+    NomiPeriodPill(title: ReportsPeriod.label(for: period), style: .onGround) {
+      Picker("Period basis", selection: $basis) {
+        Text("Calendar month").tag(PeriodBasis.calendarMonth)
+        Text("Financial year").tag(PeriodBasis.financialYear)
       }
-      Text(ReportsPeriod.label(for: period))
-        .nomiTextStyle(.body)
-        .foregroundStyle(NomiColor.textPrimary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-      Button {
-        anchor = ReportsPeriod.shiftedAnchor(anchor, basis: basis, by: 1)
-      } label: {
-        Image(systemName: "chevron.right")
-          .foregroundStyle(NomiColor.textSecondary)
+      Divider()
+      ForEach(ReportsPeriod.recentAnchors(basis: basis, now: Date()), id: \.self) { candidate in
+        Button(ReportsPeriod.label(for: ReportsPeriod.period(basis: basis, anchor: candidate))) {
+          anchor = candidate
+        }
       }
-      NomiSegmentedPill(basis: $basis)
     }
   }
 
-  private func summarySection(_ viewModel: ReportsViewModel) -> some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-      HStack {
-        summaryFigure(label: "Received", amountMinor: viewModel.creditMinor, delta: viewModel.creditDelta)
-        Spacer(minLength: NomiSpacing.sm)
-        summaryFigure(label: "Spent", amountMinor: viewModel.debitMinor, delta: viewModel.debitDelta)
-      }
+  private var emptyState: some View {
+    NomiEmptyState(
+      systemImage: "chart.pie",
+      title: "No spending yet",
+      message: "Insights fill in once transactions arrive."
+    )
+    .frame(maxWidth: .infinity)
+    .padding(.vertical, NomiSpacing.lg)
+  }
+
+  /// Spent and Received side by side, each with its figure and the change
+  /// against the prior period. The figures are `NomiAmountText`, one accessibility
+  /// element each. The change line says so when there is no prior period.
+  private func summaryCard(_ model: ReportsViewModel) -> some View {
+    HStack(alignment: .top, spacing: NomiSpacing.sm) {
+      summaryFigure(label: "Spent", minor: model.debitMinor, change: model.debitChangeCopy)
+      Rectangle()
+        .fill(NomiColor.secondaryFill)
+        .frame(width: 1)
+      summaryFigure(label: "Received", minor: model.creditMinor, change: model.creditChangeCopy)
     }
-    .padding(NomiSpacing.cardPadding)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(NomiColor.surfaceRaised)
-    .nomiCornerRadius(NomiRadius.card)
+    .frame(minHeight: 116, alignment: .topLeading)
+    .nomiCard(padding: EdgeInsets(top: NomiSpacing.sm, leading: NomiSpacing.sm, bottom: NomiSpacing.sm, trailing: NomiSpacing.sm))
   }
 
-  private func summaryFigure(label: String, amountMinor: Int, delta: ReportsDelta.Result?) -> some View {
+  private func summaryFigure(label: String, minor: Int, change: String?) -> some View {
     VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
       Text(label)
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textTertiary)
-      Text(NomiFormatters.amountString(minor: amountMinor))
-        .font(TabularFigures.font(name: NomiFont.montserratSemiBold, size: 20))
-        .foregroundStyle(NomiColor.textPrimary)
-      if let delta {
-        Text("\(delta.isIncrease ? "▲" : "▼") \(ReportsDelta.percentText(delta.percent)) vs last period")
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.textTertiary)
+        .nomiTextStyle(.subhead)
+        .foregroundStyle(NomiColor.inkSecondary)
+      NomiAmountText(minor: minor, style: .summaryValue)
+      Text(change ?? "No prior period to compare")
+        .nomiTextStyle(.footnote)
+        .foregroundStyle(NomiColor.inkSecondary)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .accessibilityElement(children: .combine)
+  }
+
+  /// Daily bars on the calendar basis; monthly bars on the financial-year basis,
+  /// or a load-failed card when the trend did not load.
+  @ViewBuilder
+  private func barsCard(_ model: ReportsViewModel) -> some View {
+    if let daily = model.dailyDebitMinor {
+      let highlight = ReportsSpendSeries.highlightIndex(
+        count: daily.count,
+        todayIndex: ReportsSpendSeries.todayIndex(period: period, now: Date())
+      )
+      ReportsTrendCard(
+        title: "Daily spend",
+        values: daily,
+        highlightIndex: highlight,
+        startLabel: "1",
+        endLabel: "\(daily.count)",
+        spokenValue: ReportsSpendSeries.peakDescription(values: daily) { "on day \($0 + 1)" }
+      )
+    } else if let monthlyTrend {
+      switch monthlyTrend {
+      case .loaded(let buckets):
+        let values = buckets.map(\.debitMinor)
+        ReportsTrendCard(
+          title: "Monthly spend",
+          values: values,
+          highlightIndex: ReportsSpendSeries.highlightIndex(count: values.count, todayIndex: nil),
+          startLabel: buckets.first.map { shortMonth($0.id) } ?? "",
+          endLabel: buckets.last.map { shortMonth($0.id) } ?? "",
+          spokenValue: ReportsSpendSeries.peakDescription(values: values) { "in \(monthName(buckets[$0].id))" }
+        )
+      case .failed:
+        NomiLoadFailedCard(message: "Monthly spend didn’t load.") {
+          retryToken += 1
+        }
+      }
+    }
+  }
+
+  private func shortMonth(_ date: Date) -> String {
+    date.formatted(.dateTime.month(.abbreviated).year(.twoDigits).locale(Locale(identifier: "en_IN")))
+  }
+
+  private func monthName(_ date: Date) -> String {
+    date.formatted(.dateTime.month(.wide).year().locale(Locale(identifier: "en_IN")))
+  }
+
+  /// One control, two actions. Each action keeps its own `@State` URL: the first
+  /// tap writes the CSV, the next opens the share sheet for it. Both actions
+  /// are the shipped ones, unchanged.
+  private var exportRow: some View {
+    Menu {
+      if let exportURL {
+        ShareLink("This period", item: exportURL)
       } else {
-        Text("No prior period to compare")
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.textTertiary)
+        Button("This period") {
+          exportURL = writeExport(for: period)
+        }
       }
+      if let exportAllTimeURL {
+        ShareLink("All time", item: exportAllTimeURL)
+      } else {
+        Button("All time") {
+          exportAllTimeURL = writeExport(for: .allTime)
+        }
+      }
+    } label: {
+      HStack(spacing: NomiSpacing.xs) {
+        Text("Export")
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(NomiColor.navy)
+        Spacer(minLength: NomiSpacing.xs)
+        Text("This period")
+          .nomiTextStyle(.subhead)
+          .foregroundStyle(NomiColor.inkSecondary)
+        Image(systemName: "chevron.down")
+          .resizable()
+          .scaledToFit()
+          .frame(width: 12, height: 12)
+          .foregroundStyle(NomiColor.inkSecondary)
+      }
+      .padding(.horizontal, NomiSpacing.sm)
+      .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget)
+      .nomiCard(padding: EdgeInsets())
     }
+    .accessibilityLabel("Export")
   }
 
-  @ViewBuilder
-  private var trendModule: some View {
-    switch trendLoad {
-    case .loaded(let trend):
-      ReportsTrendCard(trend: trend)
-    case .failed:
-      Text("Couldn't load trend")
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textTertiary)
-    }
-  }
-
-  @ViewBuilder
-  private var exportButton: some View {
-    if let exportURL {
-      ShareLink(item: exportURL) {
-        Label("Export CSV", systemImage: "square.and.arrow.up")
-      }
-    } else {
-      Button {
-        exportURL = writeExport(for: period)
-      } label: {
-        Label("Export CSV", systemImage: "square.and.arrow.up")
-      }
-    }
-  }
-
-  @ViewBuilder
-  private var exportAllTimeButton: some View {
-    if let exportAllTimeURL {
-      ShareLink(item: exportAllTimeURL) {
-        Label("Export all time", systemImage: "square.and.arrow.up")
-      }
-    } else {
-      Button {
-        exportAllTimeURL = writeExport(for: .allTime)
-      } label: {
-        Label("Export all time", systemImage: "square.and.arrow.up")
-      }
-    }
-  }
-
-  /// Shared by both export buttons; each keeps its own `@State` URL so
-  /// tapping one doesn't clobber the other's `ShareLink`. Note:
-  /// `ReportsCSVExport.write` (not owned by this unit) tracks only one
+  /// Shared by both export actions. `ReportsCSVExport.write` tracks only one
   /// "last written file" across every call regardless of period, so writing
   /// one export after the other still deletes the first one's file on disk
   /// even though both `@State` URLs remain set — a pre-existing limitation
-  /// of that single tracker, not something this fix touches.
+  /// of that single tracker, not something this restyle touches.
   private func writeExport(for exportPeriod: InsightPeriod) -> URL? {
     guard let transactions = try? insightsStore.transactions(in: exportPeriod) else {
       exportError = true
@@ -262,7 +320,7 @@ private func reportsCSVExportPreviewContainer() -> ModelContainer {
   )
 }
 
-#Preview("Reports — calendar month, dark") {
+#Preview("Insights · calendar month") {
   NavigationStack {
     ReportsScreen(
       insightsStore: ReportsPreviewSupport.makeInsightsStore(monthCount: 12, anchor: previewAnchor),
@@ -271,10 +329,10 @@ private func reportsCSVExportPreviewContainer() -> ModelContainer {
     )
   }
   .modelContainer(reportsCSVExportPreviewContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Reports — financial year, same underlying data, dark") {
+#Preview("Insights · financial year, same data") {
   NavigationStack {
     ReportsScreen(
       insightsStore: ReportsPreviewSupport.makeInsightsStore(monthCount: 12, anchor: previewAnchor),
@@ -283,10 +341,10 @@ private func reportsCSVExportPreviewContainer() -> ModelContainer {
     )
   }
   .modelContainer(reportsCSVExportPreviewContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Reports — 3 months of data, 3 trend bars, dark") {
+#Preview("Insights · 3 months of data") {
   NavigationStack {
     ReportsScreen(
       insightsStore: ReportsPreviewSupport.makeInsightsStore(monthCount: 3, anchor: previewAnchor),
@@ -295,10 +353,10 @@ private func reportsCSVExportPreviewContainer() -> ModelContainer {
     )
   }
   .modelContainer(reportsCSVExportPreviewContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Reports — zero data, dark") {
+#Preview("Insights · no transactions") {
   NavigationStack {
     ReportsScreen(
       insightsStore: ReportsPreviewSupport.makeInsightsStore(monthCount: 0, anchor: previewAnchor),
@@ -307,7 +365,7 @@ private func reportsCSVExportPreviewContainer() -> ModelContainer {
     )
   }
   .modelContainer(reportsCSVExportPreviewContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
 /// `ReportsPreviewSupport` isn't in this unit's file list, so this stays
@@ -333,19 +391,19 @@ private enum PreviewLoadError: Error {
   case forcedFailure
 }
 
-#Preview("Reports — trend failed to load, dark") {
+#Preview("Insights · monthly trend failed") {
   NavigationStack {
     ReportsScreen(
       insightsStore: TrendFailingInsightsStore(wrapping: ReportsPreviewSupport.makeInsightsStore(monthCount: 12, anchor: previewAnchor)),
-      initialBasis: .calendarMonth,
+      initialBasis: .financialYear,
       initialAnchor: previewAnchor
     )
   }
   .modelContainer(reportsCSVExportPreviewContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Reports — accessibility 3, dark") {
+#Preview("Insights · accessibility 3") {
   NavigationStack {
     ReportsScreen(
       insightsStore: ReportsPreviewSupport.makeInsightsStore(monthCount: 12, anchor: previewAnchor),
@@ -355,5 +413,5 @@ private enum PreviewLoadError: Error {
   }
   .modelContainer(reportsCSVExportPreviewContainer())
   .environment(\.dynamicTypeSize, .accessibility3)
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }

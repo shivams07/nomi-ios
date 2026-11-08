@@ -71,6 +71,10 @@ public enum NomiColor {
   public static let iconTile = Color(hex: NomiHex.iconTile)
   /// Neutral row badge glyph.
   public static let iconGlyph = Color(hex: NomiHex.iconGlyph)
+  /// Insights donut slice 3 (artboard #8DB3EA). Chart fill only.
+  public static let chartTintMid = Color(hex: NomiHex.chartTintMid)
+  /// Insights donut slice 4 (artboard #BBD3EE). Chart fill only.
+  public static let chartTintLight = Color(hex: NomiHex.chartTintLight)
 
   @available(*, deprecated, message: "Use NomiColor.navy")
   public static let accent = Color(hex: NomiHex.navy)

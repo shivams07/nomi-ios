@@ -150,7 +150,14 @@ extension View {
 /// The Kind control: three segments in a tinted 44 pt track. The selected
 /// segment is a white card with ink text, as the approved Accounts artboards
 /// draw it. The Entry direction toggle is navy; this control is not.
+///
+/// Each segment is 44 pt tall, so its whole frame is the tap target. The track
+/// has no vertical padding, and the white card is inset 2 pt inside its
+/// segment, so the drawn look is the same as a 2 pt track around 40 pt cells.
 struct AccountKindControl: View {
+  /// Minimum tap height of one segment (SIMP §3 item 23: 44 pt).
+  static let segmentHeight: CGFloat = NomiSpacing.minTarget
+
   @Binding var kindRaw: String
 
   var body: some View {
@@ -159,7 +166,7 @@ struct AccountKindControl: View {
         segment(kind)
       }
     }
-    .padding(2)
+    .padding(.horizontal, 2)
     .frame(maxWidth: .infinity)
     .background(
       RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -175,12 +182,13 @@ struct AccountKindControl: View {
       Text(kind.capitalized)
         .nomiTextStyle(isSelected ? .chipSelected : .chip)
         .foregroundStyle(isSelected ? NomiColor.ink : NomiColor.inkDeep)
-        .frame(maxWidth: .infinity, minHeight: 40)
+        .frame(maxWidth: .infinity, minHeight: Self.segmentHeight)
         .background {
           if isSelected {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
               .fill(NomiColor.card)
               .shadow(color: NomiColor.inkDeep.opacity(0.12), radius: 1, x: 0, y: 1)
+              .padding(2)
           }
         }
         .contentShape(Rectangle())

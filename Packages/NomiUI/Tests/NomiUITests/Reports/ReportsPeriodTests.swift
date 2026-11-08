@@ -142,4 +142,64 @@ final class ReportsPeriodTests: XCTestCase {
     XCTAssertEqual(ReportsPeriod.trendMonths(for: .calendarMonth), 6)
     XCTAssertEqual(ReportsPeriod.trendMonths(for: .financialYear), 12)
   }
+
+  func testRecentAnchorsMonthIs12StartingAtCurrent() {
+    let now = date(2026, 11, 8)
+    let anchors = ReportsPeriod.recentAnchors(basis: .calendarMonth, now: now, calendar: utc)
+    XCTAssertEqual(anchors.count, 12)
+    XCTAssertEqual(ReportsPeriod.period(basis: .calendarMonth, anchor: anchors[0], calendar: utc), .month(year: 2026, month: 11))
+    XCTAssertEqual(ReportsPeriod.period(basis: .calendarMonth, anchor: anchors[11], calendar: utc), .month(year: 2025, month: 12))
+  }
+
+  func testRecentAnchorsFinancialYearIs3() {
+    let now = date(2026, 11, 8)
+    let anchors = ReportsPeriod.recentAnchors(basis: .financialYear, now: now, calendar: utc)
+    XCTAssertEqual(anchors.count, 3)
+    XCTAssertEqual(ReportsPeriod.period(basis: .financialYear, anchor: anchors[0], calendar: utc), .financialYear(startingYear: 2026))
+    XCTAssertEqual(ReportsPeriod.period(basis: .financialYear, anchor: anchors[2], calendar: utc), .financialYear(startingYear: 2024))
+  }
+
+  func testChangeCopyStatesDirectionAmountAndNoPrior() {
+    XCTAssertEqual(ReportsPeriod.changeCopy(current: 7_000_00, prior: 6_000_00)?.hasPrefix("up "), true)
+    XCTAssertEqual(ReportsPeriod.changeCopy(current: 5_000_00, prior: 6_000_00)?.hasPrefix("down "), true)
+    XCTAssertEqual(ReportsPeriod.changeCopy(current: 6_420_00, prior: 0), "up ₹6,420 vs last period")
+    XCTAssertEqual(ReportsPeriod.changeCopy(current: 6_420_50, prior: 0), "up ₹6,420.50 vs last period")
+    XCTAssertEqual(ReportsPeriod.changeCopy(current: 100, prior: 100), "No change vs last period")
+    XCTAssertNil(ReportsPeriod.changeCopy(current: 100, prior: nil))
+  }
+
+  func testDailyDebitZeroFillsEveryDayAndIgnoresOtherMonths() {
+    let byDay = [
+      DayBucket(id: date(2026, 11, 3), debitMinor: 500),
+      DayBucket(id: date(2026, 11, 3), debitMinor: 250),
+      DayBucket(id: date(2026, 10, 31), debitMinor: 9_999),
+    ]
+    let values = ReportsSpendSeries.dailyDebit(period: .month(year: 2026, month: 11), byDay: byDay, calendar: utc)
+    XCTAssertEqual(values?.count, 30)
+    XCTAssertEqual(values?[2], 750)
+    XCTAssertEqual(values?.reduce(0, +), 750)
+  }
+
+  func testDailyDebitIsNilForFinancialYear() {
+    XCTAssertNil(ReportsSpendSeries.dailyDebit(period: .financialYear(startingYear: 2026), byDay: [], calendar: utc))
+  }
+
+  func testTodayIndexOnlyForTheCurrentMonth() {
+    let now = date(2026, 11, 8)
+    XCTAssertEqual(ReportsSpendSeries.todayIndex(period: .month(year: 2026, month: 11), now: now, calendar: utc), 7)
+    XCTAssertNil(ReportsSpendSeries.todayIndex(period: .month(year: 2026, month: 10), now: now, calendar: utc))
+  }
+
+  func testHighlightFallsBackToLastBar() {
+    XCTAssertEqual(ReportsSpendSeries.highlightIndex(count: 30, todayIndex: 7), 7)
+    XCTAssertEqual(ReportsSpendSeries.highlightIndex(count: 30, todayIndex: nil), 29)
+    XCTAssertEqual(ReportsSpendSeries.highlightIndex(count: 30, todayIndex: 40), 29)
+    XCTAssertNil(ReportsSpendSeries.highlightIndex(count: 0, todayIndex: nil))
+  }
+
+  func testPeakDescriptionNamesTheHighestBarOrSaysNoSpend() {
+    let spoken = ReportsSpendSeries.peakDescription(values: [100_00, 540_20, 0]) { "on day \($0 + 1)" }
+    XCTAssertTrue(spoken.hasPrefix("Highest on day 2, "))
+    XCTAssertEqual(ReportsSpendSeries.peakDescription(values: [0, 0]) { "on day \($0 + 1)" }, "No spend")
+  }
 }

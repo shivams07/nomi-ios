@@ -18,6 +18,12 @@ struct ReportsViewModel: Equatable {
   let categories: [CategorySlice]
   let trend: [MonthBucket]
   let transactionCount: Int
+  /// "up ₹6,420 vs last period" and its credit twin; `nil` with no prior period.
+  let debitChangeCopy: String?
+  let creditChangeCopy: String?
+  /// Day-of-month debit totals for a calendar-month period; `nil` otherwise.
+  let dailyDebitMinor: [Int]?
+  let topMerchants: [MerchantTotal]
 
   static func == (lhs: ReportsViewModel, rhs: ReportsViewModel) -> Bool {
     lhs.period == rhs.period
@@ -31,6 +37,11 @@ struct ReportsViewModel: Equatable {
       && lhs.categories.map(\.totalMinor) == rhs.categories.map(\.totalMinor)
       && lhs.trend.map(\.id) == rhs.trend.map(\.id)
       && lhs.transactionCount == rhs.transactionCount
+      && lhs.debitChangeCopy == rhs.debitChangeCopy
+      && lhs.creditChangeCopy == rhs.creditChangeCopy
+      && lhs.dailyDebitMinor == rhs.dailyDebitMinor
+      && lhs.topMerchants.map(\.id) == rhs.topMerchants.map(\.id)
+      && lhs.topMerchants.map(\.totalMinor) == rhs.topMerchants.map(\.totalMinor)
   }
 }
 
@@ -51,7 +62,11 @@ enum ReportsViewModelBuilder {
       creditDelta: ReportsDelta.compute(current: insights.creditMinor, prior: insights.priorCreditMinor),
       categories: ReportsCategoryFold.foldToSevenSlots(insights.byCategory),
       trend: trend,
-      transactionCount: insights.transactionCount
+      transactionCount: insights.transactionCount,
+      debitChangeCopy: ReportsPeriod.changeCopy(current: insights.debitMinor, prior: insights.priorDebitMinor),
+      creditChangeCopy: ReportsPeriod.changeCopy(current: insights.creditMinor, prior: insights.priorCreditMinor),
+      dailyDebitMinor: ReportsSpendSeries.dailyDebit(period: period, byDay: insights.byDay, calendar: calendar),
+      topMerchants: insights.topMerchants
     )
   }
 }

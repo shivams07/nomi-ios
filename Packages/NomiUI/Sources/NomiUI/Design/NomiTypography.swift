@@ -77,6 +77,9 @@ public enum NomiTextStyle {
   case heroTitle
   /// Gauge centre, sheet amount. Regular 28, tracking -0.6. Remapped.
   case displayValue
+  /// Insights headline totals (Spent, Received): Regular 24, tracking -0.4.
+  /// Added by IN (decisions Amendment 2 R2). `displayValue` is unchanged.
+  case summaryValue
   /// Section and card titles. SemiBold 20. Remapped.
   case title
   /// Card titles and sheet titles: SemiBold 17.
@@ -125,6 +128,7 @@ public enum NomiTextStyle {
     case .heroAmount: return .custom(NomiFont.interRegular, size: 48, relativeTo: .largeTitle)
     case .heroTitle: return .custom(NomiFont.interSemiBold, size: 24, relativeTo: .title)
     case .displayValue: return .custom(NomiFont.interRegular, size: 28, relativeTo: .title)
+    case .summaryValue: return .custom(NomiFont.interRegular, size: 24, relativeTo: .title2)
     case .title: return .custom(NomiFont.interSemiBold, size: 20, relativeTo: .title3)
     case .headline: return .custom(NomiFont.interSemiBold, size: 17, relativeTo: .headline)
     case .body: return .custom(NomiFont.interMedium, size: 16, relativeTo: .body)
@@ -153,6 +157,7 @@ public enum NomiTextStyle {
     case .largeTitle: return -0.4
     case .heroAmount: return -1.4
     case .displayValue: return -0.6
+    case .summaryValue: return -0.4
     case .dashboardHeroTotal: return NomiTextStyle.heroAmount.tracking
     default: return 0
     }
