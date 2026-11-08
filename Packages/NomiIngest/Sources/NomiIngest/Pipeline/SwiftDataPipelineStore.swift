@@ -163,6 +163,8 @@ extension TransactionSnapshot {
       transferGroupID: transaction.transferGroupID,
       transferSourceRaw: transaction.transferSourceRaw
     )
+    // Amendment 3. The only place the pair this snapshot was read with is set.
+    self.transferPairAtRead = transaction.transferPair
   }
 }
 
@@ -206,12 +208,15 @@ extension Transaction {
   /// `needsReviewReasonRaw` (C4): they record what the *ingester* saw when the
   /// row was created, and a later merge does not change that.
   ///
-  /// The transfer pair (DEC-05) is written only when
-  /// `TransferRules.pipelineMayWrite` allows it for the row's current value, and
-  /// then both fields together (A-05 item 16). A stale snapshot therefore cannot
-  /// clear or change a user's mark. Residual window, accepted and in the PR: the
-  /// guard reads this context's copy of the row, which can predate a save made
-  /// in another context.
+  /// The transfer pair (DEC-05) is written by compare-and-set (Amendment 3, rule
+  /// C): only if the snapshot carries the pair it read from the store, that pair
+  /// still equals the row's current pair, and `TransferRules.pipelineMayWrite`
+  /// allows the change. Both fields are written together, or neither. A
+  /// snapshot not read from the store carries no read pair and never writes the
+  /// pair. So a stale snapshot never clears, changes or re-creates a decision,
+  /// and never overwrites an unrecognised pair. Residual window, accepted and in
+  /// the PR: the read and the current pair both come from this context's copy
+  /// of the row, which can predate a save made in another context.
   func apply(_ snapshot: TransactionSnapshot) {
     merchantName = snapshot.merchantName
     upiKindRaw = snapshot.upiKindRaw
@@ -225,8 +230,9 @@ extension Transaction {
     needsReview = snapshot.needsReview
     updatedAt = snapshot.updatedAt
     if TransferRules.pipelineMayWrite(
-      currentRaw: transferSourceRaw,
-      incomingRaw: snapshot.transferSourceRaw
+      read: snapshot.transferPairAtRead,
+      current: transferPair,
+      incoming: snapshot.transferPair
     ) {
       transferGroupID = snapshot.transferGroupID
       transferSourceRaw = snapshot.transferSourceRaw

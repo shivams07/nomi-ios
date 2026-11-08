@@ -128,6 +128,8 @@ public final class Transaction {
   // DEC-05. Both optional with a `nil` default, same recipe as `note`: additive,
   // no schema bump, CloudKit-safe, not part of `dedupeKey`. Invariant:
   // `transferGroupID != nil` exactly when `transferSource` is `.auto` or `.manual`.
+  // Any other pair is `TransferPairState.unrecognized`; the pipeline never writes
+  // one and never overwrites one (Amendment 3).
 
   /// Non-`nil` means this row is a transfer leg. The two legs of one transfer
   /// share a value; a row marked alone has one of its own. See `TransferGroupID`.
@@ -229,6 +231,11 @@ public final class Transaction {
 /// Below the `@Model` line, so the harness does not compile it; the rules
 /// themselves are harness-tested on `TransferLeg` directly.
 extension Transaction {
+  /// The row's transfer pair, the unit the pipeline compares and writes (Amendment 3).
+  public var transferPair: TransferPair {
+    TransferPair(groupID: transferGroupID, sourceRaw: transferSourceRaw)
+  }
+
   public var transferLeg: TransferLeg {
     TransferLeg(
       id: id,

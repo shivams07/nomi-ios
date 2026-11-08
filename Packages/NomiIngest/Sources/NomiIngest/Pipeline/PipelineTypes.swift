@@ -83,6 +83,12 @@ public struct TransactionSnapshot: Sendable, Equatable, Identifiable {
   public var transferGroupID: UUID?
   public var transferSourceRaw: String?
 
+  /// The pair as `SwiftDataPipelineStore` read it. `nil` for a snapshot not read
+  /// from the store; `Transaction.apply` then never writes the transfer pair
+  /// (Amendment 3, compare-and-set). Set only by `init(_ transaction:)` in
+  /// `SwiftDataPipelineStore.swift`, never by an initialiser parameter.
+  public internal(set) var transferPairAtRead: TransferPair?
+
   public init(
     id: UUID = UUID(),
     date: Date,
@@ -137,6 +143,11 @@ public struct TransactionSnapshot: Sendable, Equatable, Identifiable {
     self.needsReviewReason = needsReviewReason
     self.transferGroupID = transferGroupID
     self.transferSourceRaw = transferSourceRaw
+    self.transferPairAtRead = nil
+  }
+
+  public var transferPair: TransferPair {
+    TransferPair(groupID: transferGroupID, sourceRaw: transferSourceRaw)
   }
 
   public var direction: Direction {

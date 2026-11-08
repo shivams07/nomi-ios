@@ -81,6 +81,13 @@ enum MergeResolution {
   ///   - 2+ manual rows -> `nil`. The app cannot know which one the user meant
   ///     to keep, so the whole group is left alone - including any email rows
   ///     in it, because they cannot be attributed either.
+  ///   - any row whose transfer pair this build does not recognise -> `nil`, the
+  ///     whole group left alone (DEC-05 Amendment 3). Nothing is deleted and no
+  ///     field changes; the duplicates stay visible until a build that reads the
+  ///     pair reconciles them.
+  ///
+  /// The survivor's transfer pair is the one `TransferRules.collapsedTransferFields`
+  /// chooses: a user's `manual` or `rejected` decision on any row survives the fold.
   static func collapsing(
     _ group: [TransactionSnapshot],
     now: Date
@@ -104,6 +111,11 @@ enum MergeResolution {
 
     var survivor = ordered[0]
     let others = Array(ordered.dropFirst())
+
+    // DEC-05 Amendment 3: a group holding a pair this build cannot read is left alone.
+    guard let transfer = TransferRules.collapsedTransferFields(
+      survivor: survivor.transferPair, others: others.map(\.transferPair)
+    ) else { return nil }
 
     for row in others {
       for ref in row.sourceRefs where !survivor.hasSourceRef(ref) {
@@ -131,16 +143,11 @@ enum MergeResolution {
     }
 
     // DEC-05, A-05 item 17. A user's decision on any duplicate survives the
-    // fold: the survivor's pair follows `collapsedTransferFields`, which keeps
-    // its own `manual` or `rejected`, takes another's, and never drops a mark.
-    // The survivor's own fields are untouched by the loop above, so they are
-    // read here as they were on entry.
-    let transfer = TransferRules.collapsedTransferFields(
-      survivor: (survivor.transferGroupID, survivor.transferSourceRaw),
-      others: others.map { ($0.transferGroupID, $0.transferSourceRaw) }
-    )
-    survivor.transferGroupID = transfer.0
-    survivor.transferSourceRaw = transfer.1
+    // fold: the survivor's pair is the one `collapsedTransferFields` chose,
+    // computed above from the pairs as they were on entry. The loop does not
+    // touch the transfer fields.
+    survivor.transferGroupID = transfer.groupID
+    survivor.transferSourceRaw = transfer.sourceRaw
 
     survivor.mergedCount = ordered.reduce(0) { $0 + max(1, $1.mergedCount) }
     survivor.updatedAt = now

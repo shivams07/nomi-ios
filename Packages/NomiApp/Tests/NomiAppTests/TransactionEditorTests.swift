@@ -11,6 +11,12 @@ import XCTest
 @MainActor
 final class TransactionEditorTests: XCTestCase {
 
+  /// Holds the container for the life of the test. A `ModelContext` does not
+  /// keep its `ModelContainer` alive, and a container released early traps
+  /// (SIGTRAP) on the first fetch. Every helper that returns a context stores
+  /// its container here first (Lim's FAIL of #118, bounce 1).
+  private var keepAlive: ModelContainer?
+
   /// The whole contract in one test: amount, date and description rewrite;
   /// `dedupeKey` re-derives from the new values through the same public
   /// functions the pipeline uses; everything editing has no business
@@ -238,6 +244,46 @@ final class TransactionEditorTests: XCTestCase {
     XCTAssertEqual(try fetchRow(context, debit.id).transferGroupID, before)
   }
 
+  /// R9 (Amendment 3). A row whose pair this build cannot read is never claimed
+  /// by another row's mark. The mark falls to the touched row alone.
+  func testMarkingNeverClaimsACandidateInAnUnrecognizedState() throws {
+    let (editor, context, _) = try makeEditor()
+    let savings = UUID()
+    let card = UUID()
+    let base = Date(timeIntervalSince1970: 1_700_000_000)
+    let debit = Transaction(
+      date: base,
+      descriptionText: "S",
+      normalizedDescription: "S",
+      amountMinor: 2_000_000,
+      directionRaw: Direction.debit.rawValue,
+      accountID: savings,
+      dedupeKey: "s"
+    )
+    let credit = Transaction(
+      date: base.addingTimeInterval(86_400),
+      descriptionText: "C",
+      normalizedDescription: "C",
+      amountMinor: 2_000_000,
+      directionRaw: Direction.credit.rawValue,
+      accountID: card,
+      dedupeKey: "c",
+      transferSourceRaw: "zzz"
+    )
+    context.insert(debit)
+    context.insert(credit)
+    try context.save()
+
+    try editor.setTransfer(debit.id, isTransfer: true)
+
+    let d = try fetchRow(context, debit.id)
+    let c = try fetchRow(context, credit.id)
+    XCTAssertEqual(d.transferGroupID, TransferGroupID.make(single: debit.id))
+    XCTAssertEqual(d.transferSource, .manual)
+    XCTAssertNil(c.transferGroupID, "the unrecognised credit is not claimed")
+    XCTAssertEqual(c.transferSourceRaw, "zzz", "and its pair is unchanged")
+  }
+
   /// A-05 item 12. A mark changes the next read of the insights with no manual
   /// refresh: the write went through `WriteCoordinator`, which drops the cache.
   func testSetTransferInvalidatesTheInsightsCache() throws {
@@ -250,6 +296,7 @@ final class TransactionEditorTests: XCTestCase {
       configurations: [
         ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
       ])
+    keepAlive = container
     let context = container.mainContext
     let calendar = NomiCalendar.india
     let fixed = calendar.date(from: DateComponents(year: 2026, month: 11, day: 15, hour: 12))!
@@ -300,6 +347,7 @@ final class TransactionEditorTests: XCTestCase {
       configurations: [
         ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
       ])
+    keepAlive = container
     let context = container.mainContext
     let coordinator = WriteCoordinator(cache: InsightsCache())
     let editor = SwiftDataTransactionEditor(context: context, coordinator: coordinator)
