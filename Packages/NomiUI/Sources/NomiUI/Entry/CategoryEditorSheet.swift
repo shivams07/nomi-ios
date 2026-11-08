@@ -41,40 +41,62 @@ enum PaletteSlotOptions {
 
 /// Create-or-edit sheet for a category (OR2; approved `CategoryEditor`
 /// artboard). A large sheet with Cancel left and Save right, both text, as the
-/// other form sheets do. Name sits in a card; a new category also picks its
-/// colour from the seven slots and its icon from the grid.
+/// other form sheets do. Name, Colour and Icon are shown for both create and
+/// edit: the artboard draws all three on an existing category, and
+/// `CategoryStore.update` changes all three in one write.
 ///
-/// `CategoryStore` has no method that changes an existing category's colour or
-/// icon (it has `create`, `rename` and `delete` only), so for an existing
-/// category the Colour and Icon sections are not shown. The artboard draws them
-/// on an existing category. That is a deviation, listed in the PR: showing the
-/// controls would mean controls whose change is silently dropped.
+/// Every decision (what Save enables, the refusal under the name, the message
+/// for a failed save, whether an edit changed anything, the delete footer) is
+/// in `CategoryEditorLogic`. This view only draws them and runs the writes.
 ///
 /// A non-system category ends with a "Delete category" row that asks first.
-/// A system category shows a "System category" caption in that place.
+/// A system category shows a "System category" caption in that place. System
+/// categories can be renamed, re-coloured and re-iconed; only delete is refused.
 struct CategoryEditorSheet: View {
   let categoryStore: CategoryStore
   let category: NomiCore.Category?
+  /// The names every other category holds, for the duplicate check. The
+  /// category being edited is left out, so keeping its own name passes. Empty
+  /// when the caller has no list to give, and then the store alone decides.
+  let existingNames: [String]
   var onCreated: ((UUID) -> Void)?
 
   @Environment(\.dismiss) private var dismiss
-  @State private var name: String
-  @State private var selectedPaletteSlot: Int
-  @State private var symbolName: String
+  @State private var draft: CategoryEditorLogic.Draft
+  /// How the loaded category looked. Nil for a new category, which has no
+  /// loaded state to differ from.
+  private let original: CategoryEditorLogic.Draft?
+  /// A failed save or delete. Cleared as soon as the user edits a field.
   @State private var errorMessage: String?
   @State private var isConfirmingDelete = false
 
-  init(categoryStore: CategoryStore, category: NomiCore.Category?, onCreated: ((UUID) -> Void)? = nil) {
+  init(
+    categoryStore: CategoryStore,
+    category: NomiCore.Category?,
+    existingNames: [String] = [],
+    onCreated: ((UUID) -> Void)? = nil
+  ) {
     self.categoryStore = categoryStore
     self.category = category
+    self.existingNames = existingNames
     self.onCreated = onCreated
-    _name = State(initialValue: category?.name ?? "")
-    _selectedPaletteSlot = State(initialValue: category?.paletteSlot ?? 0)
-    _symbolName = State(initialValue: category?.symbolName ?? PaletteSlotOptions.defaultSymbol)
+    let loaded = CategoryEditorLogic.Draft(
+      name: category?.name ?? "",
+      paletteSlot: category?.paletteSlot ?? 0,
+      symbolName: category?.symbolName ?? PaletteSlotOptions.defaultSymbol
+    )
+    self.original = category == nil ? nil : loaded
+    _draft = State(initialValue: loaded)
   }
 
   private var isCreating: Bool { category == nil }
-  private var canSave: Bool { CategoryFormGate.isValid(name: name) }
+  private var canSave: Bool {
+    CategoryEditorLogic.canSave(draft, original: original, existingNames: existingNames)
+  }
+  /// The duplicate line while typing wins over an older save error.
+  private var inlineMessage: String? {
+    CategoryEditorLogic.nameMessage(for: draft, existingNames: existingNames) ?? errorMessage
+  }
 
   var body: some View {
     NavigationStack {
@@ -82,19 +104,17 @@ struct CategoryEditorSheet: View {
         VStack(alignment: .leading, spacing: 0) {
           sectionLabel("Name")
           nameCard
-          if isCreating {
-            sectionLabel("Colour")
-            colourCard
-            sectionLabel("Icon")
-            iconCard
-          }
-          if let errorMessage {
-            Text(errorMessage)
+          if let inlineMessage {
+            Text(inlineMessage)
               .nomiTextStyle(.caption)
               .foregroundStyle(NomiColor.error)
               .padding(.top, NomiSpacing.xs)
               .padding(.horizontal, NomiSpacing.xxs)
           }
+          sectionLabel("Colour")
+          colourCard
+          sectionLabel("Icon")
+          iconCard
           if let category {
             deleteFooter(for: category)
           }
@@ -103,6 +123,9 @@ struct CategoryEditorSheet: View {
         .padding(.vertical, NomiSpacing.xs)
       }
       .background(NomiColor.ground)
+      .onChange(of: draft) { _, _ in
+        errorMessage = nil
+      }
       .navigationTitle(isCreating ? "New Category" : "Edit Category")
       #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
@@ -156,7 +179,7 @@ struct CategoryEditorSheet: View {
   }
 
   private var nameCard: some View {
-    TextField("Category name", text: $name)
+    TextField("Category name", text: $draft.name)
       .nomiTextStyle(.rowTitle)
       .foregroundStyle(NomiColor.ink)
       .accessibilityLabel("Name")
@@ -171,13 +194,13 @@ struct CategoryEditorSheet: View {
     HStack(spacing: 0) {
       ForEach(PaletteSlotOptions.all, id: \.self) { slot in
         Button {
-          selectedPaletteSlot = slot
+          draft.paletteSlot = slot
         } label: {
           Circle()
             .fill(paletteSlot(slot))
             .frame(width: 28, height: 28)
             .overlay {
-              if selectedPaletteSlot == slot {
+              if draft.paletteSlot == slot {
                 Circle()
                   .inset(by: -4)
                   .stroke(NomiColor.ink, lineWidth: 2)
@@ -189,7 +212,7 @@ struct CategoryEditorSheet: View {
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
         .accessibilityLabel(PaletteSlotOptions.colourName(forSlot: slot))
-        .accessibilityAddTraits(selectedPaletteSlot == slot ? .isSelected : [])
+        .accessibilityAddTraits(draft.paletteSlot == slot ? .isSelected : [])
       }
     }
     .padding(.horizontal, 6)
@@ -202,9 +225,9 @@ struct CategoryEditorSheet: View {
   private var iconCard: some View {
     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 4), spacing: 6) {
       ForEach(PaletteSlotOptions.symbolChoices, id: \.self) { symbol in
-        let isSelected = symbolName == symbol
+        let isSelected = draft.symbolName == symbol
         Button {
-          symbolName = symbol
+          draft.symbolName = symbol
         } label: {
           Image(systemName: symbol)
             .resizable()
@@ -228,17 +251,18 @@ struct CategoryEditorSheet: View {
   }
 
   /// The delete row for a deletable category, or the caption that says why
-  /// there is none. `CategoryDeletion.isDeletable` decides which.
+  /// there is none. `CategoryEditorLogic.deleteFooter` decides which.
   @ViewBuilder
   private func deleteFooter(for category: NomiCore.Category) -> some View {
-    if CategoryDeletion.isDeletable(category) {
+    switch CategoryEditorLogic.deleteFooter(for: category) {
+    case .deleteRow:
       NomiDestructiveRow(title: "Delete category") {
         isConfirmingDelete = true
       }
       .padding(.horizontal, NomiSpacing.sm)
       .nomiCard(padding: EdgeInsets())
       .padding(.top, NomiSpacing.md)
-    } else {
+    case .systemCaption:
       Text("System category")
         .nomiTextStyle(.footnote)
         .foregroundStyle(NomiColor.inkSecondary)
@@ -253,20 +277,29 @@ struct CategoryEditorSheet: View {
     guard canSave else { return }
     do {
       if let category {
-        try categoryStore.rename(category.id, to: name)
+        try categoryStore.update(
+          category.id,
+          name: draft.name,
+          symbolName: draft.symbolName,
+          paletteSlot: draft.paletteSlot
+        )
         dismiss()
       } else {
-        let created = try categoryStore.create(name: name, symbolName: symbolName, paletteSlot: selectedPaletteSlot)
+        let created = try categoryStore.create(
+          name: CategoryEditRules.normalizedName(draft.name),
+          symbolName: draft.symbolName,
+          paletteSlot: draft.paletteSlot
+        )
         onCreated?(created.id)
         dismiss()
       }
     } catch {
-      errorMessage = "Could not save category."
+      errorMessage = CategoryEditorLogic.saveMessage(for: error)
     }
   }
 
   private func performDelete() {
-    guard let category, CategoryDeletion.isDeletable(category) else { return }
+    guard let category, CategoryEditorLogic.mayDelete(category) else { return }
     do {
       try categoryStore.delete(category.id)
       dismiss()
