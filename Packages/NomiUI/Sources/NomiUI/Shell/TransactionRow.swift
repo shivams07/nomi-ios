@@ -129,15 +129,24 @@ public struct TransactionRow: View {
     return letters.uppercased()
   }
 
+  /// Pure. The "Transfer" tag (DEC-05, T3). It is words, not colour, so the
+  /// state reads without seeing the tag. `nil` when the row is not a transfer.
+  /// It reads `isTransfer` only (Amendment 3, U6).
+  static func transferTagText(isTransfer: Bool) -> String? {
+    isTransfer ? "Transfer" : nil
+  }
+
   /// Pure. The row's single VoiceOver label. It carries the direction word and
-  /// the unsigned amount, then the UPI kind, a merge count and "Needs review"
-  /// when they apply. `mergedSourceCount` is nil for a row with one source.
+  /// the unsigned amount, then "Transfer" for a transfer leg, the UPI kind, a
+  /// merge count and "Needs review" when they apply. `mergedSourceCount` is nil
+  /// for a row with one source.
   static func accessibilityLabel(
     title: String,
     subtitle: String,
     direction: Direction,
     minor: Int,
     currencyCode: String = "INR",
+    isTransfer: Bool,
     upiKind: String?,
     needsReview: Bool,
     mergedSourceCount: Int?
@@ -148,6 +157,7 @@ public struct TransactionRow: View {
       direction == .credit ? "credit" : "debit",
       NomiFormatters.amountString(minor: abs(minor), currencyCode: currencyCode),
     ]
+    if let transferTag = transferTagText(isTransfer: isTransfer) { parts.append(transferTag) }
     if let upiKind { parts.append(upiKind) }
     if let mergedSourceCount { parts.append("Merged from \(mergedSourceCount) sources") }
     if needsReview { parts.append("Needs review") }
@@ -188,6 +198,7 @@ public struct TransactionRow: View {
         direction: transaction.direction,
         minor: transaction.amountMinor,
         currencyCode: transaction.currencyCode,
+        isTransfer: transaction.isTransfer,
         upiKind: upiKindCapsuleText,
         needsReview: transaction.needsReview,
         mergedSourceCount: transaction.mergedCount > 1 ? transaction.sourceRefs.count : nil
@@ -202,6 +213,9 @@ public struct TransactionRow: View {
           .nomiTextStyle(.rowTitle)
           .foregroundStyle(NomiColor.ink)
           .fixedSize(horizontal: false, vertical: true)
+        if let tagText = Self.transferTagText(isTransfer: transaction.isTransfer) {
+          transferCapsule(text: tagText)
+        }
         if let upiKindCapsuleText {
           upiKindCapsule(text: upiKindCapsuleText)
         }
@@ -269,6 +283,17 @@ public struct TransactionRow: View {
         style: .neutral
       )
     }
+  }
+
+  /// The "Transfer" tag: the same capsule as the UPI kind, secondary fill and
+  /// caption type, so it adds no token (DEC-05 T3).
+  private func transferCapsule(text: String) -> some View {
+    Text(text)
+      .nomiTextStyle(.caption)
+      .foregroundStyle(NomiColor.inkSecondary)
+      .padding(.horizontal, NomiSpacing.xxs)
+      .background(NomiColor.secondaryFill)
+      .clipShape(Capsule(style: .continuous))
   }
 
   /// Same capsule shape as `mergeFlag` — secondary fill, no new token.

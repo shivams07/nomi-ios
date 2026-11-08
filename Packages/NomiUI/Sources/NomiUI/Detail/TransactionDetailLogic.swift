@@ -30,12 +30,15 @@ public enum TransactionDetailLogic {
 
   /// Every reason this screen can see for a row's flags, in a fixed order.
   /// It cannot know *which* pipeline rule set `needsReview` — only that it is
-  /// set — so this reports symptoms, not causes.
-  public static func flagReasons(accountID: UUID?, needsReview: Bool, mergedCount: Int) -> [String] {
+  /// set — so this reports symptoms, not causes. `isTransfer` is the row's
+  /// transfer state (DEC-05 T3): "Transfer" is the last flag, and it reads
+  /// `isTransfer` only (Amendment 3, U6).
+  public static func flagReasons(accountID: UUID?, needsReview: Bool, mergedCount: Int, isTransfer: Bool) -> [String] {
     var reasons: [String] = []
     if accountID == nil { reasons.append("No account assigned") }
     if needsReview { reasons.append("Needs review") }
     if mergedCount > 1 { reasons.append("Merged from \(mergedCount) sources") }
+    if isTransfer { reasons.append("Transfer") }
     return reasons
   }
 
@@ -70,6 +73,59 @@ public enum TransactionDetailLogic {
   public static func signedMinor(amountMinor: Int, direction: Direction) -> Int {
     let magnitude = abs(amountMinor)
     return direction == .debit ? -magnitude : magnitude
+  }
+
+  // MARK: - DEC-05 transfer copy (T3)
+
+  /// The sentence a marked transfer carries on Detail. It says what the mark
+  /// does to the totals, so a mark never changes a figure the copy does not state.
+  public static let transferSentence =
+    "Not counted as spending or income. This moves money between your own accounts."
+
+  /// What a mark did when no other row shares the group: this row alone is excluded.
+  public static let noMatchSentence =
+    "No matching payment found on another account. Only this transaction is excluded."
+
+  /// The other leg of a transfer, as Detail names it. `narration` is that row's
+  /// `descriptionText`; `date` is its own date.
+  public struct TransferPartner: Equatable, Sendable {
+    public let narration: String
+    public let date: Date
+
+    public init(narration: String, date: Date) {
+      self.narration = narration
+      self.date = date
+    }
+  }
+
+  /// The transfer action's title. It reads `isTransfer` alone, never the row's
+  /// source, so the screen offers the same action for every marked row
+  /// (Amendment 3, U6).
+  public static func transferButtonTitle(isTransfer: Bool) -> String {
+    isTransfer ? "Not a transfer" : "Mark as transfer"
+  }
+
+  /// What a mark made on this screen did, read back after the write. It names
+  /// the partner the editor marked in the same write, or says that only this
+  /// row is excluded. A blank partner narration is named "another transaction",
+  /// so the sentence never has an empty gap in it.
+  public static func markOutcome(partner: TransferPartner?) -> String {
+    guard let partner else { return noMatchSentence }
+    return "Also marked: \(narrationText(partner.narration)), \(NomiFormatters.dayMonthYear.string(from: partner.date))"
+  }
+
+  /// What an unmark made on this screen did. Unmarking clears every row in the
+  /// group, so a named partner counts as spending or income again, and so does
+  /// this row. Without a partner only this row changes, and the sentence says so.
+  public static func unmarkOutcome(partner: TransferPartner?) -> String {
+    guard let partner else { return "Now counted as spending or income again." }
+    return
+      "Also unmarked: \(narrationText(partner.narration)), \(NomiFormatters.dayMonthYear.string(from: partner.date)). Both now count as spending or income."
+  }
+
+  private static func narrationText(_ narration: String) -> String {
+    let trimmed = narration.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? "another transaction" : trimmed
   }
 }
 

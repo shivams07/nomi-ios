@@ -40,31 +40,107 @@ final class TransactionDetailLogicTests: XCTestCase {
 
   func testFlagReasonsNoneWhenNothingIsWrong() {
     XCTAssertEqual(
-      TransactionDetailLogic.flagReasons(accountID: UUID(), needsReview: false, mergedCount: 1), [])
+      TransactionDetailLogic.flagReasons(accountID: UUID(), needsReview: false, mergedCount: 1, isTransfer: false), [])
   }
 
   func testFlagReasonsNoAccountOnly() {
     XCTAssertEqual(
-      TransactionDetailLogic.flagReasons(accountID: nil, needsReview: false, mergedCount: 1),
+      TransactionDetailLogic.flagReasons(accountID: nil, needsReview: false, mergedCount: 1, isTransfer: false),
       ["No account assigned"])
   }
 
   func testFlagReasonsNeedsReviewOnly() {
     XCTAssertEqual(
-      TransactionDetailLogic.flagReasons(accountID: UUID(), needsReview: true, mergedCount: 1),
+      TransactionDetailLogic.flagReasons(accountID: UUID(), needsReview: true, mergedCount: 1, isTransfer: false),
       ["Needs review"])
   }
 
   func testFlagReasonsMergedOnly() {
     XCTAssertEqual(
-      TransactionDetailLogic.flagReasons(accountID: UUID(), needsReview: false, mergedCount: 2),
+      TransactionDetailLogic.flagReasons(accountID: UUID(), needsReview: false, mergedCount: 2, isTransfer: false),
       ["Merged from 2 sources"])
   }
 
   func testFlagReasonsAllThreeInFixedOrder() {
     XCTAssertEqual(
-      TransactionDetailLogic.flagReasons(accountID: nil, needsReview: true, mergedCount: 3),
+      TransactionDetailLogic.flagReasons(accountID: nil, needsReview: true, mergedCount: 3, isTransfer: false),
       ["No account assigned", "Needs review", "Merged from 3 sources"])
+  }
+
+  /// DEC-05 T3: a transfer is a flag on Detail, and it is the last one.
+  func testFlagReasonsTransferOnly() {
+    XCTAssertEqual(
+      TransactionDetailLogic.flagReasons(accountID: UUID(), needsReview: false, mergedCount: 1, isTransfer: true),
+      ["Transfer"])
+  }
+
+  func testFlagReasonsTransferComesLastInFixedOrder() {
+    XCTAssertEqual(
+      TransactionDetailLogic.flagReasons(accountID: nil, needsReview: true, mergedCount: 2, isTransfer: true),
+      ["No account assigned", "Needs review", "Merged from 2 sources", "Transfer"])
+  }
+
+  // MARK: - DEC-05 T3: transfer copy
+
+  /// The two sentences are fixed copy from the plan, pinned word for word.
+  func testTransferSentenceIsTheSpecifiedCopy() {
+    XCTAssertEqual(
+      TransactionDetailLogic.transferSentence,
+      "Not counted as spending or income. This moves money between your own accounts.")
+  }
+
+  func testNoMatchSentenceIsTheSpecifiedCopy() {
+    XCTAssertEqual(
+      TransactionDetailLogic.noMatchSentence,
+      "No matching payment found on another account. Only this transaction is excluded.")
+  }
+
+  /// The action reads `isTransfer` alone. A swapped ternary offers the wrong action.
+  func testTransferButtonOffersMarkForAnUnmarkedRow() {
+    XCTAssertEqual(TransactionDetailLogic.transferButtonTitle(isTransfer: false), "Mark as transfer")
+  }
+
+  func testTransferButtonOffersUnmarkForAMarkedRow() {
+    XCTAssertEqual(TransactionDetailLogic.transferButtonTitle(isTransfer: true), "Not a transfer")
+  }
+
+  func testMarkOutcomeWithNoPartnerSaysOnlyThisTransactionIsExcluded() {
+    XCTAssertEqual(
+      TransactionDetailLogic.markOutcome(partner: nil),
+      "No matching payment found on another account. Only this transaction is excluded.")
+  }
+
+  /// The partner's narration and its own date both appear, and the date is
+  /// formatted as Detail formats every date.
+  func testMarkOutcomeNamesThePartnerAndItsDate() {
+    let date = Date(timeIntervalSince1970: 1_794_326_400)
+    let partner = TransactionDetailLogic.TransferPartner(narration: "HDFC CREDIT CARD PAYMENT", date: date)
+    XCTAssertEqual(
+      TransactionDetailLogic.markOutcome(partner: partner),
+      "Also marked: HDFC CREDIT CARD PAYMENT, \(NomiFormatters.dayMonthYear.string(from: date))")
+  }
+
+  func testUnmarkOutcomeWithNoPartnerSaysTheRowCountsAgain() {
+    XCTAssertEqual(
+      TransactionDetailLogic.unmarkOutcome(partner: nil), "Now counted as spending or income again.")
+  }
+
+  /// Unmarking clears the partner too, so the copy must name it and say both count again.
+  func testUnmarkOutcomeNamesThePartnerThatCountsAgain() {
+    let date = Date(timeIntervalSince1970: 1_794_326_400)
+    let partner = TransactionDetailLogic.TransferPartner(narration: "RAZORPAY CC PAYMENT", date: date)
+    XCTAssertEqual(
+      TransactionDetailLogic.unmarkOutcome(partner: partner),
+      "Also unmarked: RAZORPAY CC PAYMENT, \(NomiFormatters.dayMonthYear.string(from: date)). Both now count as spending or income.")
+  }
+
+  /// A partner whose narration is blank still reads as a sentence.
+  func testMarkOutcomeNamesABlankNarrationAsAnotherTransaction() {
+    let date = Date(timeIntervalSince1970: 1_794_326_400)
+    let partner = TransactionDetailLogic.TransferPartner(narration: "   ", date: date)
+    XCTAssertEqual(
+      TransactionDetailLogic.markOutcome(partner: partner),
+      "Also marked: another transaction, \(NomiFormatters.dayMonthYear.string(from: date))")
   }
 
   // MARK: - M6: UPIDisplay
