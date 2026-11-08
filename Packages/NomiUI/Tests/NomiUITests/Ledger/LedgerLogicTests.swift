@@ -16,6 +16,7 @@ private struct StubRow: LedgerRow, Equatable {
   let direction: Direction
   let categoryID: UUID?
   var currencyCode: String = "INR"
+  var isTransfer: Bool = false
 }
 
 /// Fixed calendar/timezone throughout — CI runs UTC and Shivam does not, so
@@ -102,6 +103,60 @@ final class LedgerGroupingTests: XCTestCase {
       ),
     ]
     XCTAssertEqual(LedgerGrouping.byDay(rows, calendar: calendar).first?.totalMinor, -100_00)
+  }
+
+  /// DEC-05: a transfer leg is never spend or income, so it does not move the
+  /// day total, the same exclusion `InsightsAggregator.isCountedSpend` applies.
+  /// Exact vector: a 38,500.00 credit, a 20,000.00 transfer debit and a
+  /// 5,000.00 transfer credit. Excluded, the day is +38,500.00. Counted, it
+  /// would be +23,500.00, so the two transfer legs must not net away here
+  /// (they are unequal on purpose; equal legs cancel and prove nothing).
+  func testDayTotalExcludesTransferLegs() {
+    let rows = [
+      StubRow(
+        label: "salary", date: date("2026-11-05"), amountMinor: 38_500_00, direction: .credit, categoryID: nil),
+      StubRow(
+        label: "card payment", date: date("2026-11-05"), amountMinor: 20_000_00, direction: .debit, categoryID: nil,
+        isTransfer: true),
+      StubRow(
+        label: "card refund", date: date("2026-11-05"), amountMinor: 5_000_00, direction: .credit, categoryID: nil,
+        isTransfer: true),
+    ]
+    let groups = LedgerGrouping.byDay(rows, calendar: calendar)
+    XCTAssertEqual(groups.count, 1)
+    XCTAssertEqual(groups.first?.rows.count, 3, "a transfer stays listed; only its money is left out")
+    XCTAssertEqual(groups.first?.totalMinor, 38_500_00)
+  }
+
+  /// A day whose only rows are transfer legs totals zero, so the header prints
+  /// no sign (A-03.4).
+  func testDayOfOnlyTransferLegsTotalsZero() {
+    let rows = [
+      StubRow(
+        label: "card payment", date: date("2026-11-10"), amountMinor: 20_000_00, direction: .debit, categoryID: nil,
+        isTransfer: true)
+    ]
+    XCTAssertEqual(LedgerGrouping.byDay(rows, calendar: calendar).first?.totalMinor, 0)
+  }
+
+  /// Rows at 23:59:59 and 00:00:00 land in their own calendar days: no group
+  /// holds a row from another day, and the first and last groups lie inside
+  /// the period (A-04.3).
+  func testDayGroupsNeverStraddleAPeriodEdge() {
+    let lastSecond = calendar.date(byAdding: .second, value: 86_399, to: date("2026-03-31"))!
+    let firstSecond = date("2026-04-01")
+    let rows = [
+      StubRow(label: "fy-start", date: firstSecond, amountMinor: 100, direction: .debit, categoryID: nil),
+      StubRow(label: "fy-end", date: lastSecond, amountMinor: 100, direction: .debit, categoryID: nil),
+    ]
+    let groups = LedgerGrouping.byDay(rows, calendar: calendar)
+    XCTAssertEqual(groups.count, 2, "23:59:59 on 31 Mar and 00:00:00 on 1 Apr are two days")
+    for group in groups {
+      for row in group.rows {
+        XCTAssertEqual(calendar.startOfDay(for: row.date), group.day)
+      }
+    }
+    XCTAssertEqual(groups.map(\.day), [date("2026-04-01"), date("2026-03-31")])
   }
 }
 
@@ -222,37 +277,44 @@ final class LedgerEmptyKindTests: XCTestCase {
   }
 }
 
-final class LedgerWindowDaysTests: XCTestCase {
-  func testFirstStepIsNinetyDays() {
-    XCTAssertEqual(LedgerWindow.days(for: 0), 90)
-  }
-
-  func testEachShowOlderWidensByNinetyDays() {
-    XCTAssertEqual(LedgerWindow.days(for: 1), 180)
-    XCTAssertEqual(LedgerWindow.days(for: 2), 270)
-  }
-}
-
 final class LedgerCopyTests: XCTestCase {
-  func testNothingRecentNamesTheWindowDays() {
-    XCTAssertEqual(LedgerCopy.nothingRecentTitle(days: 90), "Nothing in the last 90 days")
-    XCTAssertEqual(LedgerCopy.nothingRecentTitle(days: 180), "Nothing in the last 180 days")
+  func testNothingInPeriodNamesThePeriod() {
+    XCTAssertEqual(LedgerCopy.nothingInPeriodTitle(label: "October 2026"), "Nothing in October 2026")
+    XCTAssertEqual(LedgerCopy.nothingInPeriodTitle(label: "FY 2025–26"), "Nothing in FY 2025–26")
+  }
+
+  /// With a period in effect the no-results message names it; a queue (Needs
+  /// review, or a search) names no period.
+  func testNoResultsMessageNamesThePeriodOnlyWhenOneIsInEffect() {
+    XCTAssertEqual(
+      LedgerCopy.noResultsMessage(periodLabel: "October 2026"),
+      "Nothing matches this search and filter in October 2026.")
+    XCTAssertEqual(LedgerCopy.noResultsMessage(periodLabel: nil), "Nothing matches this search and filter.")
+  }
+
+  func testSearchFailedNamesThePeriodOnlyWhenOneIsInEffect() {
+    XCTAssertEqual(LedgerCopy.searchFailedText(periodLabel: "March 2026"), "Search didn’t run. Showing March 2026.")
+    XCTAssertEqual(LedgerCopy.searchFailedText(periodLabel: nil), "Search didn’t run.")
+  }
+
+  func testShowPreviousNamesThePreviousPeriod() {
+    XCTAssertEqual(LedgerCopy.showPreviousTitle(label: "October 2026"), "Show October 2026")
   }
 
   /// With a whole-ledger search wired, the prompt and message say so.
   func testWholeLedgerSearchKeepsTheWholeLedgerCopy() {
     XCTAssertEqual(LedgerCopy.searchPrompt(wholeLedger: true), "Search all transactions")
-    XCTAssertTrue(LedgerCopy.nothingRecentMessage(wholeLedger: true).contains("search the whole ledger"))
+    XCTAssertTrue(LedgerCopy.nothingInPeriodMessage(wholeLedger: true).contains("search the whole ledger"))
   }
 
   /// Without one (RootView passes no `transactionSearch` until S1), search
-  /// filters only the window, so the copy must not promise the whole ledger.
-  func testWithoutWholeLedgerSearchTheCopyPromisesOnlyTheWindow() {
+  /// filters only the period, so the copy must not promise the whole ledger.
+  func testWithoutWholeLedgerSearchTheCopyPromisesOnlyThePeriod() {
     XCTAssertEqual(LedgerCopy.searchPrompt(wholeLedger: false), "Search")
-    let message = LedgerCopy.nothingRecentMessage(wholeLedger: false)
+    let message = LedgerCopy.nothingInPeriodMessage(wholeLedger: false)
     XCTAssertFalse(message.contains("whole ledger"))
     XCTAssertFalse(message.contains("search"))
-    XCTAssertTrue(message.contains("Show older"))
+    XCTAssertTrue(message.contains("period"))
   }
 
   func testNoQueryReadsNoMatches() {
@@ -271,25 +333,26 @@ final class LedgerCopyTests: XCTestCase {
     XCTAssertEqual(LedgerCopy.noResultsTitle(query: "acme payroll"), "No matches for “acme payroll”")
   }
 }
-/// F1: the ledger no longer loads the whole transaction table. Fixed `now`
-/// and an explicit IST `calendar` throughout — same reasoning as every other
-/// date-bearing test in this file: CI runs UTC and Shivam does not.
-final class LedgerWindowTests: XCTestCase {
-  private let now = date("2026-09-05")
-
-  func testStepZeroIsNinetyDaysBack() {
-    let expected = calendar.date(byAdding: .day, value: -90, to: now)!
-    XCTAssertEqual(LedgerWindow.since(for: 0, now: now, calendar: calendar), expected)
+/// G1 (DEC-04): which rows the list draws. A queue (Needs review, or a search)
+/// takes no period, so the pill reads "All time" and "Show <previous period>"
+/// is hidden; a selected period is the only scope that names one.
+final class LedgerScopeTests: XCTestCase {
+  func testNoFilterAndNoSearchIsThePeriod() {
+    XCTAssertEqual(LedgerScope.resolve(selection: .all, wholeLedgerSearchActive: false), .period)
   }
 
-  func testStepOneWidensToOneHundredEightyDaysBack() {
-    let expected = calendar.date(byAdding: .day, value: -180, to: now)!
-    XCTAssertEqual(LedgerWindow.since(for: 1, now: now, calendar: calendar), expected)
+  func testCategoryAndUncategorizedChipsStayInThePeriod() {
+    XCTAssertEqual(LedgerScope.resolve(selection: .category(UUID()), wholeLedgerSearchActive: false), .period)
+    XCTAssertEqual(LedgerScope.resolve(selection: .uncategorized, wholeLedgerSearchActive: false), .period)
   }
 
-  func testStepThreeWidensToThreeHundredSixtyDaysBack() {
-    let expected = calendar.date(byAdding: .day, value: -360, to: now)!
-    XCTAssertEqual(LedgerWindow.since(for: 3, now: now, calendar: calendar), expected)
+  func testNeedsReviewIsAWholeLedgerQueue() {
+    XCTAssertEqual(LedgerScope.resolve(selection: .needsReview, wholeLedgerSearchActive: false), .wholeLedger)
+  }
+
+  func testWholeLedgerSearchIsAWholeLedgerQueue() {
+    XCTAssertEqual(LedgerScope.resolve(selection: .all, wholeLedgerSearchActive: true), .wholeLedger)
+    XCTAssertEqual(LedgerScope.resolve(selection: .uncategorized, wholeLedgerSearchActive: true), .wholeLedger)
   }
 }
 
@@ -315,7 +378,8 @@ final class LedgerWindowTests: XCTestCase {
 /// this file, applied to a predicate instead of a `LedgerRow`.
 final class LedgerFilterPredicateTests: XCTestCase {
   func testConstructingThePredicateDoesNotRequireAModelInstance() {
-    _ = LedgerFilterPredicate.make(since: date("2026-08-01"))
+    _ = LedgerFilterPredicate.make(range: date("2026-08-01")..<date("2026-09-01"))
+    _ = LedgerFilterPredicate.makeNeedsReview()
   }
 
   func testSearchTextMatchesMerchantNameCaseInsensitively() {

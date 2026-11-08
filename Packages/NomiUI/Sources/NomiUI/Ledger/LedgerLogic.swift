@@ -15,6 +15,10 @@ protocol LedgerRow {
   var direction: Direction { get }
   var categoryID: UUID? { get }
   var currencyCode: String { get }
+  /// DEC-05. A transfer leg is never spend or income, so it is out of a day
+  /// total, the same exclusion `InsightsAggregator` applies to every period
+  /// figure. No default: a day total that forgot it would disagree with Home.
+  var isTransfer: Bool { get }
 }
 
 extension NomiCore.Transaction: LedgerRow {}
@@ -33,9 +37,11 @@ struct LedgerDayGroup<Row: LedgerRow>: Identifiable {
   /// this is the day's net change, not a sum of magnitudes. INR rows only:
   /// a foreign row's `amountMinor` is in that currency's minor unit, and
   /// adding it to a rupee total would add cents to paise (M-C — same reason
-  /// `InsightsAggregator`'s period totals are INR-only).
+  /// `InsightsAggregator`'s period totals are INR-only). Transfer legs are
+  /// left out (DEC-05), so the sum of a period's day totals equals the Home
+  /// figure's net for the same period (DEC-04).
   var totalMinor: Int {
-    rows.filter { $0.currencyCode == "INR" }
+    rows.filter { $0.currencyCode == "INR" && !$0.isTransfer }
       .reduce(0) { $0 + ($1.direction == .credit ? $1.amountMinor : -$1.amountMinor) }
   }
 }
@@ -105,17 +111,37 @@ enum LedgerFiltering {
   }
 }
 
+/// Which rows the list draws, and so whether a period is in effect (DEC-04,
+/// items 6 and 7). `.period` is the selected calendar month or financial year.
+/// `.wholeLedger` is the Needs review chip, a work queue, and any search, which
+/// reaches the whole ledger. Neither takes a period, so the pill reads "All
+/// time", "Show <previous period>" is hidden, and empty copy names no period.
+enum LedgerScope: Equatable {
+  case period
+  case wholeLedger
+
+  static func resolve(selection: LedgerChipSelection, wholeLedgerSearchActive: Bool) -> LedgerScope {
+    if selection == .needsReview || wholeLedgerSearchActive {
+      return .wholeLedger
+    }
+    return .period
+  }
+}
+
 /// What the windowed list reports up to `LedgerScreen`, which owns the chip row
 /// (its counts) and the search bar (whether either is shown at all).
-/// `hasRows` is the 90-day window alone, not the search results: a window with
-/// no rows is "no transactions yet" even while a whole-ledger search runs.
+/// `hasRows` is the selected period alone, not the search results: a period
+/// with no rows is "nothing in this period" while a whole-ledger search runs,
+/// and only a store with no rows at all is "no transactions yet".
 struct LedgerWindowSummary: Equatable {
-  /// The 90-day window (or the wider one after "Show older") holds a row.
+  /// The selected period holds a row.
   var hasRows: Bool
-  /// The whole table holds a row. Only read when the window is empty, with a
+  /// The whole table holds a row. Only read when the period is empty, with a
   /// one-row fetch, so the first-run state is never claimed for a user who
-  /// has older transactions.
+  /// has transactions in other periods.
   var storeHasRows: Bool
+  /// Every needs-review row in the ledger, not only the period's (DEC-04
+  /// item 6): the chip's count is the queue's count.
   var needsReviewCount: Int
 
   /// Before the list has reported: chips shown, counts zero.
@@ -128,11 +154,12 @@ struct LedgerWindowSummary: Equatable {
 enum LedgerEmptyKind: Equatable {
   /// The store holds no transactions at all, and no filter is set: the
   /// first-run state, "No transactions yet" with "Add transaction". The chip
-  /// row and search bar are hidden, since there is nothing to search.
+  /// row and search bar are hidden, since there is nothing to search or
+  /// filter. The period pill stays (LedgerEmpty artboard).
   case empty
-  /// The 90-day window is empty but older rows exist, and no filter is set.
-  /// Shows "Nothing in the last N days". The search bar and chips stay, since
-  /// search reaches the whole ledger (DEC-10); "Show older" sits below.
+  /// The selected period is empty but the store holds rows elsewhere, and no
+  /// filter is set. Shows "Nothing in <period>". The period pill, search bar
+  /// and chips stay, and "Show <previous period>" sits below.
   case nothingRecent
   /// A chip or search is active and empties the list. Shows the query and
   /// "Clear filters".
@@ -148,44 +175,49 @@ enum LedgerEmptyKind: Equatable {
 
 /// Copy for the empty and no-results states. The query is shown only when
 /// there is one, trimmed the same way the search runs (`LedgerSearch.normalized`).
+/// A period is named only when one is in effect (`LedgerScope.period`).
 enum LedgerCopy {
   static func noResultsTitle(query: String) -> String {
     guard let text = LedgerSearch.normalized(query) else { return "No matches" }
     return "No matches for “\(text)”"
   }
 
-  static func nothingRecentTitle(days: Int) -> String {
-    "Nothing in the last \(days) days"
+  /// "Nothing in October 2026": the period-scoped empty title (DEC-04, item 8).
+  static func nothingInPeriodTitle(label: String) -> String {
+    "Nothing in \(label)"
+  }
+
+  /// The no-results message. `periodLabel` is nil when no period is in effect
+  /// (Needs review, or a search), and then the period is not named.
+  static func noResultsMessage(periodLabel: String?) -> String {
+    guard let periodLabel else { return "Nothing matches this search and filter." }
+    return "Nothing matches this search and filter in \(periodLabel)."
+  }
+
+  /// The line under a failed whole-ledger search. The fallback list is the
+  /// period, so the period is named when one is in effect.
+  static func searchFailedText(periodLabel: String?) -> String {
+    guard let periodLabel else { return "Search didn’t run." }
+    return "Search didn’t run. Showing \(periodLabel)."
+  }
+
+  /// "Show October 2026", the foot-of-list button (DEC-04, item 7).
+  static func showPreviousTitle(label: String) -> String {
+    "Show \(label)"
   }
 
   /// The search box's prompt. "Search all transactions" only when a whole-ledger
-  /// search service is wired; otherwise the box only filters the 90-day window.
+  /// search service is wired; otherwise the box only filters the period.
   static func searchPrompt(wholeLedger: Bool) -> String {
     wholeLedger ? "Search all transactions" : "Search"
   }
 
-  /// The nothing-recent message. The whole-ledger clause appears only when
-  /// search can actually reach older rows.
-  static func nothingRecentMessage(wholeLedger: Bool) -> String {
+  /// The period-empty message. The whole-ledger clause appears only when
+  /// search can actually reach other periods.
+  static func nothingInPeriodMessage(wholeLedger: Bool) -> String {
     wholeLedger
-      ? "Older transactions aren’t shown here. Show older to widen the list, or search the whole ledger."
-      : "Older transactions aren’t shown here. Show older to widen the list."
-  }
-}
-
-/// The 90-day paging window (F1) — the ledger used to load the entire
-/// transaction table on every render; `LedgerScreen` builds its `@Query`
-/// predicate from `since` instead. `stepsBack` 0 is the screen's first
-/// render; each "Show older" tap increments it by one, widening the visible
-/// history by another 90 days rather than replacing what's already shown.
-enum LedgerWindow {
-  /// How many days the window reaches back at this step: 90, then 180, and so on.
-  static func days(for stepsBack: Int) -> Int {
-    (stepsBack + 1) * 90
-  }
-
-  static func since(for stepsBack: Int, now: Date, calendar: Calendar = .current) -> Date {
-    calendar.date(byAdding: .day, value: -days(for: stepsBack), to: now) ?? now
+      ? "Choose another period from the menu, or search the whole ledger."
+      : "Choose another period from the menu."
   }
 }
 
@@ -199,18 +231,40 @@ enum LedgerWindow {
 /// named `let` sub-expressions (looked like the compiler's own suggested
 /// fix) then failed build 34009202915 with "Predicate body may only contain
 /// one expression" — a `#Predicate` closure is exactly one expression,
-/// always, no multi-statement rewrite is legal syntax for it. Rather than
-/// guess a third shape blind (no Swift toolchain on this machine to check
-/// before pushing), `make` now only pushes the proven-safe `since` bound
-/// into the `@Query`; `matches` is a plain Swift function — no expression-
-/// count ceiling — that `LedgerTransactionList` applies to the fetched rows,
-/// same shape as the `LedgerFiltering.apply` pass this replaced.
+/// always, no multi-statement rewrite is legal syntax for it. So `make`
+/// pushes only the date bound into the `@Query`, and `matches` is a plain
+/// Swift function, applied to the fetched rows, that carries the chip and
+/// search rules.
+///
+/// G1 (DEC-04): the period is `make(range:)`, a two-sided bound with the same
+/// shape `SwiftDataInsightsStore.ledgerRows(in:)` already ships. `matches`
+/// enforces the same range again, so a predicate mistake cannot show a row
+/// outside the period. The queues are not bounded: `makeNeedsReview()` is a
+/// single comparison, and `matches(within: nil)` applies no date bound.
 enum LedgerFilterPredicate {
-  static func make(since: Date) -> Predicate<NomiCore.Transaction> {
-    #Predicate<NomiCore.Transaction> { $0.date >= since }
+  /// The selected period's `@Query` (G1). Half-open, like `dateRange(for:)`.
+  static func make(range: Range<Date>) -> Predicate<NomiCore.Transaction> {
+    let start = range.lowerBound
+    let end = range.upperBound
+    return #Predicate<NomiCore.Transaction> { $0.date >= start && $0.date < end }
   }
 
-  static func matches(_ transaction: NomiCore.Transaction, filter: TransactionFilter) -> Bool {
+  /// The Needs review queue's `@Query`: every flagged row, no date bound (DEC-04,
+  /// item 6). A single comparison, so the fetch is the queue and never the table.
+  static func makeNeedsReview() -> Predicate<NomiCore.Transaction> {
+    #Predicate<NomiCore.Transaction> { $0.needsReview == true }
+  }
+
+  /// `within` is the period when one is in effect and `nil` for the queues and
+  /// search. It has no default: every caller says which it is.
+  static func matches(
+    _ transaction: NomiCore.Transaction,
+    filter: TransactionFilter,
+    within range: Range<Date>?
+  ) -> Bool {
+    if let range {
+      guard range.contains(transaction.date) else { return false }
+    }
     if filter.needsReviewOnly {
       guard transaction.needsReview else { return false }
     }
