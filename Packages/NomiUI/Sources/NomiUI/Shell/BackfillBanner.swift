@@ -1,9 +1,9 @@
 import NomiCore
 import SwiftUI
 
-/// Shown above the ledger while a mail backfill is in progress. Uses the same
-/// progress-track fill (`#2388FF`) as `NomiProgressBar` — Nomi's one progress
-/// track, and this is the other place it goes. Deliberately not
+/// Shown above the content while a mail backfill is in progress: a card with
+/// the scan count and a progress capsule. The track is `track` (`#DCE8F5`) and
+/// the fill is `navy`, the same pair `NomiProgressBar` uses. Deliberately not
 /// `NomiProgressBar` itself: that component's 90% threshold is a budget
 /// concept, and a near-complete scan is not "over budget".
 public struct BackfillBanner: View {
@@ -25,28 +25,31 @@ public struct BackfillBanner: View {
         .foregroundStyle(NomiColor.textTertiary)
       GeometryReader { proxy in
         ZStack(alignment: .leading) {
-          Capsule(style: .continuous).fill(NomiColor.surface)
+          Capsule(style: .continuous).fill(NomiColor.track)
           Capsule(style: .continuous)
-            .fill(NomiColor.progressTrackFill)
+            .fill(NomiColor.navy)
             .frame(width: proxy.size.width * fraction)
         }
       }
       .frame(height: NomiSpacing.xs)
       .clipShape(Capsule(style: .continuous))
     }
-    .padding(NomiSpacing.cardPadding)
-    .background(NomiColor.glassFill)
-    .overlay(
-      RoundedRectangle(cornerRadius: NomiRadius.card, style: NomiRadius.cardSheetStyle)
-        .stroke(NomiColor.glassHairline, lineWidth: 1)
-    )
-    .nomiCornerRadius(NomiRadius.card)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    // The bar is one reading for VoiceOver: the caption and the value, not the
+    // track's shapes.
+    .accessibilityElement(children: .combine)
+    .nomiCard(padding: EdgeInsets(
+      top: NomiSpacing.cardPadding,
+      leading: NomiSpacing.cardPadding,
+      bottom: NomiSpacing.cardPadding,
+      trailing: NomiSpacing.cardPadding
+    ))
   }
 }
 
 #Preview("Mid-backfill") {
   BackfillBanner(progress: BackfillProgress(scanned: 340, total: 1200, created: 58))
     .padding()
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
 }

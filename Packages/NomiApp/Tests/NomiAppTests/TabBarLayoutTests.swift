@@ -29,6 +29,13 @@ final class TabBarLayoutTests: XCTestCase {
     XCTAssertEqual(delta, 32, accuracy: 0.001)
   }
 
+  func testReservedMarginIsTheArtboardBottomOffset() {
+    // The bar floats 22 pt above the bottom edge on the artboards, so the
+    // reserved space must cover that offset as well as the bar.
+    XCTAssertEqual(TabBarInsetHeight.reserved(barHeight: 0), 22, accuracy: 0.001)
+    XCTAssertEqual(TabBarInsetHeight.reserved(barHeight: 64), 86, accuracy: 0.001)
+  }
+
   func testZeroMeasuredHeightStillReservesTheMargin() {
     // Before the GeometryReader has ever reported a size (first frame,
     // preference default), the inset must not collapse to zero.

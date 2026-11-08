@@ -1,10 +1,7 @@
 import SwiftUI
 
-/// The app's root chrome. Content sits directly on the navy-black canvas
-/// behind a floating glass tab bar. v5 (`nomi-ui-refresh`) removes the two
-/// glow-orb circles that used to render once behind the tab content.
-/// `NomiGlow` itself stays, its one remaining consumer is the tab-bar `+`
-/// (wired in `ui-root-wiring`, not here).
+/// The app's root chrome: the flat ground (`#F3F6FB`) that every screen sits on. The tab bar is `NomiTabBar` (F3), placed by `RootView`
+/// over this shell; this view draws no bar of its own.
 public struct NomiTabShell<Content: View>: View {
   public let content: Content
 
@@ -14,36 +11,20 @@ public struct NomiTabShell<Content: View>: View {
 
   public var body: some View {
     ZStack {
-      NomiColor.surfaceCanvas.ignoresSafeArea()
+      NomiColor.ground.ignoresSafeArea()
       content
     }
-    .background(NomiColor.surfaceCanvas)
+    .background(NomiColor.ground)
   }
 }
 
-/// The floating glass tab bar chrome — radius 24, blur 12, the system's
-/// declared shadow.
-public struct NomiFloatingTabBarBackground: View {
-  public init() {}
-
-  public var body: some View {
-    RoundedRectangle(cornerRadius: NomiRadius.bar, style: .continuous)
-      .fill(NomiColor.floatingGlassFill)
-      .overlay(
-        RoundedRectangle(cornerRadius: NomiRadius.bar, style: .continuous)
-          .stroke(NomiColor.floatingGlassHairline, lineWidth: 1)
-      )
-      .nomiShadow()
-  }
-}
-
-#Preview("Tab shell — card stack on the v5 navy-black ground") {
+#Preview("Tab shell — card stack on the ground") {
   NomiTabShell {
     ScrollView {
       VStack(spacing: NomiSpacing.sm) {
         ForEach(0..<8) { index in
           RoundedRectangle(cornerRadius: NomiRadius.card, style: .continuous)
-            .fill(NomiColor.surfaceRaised)
+            .fill(NomiColor.card)
             .frame(height: 64)
             .overlay(Text("Card \(index)").foregroundStyle(NomiColor.textPrimary))
         }
@@ -51,5 +32,5 @@ public struct NomiFloatingTabBarBackground: View {
       .padding(NomiSpacing.screenGutter)
     }
   }
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
