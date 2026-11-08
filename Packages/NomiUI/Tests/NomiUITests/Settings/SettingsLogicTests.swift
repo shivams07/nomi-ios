@@ -260,7 +260,7 @@ final class AboutPrivacyTextTests: XCTestCase {
   /// DEC-07 (nomi-ios-decisions.md), verbatim. A change to `AboutScreen.privacyText`
   /// must come with a re-read of DEC-07 and a fresh App Store privacy check.
   private let dec07 =
-    "Nomi reads transaction emails from the mail account you connect and keeps your transactions on this device. If you use iCloud, they also sync to your private iCloud storage so your other devices can show them. Your mail password stays in this device's Keychain and is sent only to your mail provider to sign in. It does not sync, so you enter it again on each device. Nomi does not send your data to its developer."
+    "Nomi reads transaction emails from the mail account you connect and keeps your transactions on this device. If you use iCloud, they also sync to your private iCloud storage so your other devices can show them. Your mail password is kept in this device's Keychain and is sent only to your mail provider to sign in. It does not sync, so you may need to enter it again on another device. Nomi does not send your data to its developer."
 
   func testPrivacyTextIsTheDEC07SentenceVerbatim() {
     XCTAssertEqual(AboutScreen.privacyText, dec07)
@@ -272,5 +272,18 @@ final class AboutPrivacyTextTests: XCTestCase {
   func testPrivacyTextDoesNotRestoreTheShippedClaim() {
     XCTAssertFalse(AboutScreen.privacyText.contains("never leave"))
     XCTAssertFalse(AboutScreen.privacyText.contains("mail credentials"))
+  }
+
+  /// Amendment 4 (R2): "stays" and "each device" overstate what the Keychain item
+  /// does, because a backup restore can carry it. Neither the About sentence nor
+  /// the Connect mail caption may use them. Checked over both strings.
+  func testNeitherPrivacyStringOverstatesTheCredential() {
+    for text in [AboutScreen.privacyText, ConnectMailCopy.credentialCaption] {
+      for banned in ["stays", "each device", "never leave"] {
+        XCTAssertFalse(
+          text.lowercased().contains(banned),
+          "'\(banned)' overstates the Keychain item: \(text)")
+      }
+    }
   }
 }

@@ -221,15 +221,29 @@ final class OnboardingLogicTests: XCTestCase {
 
   // MARK: - Credential claim (DEC-07, checked against the code)
 
-  /// Pins the clauses the code supports. `kSecAttrSynchronizable` is false
-  /// (KeychainCredentialStore.swift:106), so the password does not sync, and
-  /// transactions sync only through iCloud. A future edit that promises more,
-  /// such as sync to a second device with no iCloud, fails here.
+  /// Pins the caption to Amendment 4 (R2), character for character, and to the
+  /// clauses the code supports. The item does not sync
+  /// (`kSecAttrSynchronizable` is false, KeychainCredentialStore.swift:106), and
+  /// it is not ThisDeviceOnly (line 59), so the sentence says "kept in" and
+  /// "may need to", never "stays" or "each device". Transactions sync only
+  /// through iCloud.
   func testCredentialCaptionClaimsOnlyWhatTheCodeSupports() {
     let caption = ConnectMailCopy.credentialCaption
-    XCTAssertTrue(caption.contains("Keychain"))
-    XCTAssertTrue(caption.contains("does not sync"))
-    XCTAssertTrue(caption.contains("Your transactions sync only if you use iCloud."))
-    XCTAssertFalse(caption.lowercased().contains("icloud keychain"))
+    XCTAssertEqual(
+      caption,
+      "Your mail password is kept in this device’s Keychain. It does not sync, so you may need to enter it again on another device. Your transactions sync only if you use iCloud.")
+    let lowered = caption.lowercased()
+    for required in ["Keychain", "does not sync", "may need to", "Your transactions sync only if you use iCloud."] {
+      XCTAssertTrue(caption.contains(required), "missing: \(required)")
+    }
+    for banned in ["stays", "each device", "never leave", "icloud keychain"] {
+      XCTAssertFalse(lowered.contains(banned), "overstates the credential: \(banned)")
+    }
+  }
+
+  /// The Backfill moment hides the status bar on every phase, so the layout does
+  /// not move between frames (Amendment 4, R3). The modifier reads this constant.
+  func testBackfillHidesTheStatusBarOnEveryPhase() {
+    XCTAssertTrue(BackfillChrome.hidesStatusBar)
   }
 }

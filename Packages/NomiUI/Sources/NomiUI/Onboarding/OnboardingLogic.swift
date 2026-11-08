@@ -214,14 +214,24 @@ enum MailAttentionLogic {
   }
 }
 
-/// Copy that makes a claim about the mail credential. Each clause is checked
-/// against the code, so a change here must be re-checked against it:
-/// `KeychainCredentialStore` saves with `kSecAttrSynchronizable: false`
-/// (NomiIngest, KeychainCredentialStore.swift:106), the only network code is
-/// the IMAP fetcher (no HTTP client in any Sources file; gate G8 counts zero), and
+/// Copy that makes a claim about the mail credential (Amendment 4, R2). Each
+/// clause is checked against the code, so a change here must be re-checked:
+/// the item is saved with `kSecAttrSynchronizable: false`, so it does not sync
+/// (NomiIngest, KeychainCredentialStore.swift:106). It is saved after first
+/// unlock and is not ThisDeviceOnly (line 59), so an encrypted device backup
+/// restored to a replacement device can carry it. That is why the sentence
+/// says only "kept in" and "may need to". The only network code is the IMAP
+/// fetcher (no HTTP client in any Sources file; gate G8 counts zero), and
 /// transactions reach another device only through CloudKit (NomiModelContainer
 /// makeCloudKit, used when the user is signed in to iCloud).
 enum ConnectMailCopy {
   static let credentialCaption =
-    "Your mail password stays in this device’s Keychain and does not sync, so you’ll enter it again on each device. Your transactions sync only if you use iCloud."
+    "Your mail password is kept in this device’s Keychain. It does not sync, so you may need to enter it again on another device. Your transactions sync only if you use iCloud."
+}
+
+/// Chrome for the Backfill moment (Amendment 4, R3). The status bar is hidden
+/// for all five phases, so the layout does not move when the state changes. The
+/// modifier that applies this is in BackfillScreen, iOS only.
+enum BackfillChrome {
+  static let hidesStatusBar = true
 }

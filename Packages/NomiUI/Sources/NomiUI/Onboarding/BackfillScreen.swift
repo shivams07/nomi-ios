@@ -120,6 +120,7 @@ public struct BackfillScreen: View {
     }
     #if os(iOS)
     .toolbar(.hidden, for: .navigationBar)
+    .statusBarHidden(BackfillChrome.hidesStatusBar)
     #endif
   }
 

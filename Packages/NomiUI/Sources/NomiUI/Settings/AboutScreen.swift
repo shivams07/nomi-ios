@@ -9,7 +9,7 @@ public struct AboutScreen: View {
   /// without re-reading DEC-07: a human compares it with the App Store privacy
   /// form before submission (release check).
   public static let privacyText =
-    "Nomi reads transaction emails from the mail account you connect and keeps your transactions on this device. If you use iCloud, they also sync to your private iCloud storage so your other devices can show them. Your mail password stays in this device's Keychain and is sent only to your mail provider to sign in. It does not sync, so you enter it again on each device. Nomi does not send your data to its developer."
+    "Nomi reads transaction emails from the mail account you connect and keeps your transactions on this device. If you use iCloud, they also sync to your private iCloud storage so your other devices can show them. Your mail password is kept in this device's Keychain and is sent only to your mail provider to sign in. It does not sync, so you may need to enter it again on another device. Nomi does not send your data to its developer."
 
   public init() {}
 
