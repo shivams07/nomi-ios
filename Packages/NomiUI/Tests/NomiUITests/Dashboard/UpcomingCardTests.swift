@@ -51,6 +51,28 @@ final class UpcomingCardTests: XCTestCase {
     XCTAssertEqual(SubscriptionBadge.resolve(series), .monogram("N"))
   }
 
+  /// HM2. The Main artboard words each row "Netflix · renews 12 Nov". The day
+  /// comes from the device calendar, the same one `NomiFormatters.dayMonth` uses,
+  /// so the date is built in that calendar and the test is zone-safe.
+  func testRowLineNamesTheSeriesAndItsRenewalDay() {
+    var components = DateComponents()
+    components.year = 2026
+    components.month = 11
+    components.day = 12
+    components.hour = 12
+    let renewal = Calendar.current.date(from: components)!
+    let series = RecurringSeries(
+      id: "NETFLIX",
+      label: "Netflix",
+      amountMinor: 64900,
+      occurrences: 3,
+      lastDate: Date(timeIntervalSinceNow: -30 * 86_400),
+      nextExpected: renewal
+    )
+
+    XCTAssertEqual(UpcomingRows.line(for: series), "Netflix · renews 12 Nov")
+  }
+
   // MARK: -
 
   private func makeSeries(id: String, daysFromNow: Int) -> RecurringSeries {

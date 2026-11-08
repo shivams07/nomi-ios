@@ -1,11 +1,21 @@
 import NomiCore
 import SwiftUI
 
-/// Card 9 (v5): last-sync status from `MailConnectionState`. The AC is
-/// explicit that "disconnected" is shown as a fact, not an error — this row
-/// never reaches for a colour outside the tertiary/quaternary text steps, on
-/// any state, because `Design/**` has no dedicated error token and inventing
-/// one is not this unit's call.
+/// What the Home banner says for a mail state that needs attention.
+struct SyncAttention: Equatable {
+  let systemImage: String
+  let title: String
+  let message: String?
+}
+
+/// Mail sync status (HM2). On Home it is the banner, shown only while mail is
+/// disconnected or failed (`DashboardView` decides that and wraps the row in a
+/// link to Connect mail). `.connecting` also gets the attention row. The
+/// `.connected` state keeps the one-line caption, because Connect mail's
+/// connected view (`ConnectMailScreen`) draws this row for it too.
+///
+/// The AC is explicit that "disconnected" is a fact to act on, not an error:
+/// the copy says what to do, and the icon and text carry the meaning.
 public struct SyncStatusRow: View {
   public let state: MailConnectionState
 
@@ -14,20 +24,56 @@ public struct SyncStatusRow: View {
   }
 
   public var body: some View {
-    HStack(spacing: NomiSpacing.xxs) {
-      Circle()
-        .fill(dotColor)
-        .frame(width: 6, height: 6)
-      Text(Self.statusText(for: state))
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textTertiary)
+    if let attention = Self.attention(for: state) {
+      NomiAttentionRow(systemImage: attention.systemImage, title: attention.title, message: attention.message)
+    } else {
+      HStack(spacing: NomiSpacing.xxs) {
+        Circle()
+          .fill(NomiColor.inkSecondary)
+          .frame(width: 6, height: 6)
+          .accessibilityHidden(true)
+        Text(Self.statusText(for: state))
+          .nomiTextStyle(.footnote)
+          .foregroundStyle(NomiColor.inkSecondary)
+      }
     }
   }
 
-  private var dotColor: Color {
+  /// The attention copy for a state. `nil` for `.connected`, which has nothing
+  /// to ask of the user.
+  static func attention(for state: MailConnectionState) -> SyncAttention? {
     switch state {
-    case .connected: return NomiColor.textTertiary
-    case .connecting, .disconnected, .failed: return NomiColor.textQuaternary
+    case .connected:
+      return nil
+    case .connecting:
+      return SyncAttention(
+        systemImage: "arrow.triangle.2.circlepath",
+        title: "Connecting…",
+        message: nil
+      )
+    case .disconnected:
+      return SyncAttention(
+        systemImage: "envelope.badge",
+        title: "Mail disconnected",
+        message: "Connect again to keep your numbers current."
+      )
+    case .failed(let error):
+      return SyncAttention(
+        systemImage: "exclamationmark.triangle",
+        title: "Couldn’t reach your mail",
+        message: failureMessage(for: error)
+      )
+    }
+  }
+
+  static func failureMessage(for error: MailError) -> String {
+    switch error {
+    case .authenticationFailed:
+      return "Your mail provider refused the password. Connect again."
+    case .connectionFailed:
+      return "Check your connection, then try again."
+    case .unknown:
+      return "Try connecting again."
     }
   }
 
@@ -47,31 +93,30 @@ public struct SyncStatusRow: View {
   }
 }
 
-#Preview("Sync status — connected, dark") {
-  SyncStatusRow(state: .connected(address: "shivam@example.com", lastSync: Date(timeIntervalSinceNow: -300)))
-    .padding()
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
-}
-
-#Preview("Sync status — disconnected, dark") {
+#Preview("Sync status · disconnected") {
   SyncStatusRow(state: .disconnected)
     .padding()
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
 }
 
-#Preview("Sync status — connecting, dark") {
+#Preview("Sync status · failed") {
+  SyncStatusRow(state: .failed(.connectionFailed))
+    .padding()
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
+}
+
+#Preview("Sync status · connecting") {
   SyncStatusRow(state: .connecting)
     .padding()
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
 }
 
-#Preview("Sync status — accessibility 3, dark") {
+#Preview("Sync status · connected caption") {
   SyncStatusRow(state: .connected(address: "shivam@example.com", lastSync: Date(timeIntervalSinceNow: -300)))
     .padding()
-    .background(NomiColor.surfaceCanvas)
-    .environment(\.dynamicTypeSize, .accessibility3)
-    .preferredColorScheme(.dark)
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
 }

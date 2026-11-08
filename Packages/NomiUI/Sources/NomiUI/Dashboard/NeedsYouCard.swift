@@ -1,16 +1,16 @@
 import SwiftUI
 
-/// Card 5: how many rows are waiting on the user — merged, flagged, or
-/// unidentified-account transactions (`InsightsStore.reviewQueue`'s own
-/// definition), summarized as counts rather than the queue itself, which is a
-/// different screen's job.
+/// Card 5 (HM2, Main artboard): how many transactions are waiting on the user,
+/// summarised as one count rather than the queue itself, which is a different
+/// screen's job. It is a 76 pt card. When both counts are zero it becomes a
+/// 44 pt, non-interactive "All caught up" row.
 public struct NeedsYouCard: View {
   public let needsReviewCount: Int
   public let uncategorizedCount: Int
 
   /// M9. `nil` — the default — leaves the card non-interactive: no chevron,
-  /// no `Button` wrapper, same as before this unit. `DashboardView` supplies
-  /// this from its own `onOpenReviewQueue`.
+  /// no `Button` wrapper. `DashboardView` supplies this from its own
+  /// `onOpenReviewQueue`.
   public let onTap: (() -> Void)?
 
   public init(needsReviewCount: Int, uncategorizedCount: Int, onTap: (() -> Void)? = nil) {
@@ -29,76 +29,111 @@ public struct NeedsYouCard: View {
     onTap != nil && DashboardWiring.needsYouIsTappable(needsReviewCount: needsReviewCount, uncategorizedCount: uncategorizedCount)
   }
 
+  private var line: String {
+    NeedsYouText.line(needsReviewCount: needsReviewCount, uncategorizedCount: uncategorizedCount)
+  }
+
   public var body: some View {
-    DashboardCard {
-      if isTappable, let onTap {
-        Button(action: onTap) { content }
-          .buttonStyle(.plain)
-      } else {
-        content
-      }
+    if isCaughtUp {
+      caughtUpRow
+    } else if isTappable, let onTap {
+      Button(action: onTap) { card }
+        .buttonStyle(.plain)
+    } else {
+      card
     }
   }
 
-  private var content: some View {
-    HStack(alignment: .top, spacing: NomiSpacing.xs) {
-      VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-        Text("Needs you")
-          .nomiTextStyle(.title)
-          .foregroundStyle(NomiColor.textPrimary)
-        if isCaughtUp {
-          Text("All caught up")
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.textTertiary)
-        } else {
-          if needsReviewCount > 0 {
-            Text("\(needsReviewCount) to review")
-              .nomiTextStyle(.body)
-              .foregroundStyle(NomiColor.textSecondary)
-          }
-          if uncategorizedCount > 0 {
-            Text("\(uncategorizedCount) uncategorized")
-              .nomiTextStyle(.body)
-              .foregroundStyle(NomiColor.textSecondary)
-          }
+  private var card: some View {
+    DashboardCard {
+      HStack(alignment: .center, spacing: 12) {
+        NomiCategoryBadge(symbolName: "flag", paletteSlot: nil, size: 40, style: .neutral)
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Needs you")
+            .nomiTextStyle(.label)
+            .foregroundStyle(NomiColor.dayHeader)
+          Text(line)
+            .nomiTextStyle(.rowTitle)
+            .foregroundStyle(NomiColor.ink)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        if isTappable {
+          Image(systemName: "chevron.right")
+            .resizable()
+            .scaledToFit()
+            .frame(width: 16, height: 16)
+            .foregroundStyle(NomiColor.inkSecondary)
+            .accessibilityHidden(true)
         }
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      if isTappable {
-        Image(systemName: "chevron.right")
-          .foregroundStyle(NomiColor.textTertiary)
-      }
+      .frame(minHeight: NomiSpacing.minTarget, alignment: .leading)
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel("Needs you: \(line)")
     }
+  }
+
+  private var caughtUpRow: some View {
+    HStack(spacing: 12) {
+      Image(systemName: "checkmark.circle")
+        .resizable()
+        .scaledToFit()
+        .frame(width: 18, height: 18)
+        .foregroundStyle(NomiColor.iconGlyph)
+        .accessibilityHidden(true)
+      Text("All caught up")
+        .nomiTextStyle(.rowTitle)
+        .foregroundStyle(NomiColor.ink)
+      Spacer(minLength: 0)
+    }
+    .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget, alignment: .leading)
+    .nomiCard(padding: EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+    .accessibilityElement(children: .combine)
   }
 }
 
-#Preview("Needs you — default, dark") {
-  NeedsYouCard(needsReviewCount: 4, uncategorizedCount: 2)
-    .padding()
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
+/// The Needs-you line. The review count leads, because the Ledger's "Needs
+/// review" queue is where the card goes. The uncategorized count is shown only
+/// when nothing needs review. Both counts zero is the caught-up row, which
+/// never asks for a line.
+enum NeedsYouText {
+  static func line(needsReviewCount: Int, uncategorizedCount: Int) -> String {
+    if needsReviewCount > 0 {
+      return "\(needsReviewCount) \(noun(needsReviewCount)) to review"
+    }
+    return "\(uncategorizedCount) uncategorized \(noun(uncategorizedCount))"
+  }
+
+  private static func noun(_ count: Int) -> String {
+    count == 1 ? "transaction" : "transactions"
+  }
 }
 
-#Preview("Needs you — all caught up, dark") {
+#Preview("Needs you · default") {
+  NeedsYouCard(needsReviewCount: 2, uncategorizedCount: 0)
+    .padding()
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
+}
+
+#Preview("Needs you · tappable") {
+  NeedsYouCard(needsReviewCount: 2, uncategorizedCount: 1, onTap: {})
+    .padding()
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
+}
+
+#Preview("Needs you · all caught up") {
   NeedsYouCard(needsReviewCount: 0, uncategorizedCount: 0)
     .padding()
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
 }
 
-/// M9 done-when: "counts > 0 with a chevron" — `onTap` non-nil and at least
-/// one count positive is exactly `isTappable`.
-#Preview("Needs you — tappable, chevron, dark") {
-  NeedsYouCard(needsReviewCount: 4, uncategorizedCount: 2, onTap: {})
+#Preview("Needs you · accessibility 3") {
+  NeedsYouCard(needsReviewCount: 2, uncategorizedCount: 1, onTap: {})
     .padding()
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
-}
-
-#Preview("Needs you — accessibility 3, dark") {
-  NeedsYouCard(needsReviewCount: 4, uncategorizedCount: 2)
-    .padding()
-    .background(NomiColor.surfaceCanvas)
+    .background(NomiColor.ground)
     .environment(\.dynamicTypeSize, .accessibility3)
-    .preferredColorScheme(.dark)
+    .preferredColorScheme(.light)
 }

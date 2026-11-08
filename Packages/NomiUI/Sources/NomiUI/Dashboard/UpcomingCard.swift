@@ -16,6 +16,12 @@ enum UpcomingRows {
   static func soonest(_ series: [RecurringSeries]) -> [RecurringSeries] {
     Array(series.sorted { $0.nextExpected < $1.nextExpected }.prefix(limit))
   }
+
+  /// "Netflix · renews 12 Nov" — the row's name and its renewal day, as the
+  /// Main artboard words it.
+  static func line(for series: RecurringSeries) -> String {
+    "\(series.label) · renews \(NomiFormatters.dayMonth.string(from: series.nextExpected))"
+  }
 }
 
 /// U17b. Reads `RecurringInsightsStore` (U17a) through `DashboardView`, which
@@ -24,9 +30,13 @@ enum UpcomingRows {
 /// `DashboardView`'s `recurringStore`), so every value this type receives
 /// already came from a successful read.
 ///
+/// HM2: the Main artboard draws each upcoming series as a plain line with its
+/// amount, and no badge. The whole card is a NavigationLink to Subscriptions
+/// (`DashboardView`), so the chevron is the affordance.
+///
 /// Every row is a debit by construction (`RecurrenceDetector` only ever
-/// groups debits), so the amount is always shown in `debitText` — there is
-/// no direction to branch on the way `RecentTransactionsCard` does.
+/// groups debits), and the artboard prints its amount with no sign, so the
+/// amount takes the default ink.
 public struct UpcomingCard: View {
   public let series: [RecurringSeries]
 
@@ -40,21 +50,25 @@ public struct UpcomingCard: View {
 
   public var body: some View {
     DashboardCard {
-      VStack(alignment: .leading, spacing: NomiSpacing.sm) {
-        HStack {
+      VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+        HStack(spacing: NomiSpacing.xs) {
           Text("Upcoming")
-            .nomiTextStyle(.title)
-            .foregroundStyle(NomiColor.textPrimary)
-          Spacer()
+            .nomiTextStyle(.label)
+            .foregroundStyle(NomiColor.dayHeader)
+          Spacer(minLength: 0)
           Image(systemName: "chevron.right")
-            .foregroundStyle(NomiColor.textTertiary)
+            .resizable()
+            .scaledToFit()
+            .frame(width: 16, height: 16)
+            .foregroundStyle(NomiColor.inkSecondary)
+            .accessibilityHidden(true)
         }
         if upcoming.isEmpty {
           Text("Nothing recurring yet")
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.textTertiary)
+            .nomiTextStyle(.footnote)
+            .foregroundStyle(NomiColor.inkSecondary)
         } else {
-          VStack(spacing: NomiSpacing.xs) {
+          VStack(alignment: .leading, spacing: NomiSpacing.xs) {
             ForEach(upcoming) { item in
               row(for: item)
             }
@@ -65,64 +79,36 @@ public struct UpcomingCard: View {
   }
 
   private func row(for item: RecurringSeries) -> some View {
-    HStack(spacing: NomiSpacing.xs) {
-      badge(for: item)
-      VStack(alignment: .leading, spacing: 2) {
-        Text(item.label)
-          .nomiTextStyle(.body)
-          .foregroundStyle(NomiColor.textPrimary)
-          .lineLimit(1)
-        Text(NomiFormatters.relativeTime.localizedString(for: item.nextExpected, relativeTo: Date()))
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.textTertiary)
-      }
-      Spacer(minLength: NomiSpacing.xs)
-      Text(NomiFormatters.amountString(minor: item.amountMinor))
-        .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 14))
-        .foregroundStyle(NomiColor.debitText)
+    HStack(alignment: .firstTextBaseline, spacing: NomiSpacing.xs) {
+      Text(UpcomingRows.line(for: item))
+        .nomiTextStyle(.rowBody)
+        .foregroundStyle(NomiColor.ink)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+      NomiAmountText(minor: item.amountMinor, style: .amount)
     }
-  }
-
-  /// 40pt, per `NomiCategoryBadge`'s own doc comment — the category badge
-  /// when `RecurringSeries.category` is set, else the monogram fallback
-  /// (`SubscriptionBadge`, shared with `SubscriptionsScreen` since both draw
-  /// the same rule for the same reason; UI refresh M5).
-  @ViewBuilder
-  private func badge(for item: RecurringSeries) -> some View {
-    switch SubscriptionBadge.resolve(item) {
-    case .category(let category):
-      NomiCategoryBadge(symbolName: category.symbolName, paletteSlot: category.paletteSlot, size: 40)
-    case .monogram(let letter):
-      Circle()
-        .fill(NomiColor.glassFill)
-        .frame(width: 40, height: 40)
-        .overlay(
-          Text(letter)
-            .nomiTextStyle(.body)
-            .foregroundStyle(Color.white)
-        )
-    }
+    .accessibilityElement(children: .combine)
   }
 }
 
-#Preview("Upcoming — default, dark") {
+#Preview("Upcoming · default") {
   UpcomingCard(series: FakeRecurringStore.sampleSeries)
     .padding()
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
 }
 
-#Preview("Upcoming — empty, dark") {
+#Preview("Upcoming · empty") {
   UpcomingCard(series: [])
     .padding()
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
 }
 
-#Preview("Upcoming — accessibility 3, dark") {
+#Preview("Upcoming · accessibility 3") {
   UpcomingCard(series: FakeRecurringStore.sampleSeries)
     .padding()
-    .background(NomiColor.surfaceCanvas)
+    .background(NomiColor.ground)
     .environment(\.dynamicTypeSize, .accessibility3)
-    .preferredColorScheme(.dark)
+    .preferredColorScheme(.light)
 }

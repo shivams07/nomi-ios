@@ -29,12 +29,51 @@ enum RecentBadges {
   }
 }
 
-/// Card 7 (v5 `nomi-ui-refresh` §Home): the 5 most recent rows across all
-/// accounts, newest first. Distinct AC from `TopMerchantsCard` — a list of
-/// individual rows, not a rollup. Merchant labels use `merchantName ??
-/// descriptionText` (§2.4). Rows now carry a 32pt `NomiCategoryBadge` (grey
-/// `questionmark` when the row has no matching badge) and are tappable,
-/// opening the transaction sheet via `onSelect`.
+/// The text and the signed figure of one Recent row, pure so the tests can
+/// reach them.
+enum RecentRowText {
+  /// Merchant, then a non-blank description, then the category, then "Manual
+  /// entry". The same order `TransactionRow.title` uses.
+  static func title(merchantName: String?, descriptionText: String, categoryName: String?) -> String {
+    if let merchantName, !merchantName.isEmpty { return merchantName }
+    if !descriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return descriptionText }
+    if let categoryName, !categoryName.isEmpty { return categoryName }
+    return "Manual entry"
+  }
+
+  /// The category, or "Uncategorized". The account name is not on this card's
+  /// init, so it is not shown here.
+  static func subtitle(categoryName: String?) -> String {
+    categoryName ?? "Uncategorized"
+  }
+
+  /// DEC-03 and A-03: a debit is built from a negative minor, so its "−" always
+  /// prints. A credit stays positive and takes "+" from `showPlus`. The
+  /// magnitude comes from `amountMinor`, and the direction decides the sign,
+  /// the same as `TransactionRow.amountText`.
+  static func signedMinor(amountMinor: Int, direction: Direction) -> Int {
+    direction == .credit ? abs(amountMinor) : -abs(amountMinor)
+  }
+
+  /// A-03 item 3: the spoken label carries the direction word, so the sign and
+  /// the colour are never the only signal.
+  static func accessibilityLabel(
+    title: String,
+    direction: Direction,
+    amountMinor: Int,
+    currencyCode: String,
+    categoryName: String?
+  ) -> String {
+    let word = direction == .credit ? "credit" : "debit"
+    let amount = NomiFormatters.amountString(minor: abs(amountMinor), currencyCode: currencyCode)
+    return "\(title), \(word) \(amount), \(subtitle(categoryName: categoryName))"
+  }
+}
+
+/// Card 7 (HM2, Main artboard): the five most recent transactions across all
+/// accounts, newest first. Each 64 pt row opens the Detail sheet through
+/// `onSelect`. The "Recent" header is drawn by `DashboardView`, so the card has
+/// no title of its own.
 public struct RecentTransactionsCard: View {
   public let transactions: [NomiCore.Transaction]
   public let badges: [UUID: CategoryBadge]
@@ -51,76 +90,105 @@ public struct RecentTransactionsCard: View {
   }
 
   public var body: some View {
-    DashboardCard {
-      VStack(alignment: .leading, spacing: NomiSpacing.sm) {
-        Text("Recent transactions")
-          .nomiTextStyle(.title)
-          .foregroundStyle(NomiColor.textPrimary)
-        if recent.isEmpty {
-          Text("No transactions yet")
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.textTertiary)
-        } else {
-          VStack(spacing: NomiSpacing.xs) {
-            ForEach(recent) { transaction in
-              row(for: transaction)
-            }
-          }
+    if recent.isEmpty {
+      Text("No transactions yet")
+        .nomiTextStyle(.footnote)
+        .foregroundStyle(NomiColor.inkSecondary)
+        .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget, alignment: .leading)
+        .nomiCard(padding: EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+    } else {
+      VStack(spacing: 0) {
+        ForEach(Array(recent.enumerated()), id: \.element.id) { index, transaction in
+          row(for: transaction, showsDivider: index < recent.count - 1)
         }
       }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .nomiCard(padding: EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
     }
   }
 
-  private func row(for transaction: NomiCore.Transaction) -> some View {
+  /// A 64 pt row. The 1 pt divider is an overlay on the row's bottom edge, so
+  /// the row stays 64 pt with or without it, as on the artboard.
+  private func row(for transaction: NomiCore.Transaction, showsDivider: Bool) -> some View {
     let badge = transaction.categoryID.flatMap { badges[$0] }
+    let categoryName = badge?.name
+    let title = RecentRowText.title(
+      merchantName: transaction.merchantName,
+      descriptionText: transaction.descriptionText,
+      categoryName: categoryName
+    )
+    let isCredit = transaction.direction == .credit
     return Button {
       onSelect?(transaction.id)
     } label: {
-      HStack(spacing: NomiSpacing.xs) {
-        NomiCategoryBadge(symbolName: badge?.symbolName ?? "questionmark", paletteSlot: badge?.paletteSlot, size: 32)
-        VStack(alignment: .leading, spacing: 2) {
-          Text(transaction.merchantName ?? transaction.descriptionText)
-            .nomiTextStyle(.body)
-            .foregroundStyle(NomiColor.textPrimary)
-            .lineLimit(1)
-          Text(NomiFormatters.dayMonthAdaptive(transaction.date, relativeTo: Date()))
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.textTertiary)
-        }
-        Spacer(minLength: NomiSpacing.xs)
-        Text(
-          Self.amountText(minor: transaction.amountMinor, direction: transaction.direction, currencyCode: transaction.currencyCode)
+      HStack(alignment: .center, spacing: 12) {
+        NomiCategoryBadge(
+          symbolName: badge?.symbolName ?? "questionmark",
+          paletteSlot: nil,
+          size: 40,
+          style: .neutral
         )
-          .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 14))
-          .foregroundStyle(transaction.direction == .credit ? NomiColor.creditText : NomiColor.debitText)
+        VStack(alignment: .leading, spacing: 2) {
+          Text(title)
+            .nomiTextStyle(.rowTitle)
+            .foregroundStyle(NomiColor.ink)
+            .lineLimit(1)
+          Text(RecentRowText.subtitle(categoryName: categoryName))
+            .nomiTextStyle(.footnote)
+            .foregroundStyle(NomiColor.inkSecondary)
+            .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        DashboardAmountText(
+          minor: RecentRowText.signedMinor(amountMinor: transaction.amountMinor, direction: transaction.direction),
+          currencyCode: transaction.currencyCode,
+          showPlus: isCredit,
+          style: isCredit ? .amountStrong : .amount,
+          colour: isCredit ? NomiColor.inkDeep : NomiColor.ink
+        )
       }
+      .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+      .overlay(alignment: .bottom) {
+        if showsDivider {
+          Rectangle()
+            .fill(NomiColor.separator)
+            .frame(height: 1)
+        }
+      }
+      .contentShape(Rectangle())
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(
+        RecentRowText.accessibilityLabel(
+          title: title,
+          direction: transaction.direction,
+          amountMinor: transaction.amountMinor,
+          currencyCode: transaction.currencyCode,
+          categoryName: categoryName
+        )
+      )
     }
     .buttonStyle(.plain)
   }
-
-  static func amountText(minor: Int, direction: Direction, currencyCode: String = "INR") -> String {
-    (direction == .credit ? "+" : "") + NomiFormatters.amountString(minor: minor, currencyCode: currencyCode)
-  }
 }
 
-#Preview("Recent transactions — default, dark") {
+#Preview("Recent · default") {
   RecentTransactionsCard(transactions: Array(PreviewData.transactions.prefix(5)))
     .padding()
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
 }
 
-#Preview("Recent transactions — empty, dark") {
+#Preview("Recent · empty") {
   RecentTransactionsCard(transactions: [])
     .padding()
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
 }
 
-#Preview("Recent transactions — accessibility 3, dark") {
+#Preview("Recent · accessibility 3") {
   RecentTransactionsCard(transactions: Array(PreviewData.transactions.prefix(5)))
     .padding()
-    .background(NomiColor.surfaceCanvas)
+    .background(NomiColor.ground)
     .environment(\.dynamicTypeSize, .accessibility3)
-    .preferredColorScheme(.dark)
+    .preferredColorScheme(.light)
 }
