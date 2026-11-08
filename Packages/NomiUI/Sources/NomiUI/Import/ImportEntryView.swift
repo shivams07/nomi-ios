@@ -3,25 +3,38 @@ import NomiPreview
 import SwiftData
 import SwiftUI
 
+/// The file the user picked, its preview, and the mapping a commit would use.
+/// Carried by every state that can still act on the file, so "Adjust mapping"
+/// and "Try again" have a preview to return to.
+struct ImportReview {
+  let url: URL
+  let preview: ImportPreview
+  let mapping: ColumnMapping
+}
+
 /// State machine for the CSV/XLSX import flow: pick a file, inspect it,
 /// review/adjust the detected column mapping, commit. Reached from Settings'
-/// "Import from file" row.
+/// "Import from file" row. One case per state the approved artboards draw
+/// (`ImportIdle`, `Import`, `ImportDone`, `ImportFailed`) plus the
+/// inspecting, importing and no-rows states of SIMP §3 item 20.
 enum ImportFlowState {
   case idle
   case inspecting
-  case preview(url: URL, preview: ImportPreview, mapping: ColumnMapping)
-  case noRows
-  case failed(ImportError)
-  case importing(url: URL, mapping: ColumnMapping, signature: String, bankLabel: String)
+  case preview(ImportReview)
+  case noRows(ImportReview)
+  case failed(ImportError, ImportReview?)
+  case importing(ImportReview)
   case done(ImportSummary)
 }
 
-/// The file picker, `ImportPreview` screen, and column-mapping UI (U7).
-/// Reads `Design/**`. Must not edit it.
+/// The file picker, preview, column-mapping sheet and result screens (U7; IM).
+/// H0 "Import from file" in the native large-title bar. The one primary action
+/// on each screen is pinned to the bottom edge. Light only.
 public struct ImportEntryView: View {
   public let fileImportService: FileImportService
 
   @Query(sort: \NomiCore.Account.displayName) private var accounts: [NomiCore.Account]
+  @Environment(\.dismiss) private var dismiss
   @State private var flow: ImportFlowState = .idle
   @State private var isPickerPresented = false
   @State private var isMappingPresented = false
@@ -31,8 +44,8 @@ public struct ImportEntryView: View {
     self.fileImportService = fileImportService
   }
 
-  /// Preview/test-only entry point — seeds `flow` directly so canvases can
-  /// render the preview/no-rows/failed states without a real file pick.
+  /// Preview/test-only entry point. Seeds `flow` directly so canvases can
+  /// render every state without a real file pick.
   init(fileImportService: FileImportService, initialFlow: ImportFlowState) {
     self.fileImportService = fileImportService
     _flow = State(initialValue: initialFlow)
@@ -40,9 +53,12 @@ public struct ImportEntryView: View {
 
   public var body: some View {
     content
-      .scrollContentBackground(.hidden)
-      .background(NomiColor.surfaceCanvas)
-      .navigationTitle("Import from File")
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(NomiColor.ground)
+      .navigationTitle("Import from file")
+      #if os(iOS)
+      .navigationBarTitleDisplayMode(.large)
+      #endif
       .fileImporter(
         isPresented: $isPickerPresented,
         allowedContentTypes: ImportFileTypes.allowed
@@ -54,6 +70,11 @@ public struct ImportEntryView: View {
           break
         }
       }
+      .sheet(isPresented: $isMappingPresented) {
+        if let review = currentReview {
+          ColumnMappingEditor(headers: review.preview.headers, mapping: mappingBinding(review))
+        }
+      }
   }
 
   @ViewBuilder
@@ -61,128 +82,362 @@ public struct ImportEntryView: View {
     switch flow {
     case .idle:
       idleView
-    case .inspecting, .importing:
-      ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-    case .preview(let url, let preview, let mapping):
-      previewView(url: url, preview: preview, mapping: mapping)
+    case .inspecting:
+      inspectingView
+    case .preview(let review):
+      previewView(review, isBusy: false)
+    case .importing(let review):
+      previewView(review, isBusy: true)
     case .noRows:
       noRowsView
-    case .failed(let error):
-      failedView(error)
+    case .failed(let error, let review):
+      failedView(error, review: review)
     case .done(let summary):
       doneView(summary)
     }
   }
 
+  // MARK: - States
+
   private var idleView: some View {
-    VStack(spacing: NomiSpacing.md) {
-      Spacer()
-      Text("Import transactions from a bank-exported CSV or Excel file.")
-        .nomiTextStyle(.body)
-        .foregroundStyle(NomiColor.textSecondary)
-        .multilineTextAlignment(.center)
-        .padding(.horizontal, NomiSpacing.lg)
-      Button("Choose File") { isPickerPresented = true }
-      Spacer()
+    NomiEmptyState(
+      systemImage: "arrow.up.doc",
+      title: "Choose a file to import",
+      message: "Use a CSV or statement export from your bank. Nomi shows a preview before it saves anything."
+    )
+    .padding(.horizontal, NomiSpacing.screenGutter)
+    .padding(.top, 96)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    .safeAreaInset(edge: .bottom) {
+      pinnedPrimary("Choose file") { isPickerPresented = true }
     }
-    .padding(NomiSpacing.screenGutter)
   }
 
-  private func previewView(url: URL, preview: ImportPreview, mapping: ColumnMapping) -> some View {
-    List {
-      Section {
-        if let bank = preview.detectedBankLabel {
-          Text("Detected format: \(bank)")
-            .nomiTextStyle(.body)
-            .foregroundStyle(NomiColor.textPrimary)
-        } else {
-          Text("Unrecognized format — mapped generically")
-            .nomiTextStyle(.body)
-            .foregroundStyle(NomiColor.textPrimary)
+  private var inspectingView: some View {
+    VStack(spacing: NomiSpacing.xs) {
+      ProgressView()
+      Text("Reading file…")
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.inkSecondary)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .accessibilityElement(children: .combine)
+  }
+
+  /// The preview (`Import` artboard). While importing it stays on screen with
+  /// the primary disabled and busy, and Adjust mapping is disabled.
+  private func previewView(_ review: ImportReview, isBusy: Bool) -> some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 0) {
+        detectedCard(review.preview)
+        sectionLabel("Sample rows")
+        sampleRowsCard(review.preview)
+        if !accounts.isEmpty {
+          sectionLabel("Account")
+          accountCard
         }
-        Text(ImportPreviewSummary.rowCountText(preview))
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.textTertiary)
+        adjustMappingCard
+          .disabled(isBusy)
+          .padding(.top, NomiSpacing.md)
       }
-      Section("Sample rows") {
-        ForEach(preview.sampleRows.indices, id: \.self) { rowIndex in
-          Text(preview.sampleRows[rowIndex].joined(separator: "  ·  "))
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.textSecondary)
+      .padding(.horizontal, NomiSpacing.screenGutter)
+      .padding(.top, NomiSpacing.sm)
+      .padding(.bottom, NomiSpacing.sm)
+    }
+    .safeAreaInset(edge: .bottom) {
+      pinnedPrimary(
+        "Import",
+        isEnabled: !isBusy && ColumnMappingFormGate.isValid(review.mapping, headerCount: review.preview.headers.count),
+        isBusy: isBusy
+      ) {
+        commit(review)
+      }
+    }
+  }
+
+  /// Zero parseable rows. Adjust mapping is the way out; after Save the file
+  /// goes back to the preview, where Import can be tried again.
+  private var noRowsView: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 0) {
+        NomiEmptyState(
+          systemImage: "doc.text.magnifyingglass",
+          title: "No transactions found",
+          message: "This file didn’t contain any rows Nomi could read as transactions."
+        )
+        adjustMappingCard
+          .padding(.top, NomiSpacing.lg)
+      }
+      .padding(.horizontal, NomiSpacing.screenGutter)
+      .padding(.top, 96)
+      .padding(.bottom, NomiSpacing.sm)
+    }
+    .safeAreaInset(edge: .bottom) {
+      pinnedPrimary("Choose a different file") { isPickerPresented = true }
+    }
+  }
+
+  /// `ImportFailed` artboard. Adjust mapping appears only when a preview exists,
+  /// that is when the commit itself failed. A file that failed to inspect has
+  /// no columns to adjust, so only Try again is offered.
+  private func failedView(_ error: ImportError, review: ImportReview?) -> some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: NomiSpacing.md) {
+        errorCard(error)
+        if review != nil {
+          adjustMappingCard
         }
       }
-      if !accounts.isEmpty {
-        Section("Account") {
-          Picker("Account", selection: $selectedAccountID) {
-            Text("Unassigned").tag(UUID?.none)
-            ForEach(accounts) { account in
-              Text(account.displayName).tag(Optional(account.id))
-            }
+      .padding(.horizontal, NomiSpacing.screenGutter)
+      .padding(.top, NomiSpacing.sm)
+      .padding(.bottom, NomiSpacing.sm)
+    }
+    .safeAreaInset(edge: .bottom) {
+      pinnedPrimary("Try again") { tryAgain(review) }
+    }
+  }
+
+  /// `ImportDone` artboard. "View in Ledger" is not drawn: it needs a route
+  /// into the Ledger tab, which S1 does not provide.
+  private func doneView(_ summary: ImportSummary) -> some View {
+    ScrollView {
+      HStack(alignment: .center, spacing: 12) {
+        Image(systemName: "checkmark")
+          .resizable()
+          .scaledToFit()
+          .frame(width: 18, height: 18)
+          .foregroundStyle(NomiColor.navy)
+          .frame(width: 40, height: 40)
+          .background(Circle().fill(NomiColor.iconTile))
+          .accessibilityHidden(true)
+
+        VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+          Text(ImportDoneCopy.title(summary))
+            .nomiTextStyle(.headline)
+            .foregroundStyle(NomiColor.ink)
+          if let detail = ImportDoneCopy.detail(summary, accountName: selectedAccountName) {
+            Text(detail)
+              .nomiTextStyle(.caption)
+              .foregroundStyle(NomiColor.inkSecondary)
           }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
-      Section {
-        Button("Adjust Mapping") { isMappingPresented = true }
-        Button("Import") {
-          let key = SavedMappingKey.make(from: preview)
-          commit(url: url, mapping: mapping, signature: key.signature, bankLabel: key.bankLabel)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .nomiCard(padding: EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16))
+      .accessibilityElement(children: .combine)
+      .padding(.horizontal, NomiSpacing.screenGutter)
+      .padding(.top, NomiSpacing.sm)
+    }
+    .safeAreaInset(edge: .bottom) {
+      pinnedPrimary("Done") { dismiss() }
+    }
+  }
+
+  // MARK: - Pieces
+
+  /// The one primary action of a screen: a 52 pt black capsule pinned to the
+  /// bottom edge. While busy it carries a spinner and stays disabled.
+  private func pinnedPrimary(
+    _ title: String,
+    isEnabled: Bool = true,
+    isBusy: Bool = false,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      HStack(spacing: NomiSpacing.xs) {
+        if isBusy {
+          ProgressView()
+            .tint(NomiColor.onPrimary)
         }
-        .disabled(!ColumnMappingFormGate.isValid(mapping, headerCount: preview.headers.count))
+        Text(title)
       }
     }
-    .scrollContentBackground(.hidden)
-    .sheet(isPresented: $isMappingPresented) {
-      ColumnMappingEditor(headers: preview.headers, mapping: Binding(
-        get: { mapping },
-        set: { flow = .preview(url: url, preview: preview, mapping: $0) }
-      ))
+    .buttonStyle(NomiPrimaryButtonStyle(height: 52))
+    .disabled(!isEnabled)
+    .padding(.horizontal, NomiSpacing.screenGutter)
+    .padding(.top, NomiSpacing.xs)
+    .padding(.bottom, NomiSpacing.xs)
+    .frame(maxWidth: .infinity)
+    .background(NomiColor.ground)
+  }
+
+  private func sectionLabel(_ title: String) -> some View {
+    Text(title)
+      .nomiTextStyle(.label)
+      .foregroundStyle(NomiColor.inkDeep)
+      .accessibilityAddTraits(.isHeader)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.top, NomiSpacing.md)
+      .padding(.bottom, NomiSpacing.xs)
+      .padding(.horizontal, NomiSpacing.xxs)
+  }
+
+  private func detectedCard(_ preview: ImportPreview) -> some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+      Text(detectedTitle(preview))
+        .nomiTextStyle(.rowBody)
+        .foregroundStyle(NomiColor.ink)
+      Text(ImportPreviewSummary.rowCountText(preview))
+        .nomiTextStyle(.footnote)
+        .foregroundStyle(NomiColor.inkSecondary)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .nomiCard(padding: EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16))
+  }
+
+  private func detectedTitle(_ preview: ImportPreview) -> String {
+    if let bank = preview.detectedBankLabel {
+      return "Detected format: \(bank)"
+    }
+    return "Unrecognized format — mapped generically"
+  }
+
+  private func sampleRowsCard(_ preview: ImportPreview) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+      ForEach(preview.sampleRows.indices, id: \.self) { rowIndex in
+        if rowIndex > 0 {
+          rowDivider
+        }
+        Text(preview.sampleRows[rowIndex].joined(separator: "  ·  "))
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+          .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget, alignment: .leading)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .nomiCard()
+  }
+
+  private var accountCard: some View {
+    HStack(spacing: NomiSpacing.xs) {
+      Text("Account")
+        .nomiTextStyle(.rowBody)
+        .foregroundStyle(NomiColor.ink)
+      Spacer(minLength: NomiSpacing.xs)
+      Picker("Account", selection: $selectedAccountID) {
+        Text("Unassigned").tag(UUID?.none)
+        ForEach(accounts) { account in
+          Text(account.displayName).tag(Optional(account.id))
+        }
+      }
+      .labelsHidden()
+      .pickerStyle(.menu)
+      .tint(NomiColor.inkSecondary)
+    }
+    .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight)
+    .nomiCard()
+  }
+
+  /// A navy text row with a trailing chevron, on a card. Opens the mapping sheet
+  /// for whichever file is under review.
+  private var adjustMappingCard: some View {
+    Button {
+      isMappingPresented = true
+    } label: {
+      HStack(spacing: NomiSpacing.xs) {
+        Text("Adjust mapping")
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(NomiColor.navy)
+        Spacer(minLength: NomiSpacing.xs)
+        Image(systemName: "chevron.right")
+          .resizable()
+          .scaledToFit()
+          .frame(width: 14, height: 14)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .accessibilityHidden(true)
+      }
+      .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .frame(maxWidth: .infinity)
+    .nomiCard()
+  }
+
+  private func errorCard(_ error: ImportError) -> some View {
+    HStack(alignment: .center, spacing: 12) {
+      Image(systemName: "exclamationmark.circle")
+        .resizable()
+        .scaledToFit()
+        .frame(width: 20, height: 20)
+        .foregroundStyle(NomiColor.error)
+        .frame(width: 40, height: 40)
+        .background(Circle().fill(NomiColor.errorTint))
+        .accessibilityHidden(true)
+
+      VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+        Text("Couldn’t import this file")
+          .nomiTextStyle(.headline)
+          .foregroundStyle(NomiColor.ink)
+        Text(ImportErrorMessage.text(for: error))
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .nomiCard(padding: EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16))
+    .accessibilityElement(children: .combine)
+  }
+
+  private var rowDivider: some View {
+    Rectangle()
+      .fill(NomiColor.separator)
+      .frame(height: 1)
+      .accessibilityHidden(true)
+  }
+
+  // MARK: - Derived state
+
+  /// The review carried by the current state, if any. The mapping sheet edits this.
+  private var currentReview: ImportReview? {
+    switch flow {
+    case .preview(let review), .noRows(let review), .importing(let review):
+      return review
+    case .failed(_, let review):
+      return review
+    case .idle, .inspecting, .done:
+      return nil
     }
   }
 
-  private var noRowsView: some View {
-    VStack(spacing: NomiSpacing.md) {
-      Spacer()
-      Text("No transactions found")
-        .nomiTextStyle(.title)
-        .foregroundStyle(NomiColor.textPrimary)
-      Text("This file didn't contain any rows Nomi could read as transactions.")
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textTertiary)
-        .multilineTextAlignment(.center)
-        .padding(.horizontal, NomiSpacing.lg)
-      Button("Choose a Different File") { isPickerPresented = true }
-      Spacer()
-    }
-    .padding(NomiSpacing.screenGutter)
+  private var selectedAccountName: String? {
+    guard let selectedAccountID else { return nil }
+    return accounts.first { $0.id == selectedAccountID }?.displayName
   }
 
-  private func failedView(_ error: ImportError) -> some View {
-    VStack(spacing: NomiSpacing.md) {
-      Spacer()
-      Text(ImportErrorMessage.text(for: error))
-        .nomiTextStyle(.body)
-        .foregroundStyle(NomiColor.textPrimary)
-        .multilineTextAlignment(.center)
-        .padding(.horizontal, NomiSpacing.lg)
-      Button("Try Again") { flow = .idle }
-      Spacer()
-    }
-    .padding(NomiSpacing.screenGutter)
+  /// Saving the sheet always lands on the preview with the new mapping, so the
+  /// user sees what Import will do before it runs. Cancel never reaches here.
+  private func mappingBinding(_ review: ImportReview) -> Binding<ColumnMapping> {
+    Binding(
+      get: { review.mapping },
+      set: { flow = .preview(ImportReview(url: review.url, preview: review.preview, mapping: $0)) }
+    )
   }
 
-  private func doneView(_ summary: ImportSummary) -> some View {
-    VStack(spacing: NomiSpacing.xs) {
-      Spacer()
-      Text("Import complete")
-        .nomiTextStyle(.title)
-        .foregroundStyle(NomiColor.textPrimary)
-      Text("\(summary.created) added, \(summary.merged) merged, \(summary.skipped) skipped")
-        .nomiTextStyle(.body)
-        .foregroundStyle(NomiColor.textSecondary)
-      Spacer()
+  private func tryAgain(_ review: ImportReview?) {
+    if let review {
+      flow = .preview(review)
+    } else {
+      flow = .idle
     }
-    .padding(NomiSpacing.screenGutter)
   }
+
+  private func fallbackMapping(for preview: ImportPreview) -> ColumnMapping {
+    ColumnMapping(
+      dateColumn: 0,
+      descriptionColumn: min(1, preview.headers.count - 1),
+      amountColumn: min(2, preview.headers.count - 1),
+      referenceColumn: nil,
+      directionStrategy: .signedAmount,
+      dateFormat: "dd/MM/yyyy"
+    )
+  }
+
+  // MARK: - Work
 
   private func inspect(_ url: URL) {
     flow = .inspecting
@@ -191,85 +446,114 @@ public struct ImportEntryView: View {
       defer { if accessed { url.stopAccessingSecurityScopedResource() } }
       do {
         let preview = try await fileImportService.inspect(url)
+        let mapping = preview.suggestedMapping ?? fallbackMapping(for: preview)
+        let review = ImportReview(url: url, preview: preview, mapping: mapping)
         if ImportPreviewSummary.isEmpty(preview) {
-          flow = .noRows
+          flow = .noRows(review)
         } else {
-          let mapping = preview.suggestedMapping ?? ColumnMapping(
-            dateColumn: 0, descriptionColumn: min(1, preview.headers.count - 1), amountColumn: min(2, preview.headers.count - 1),
-            referenceColumn: nil, directionStrategy: .signedAmount, dateFormat: "dd/MM/yyyy"
-          )
-          flow = .preview(url: url, preview: preview, mapping: mapping)
+          flow = .preview(review)
         }
       } catch let importError as ImportError {
-        flow = .failed(importError)
+        flow = .failed(importError, nil)
       } catch {
-        flow = .failed(.malformedStructure(reason: error.localizedDescription))
+        flow = .failed(.malformedStructure(reason: error.localizedDescription), nil)
       }
     }
   }
 
-  private func commit(url: URL, mapping: ColumnMapping, signature: String, bankLabel: String) {
-    flow = .importing(url: url, mapping: mapping, signature: signature, bankLabel: bankLabel)
-    let accessed = url.startAccessingSecurityScopedResource()
+  /// A failed commit keeps its review, so Adjust mapping and Try again can
+  /// return to the preview.
+  private func commit(_ review: ImportReview) {
+    flow = .importing(review)
+    let key = SavedMappingKey.make(from: review.preview)
+    let accessed = review.url.startAccessingSecurityScopedResource()
     Task {
-      defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+      defer { if accessed { review.url.stopAccessingSecurityScopedResource() } }
       do {
-        try fileImportService.saveMapping(mapping, signature: signature, bankLabel: bankLabel)
-        let summary = try await fileImportService.commit(url, mapping: mapping, accountID: selectedAccountID)
+        try fileImportService.saveMapping(review.mapping, signature: key.signature, bankLabel: key.bankLabel)
+        let summary = try await fileImportService.commit(review.url, mapping: review.mapping, accountID: selectedAccountID)
         flow = .done(summary)
       } catch let importError as ImportError {
-        flow = .failed(importError)
+        flow = .failed(importError, review)
       } catch {
-        flow = .failed(.malformedStructure(reason: error.localizedDescription))
+        flow = .failed(.malformedStructure(reason: error.localizedDescription), review)
       }
     }
   }
 }
 
-#Preview("Import — idle, dark") {
+#Preview("Import — idle") {
   NavigationStack {
     ImportEntryView(fileImportService: FakeFileImportService())
   }
   .modelContainer(ImportPreviewSupport.makeAccountContainer())
-  .preferredColorScheme(.dark)
 }
 
-#Preview("Import — auto-detected, dark") {
+#Preview("Import — inspecting") {
+  NavigationStack {
+    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .inspecting)
+  }
+  .modelContainer(ImportPreviewSupport.makeAccountContainer())
+}
+
+#Preview("Import — auto-detected") {
   NavigationStack {
     ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .preview(
-      url: URL(fileURLWithPath: "/tmp/statement.csv"),
-      preview: ImportPreviewSupport.detectedPreview,
-      mapping: ImportPreviewSupport.detectedPreview.suggestedMapping!
+      ImportPreviewSupport.detectedReview
     ))
   }
   .modelContainer(ImportPreviewSupport.makeAccountContainer())
-  .preferredColorScheme(.dark)
 }
 
-#Preview("Import — unknown format, dark") {
+#Preview("Import — importing") {
   NavigationStack {
-    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .preview(
-      url: URL(fileURLWithPath: "/tmp/statement.csv"),
-      preview: ImportPreviewSupport.unknownFormatPreview,
-      mapping: ColumnMapping(dateColumn: 0, descriptionColumn: 1, amountColumn: 2, referenceColumn: nil, directionStrategy: .signedAmount, dateFormat: "dd/MM/yyyy")
+    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .importing(
+      ImportPreviewSupport.detectedReview
     ))
   }
   .modelContainer(ImportPreviewSupport.makeAccountContainer())
-  .preferredColorScheme(.dark)
 }
 
-#Preview("Import — zero rows, dark") {
+#Preview("Import — unknown format") {
   NavigationStack {
-    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .noRows)
+    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .preview(
+      ImportPreviewSupport.unknownFormatReview
+    ))
   }
   .modelContainer(ImportPreviewSupport.makeAccountContainer())
-  .preferredColorScheme(.dark)
 }
 
-#Preview("Import — malformed, dark") {
+#Preview("Import — no rows") {
   NavigationStack {
-    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .failed(.malformedStructure(reason: "column count changes after row 12")))
+    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .noRows(
+      ImportPreviewSupport.noRowsReview
+    ))
   }
   .modelContainer(ImportPreviewSupport.makeAccountContainer())
-  .preferredColorScheme(.dark)
+}
+
+#Preview("Import — failed after commit") {
+  NavigationStack {
+    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .failed(
+      .malformedStructure(reason: "column count changes after row 12"),
+      ImportPreviewSupport.detectedReview
+    ))
+  }
+  .modelContainer(ImportPreviewSupport.makeAccountContainer())
+}
+
+#Preview("Import — failed to inspect") {
+  NavigationStack {
+    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .failed(.unreadableEncoding, nil))
+  }
+  .modelContainer(ImportPreviewSupport.makeAccountContainer())
+}
+
+#Preview("Import — done") {
+  NavigationStack {
+    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .done(
+      ImportSummary(created: 24, merged: 0, skipped: 2)
+    ))
+  }
+  .modelContainer(ImportPreviewSupport.makeAccountContainer())
 }
