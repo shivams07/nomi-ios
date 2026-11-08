@@ -129,9 +129,26 @@ final class ImportLogicTests: XCTestCase {
 
   // MARK: - IM: done-state copy (ImportDone artboard)
 
-  func testDoneTitleIsImportedAndSkippedCounts() {
-    let summary = ImportSummary(created: 24, merged: 0, skipped: 2)
-    XCTAssertEqual(ImportDoneCopy.title(summary), "24 imported, 2 skipped")
+  /// The nine title cases from the ruling: created 0, 1 and many, against
+  /// skipped 0, 1 and many. `merged` does not affect the title.
+  func testDoneTitleTable() {
+    let cases: [(created: Int, skipped: Int, expected: String)] = [
+      (0, 0, "No new transactions"),
+      (0, 1, "No new transactions, 1 skipped"),
+      (0, 2, "No new transactions, 2 skipped"),
+      (1, 0, "1 transaction imported"),
+      (1, 1, "1 transaction imported, 1 skipped"),
+      (1, 2, "1 transaction imported, 2 skipped"),
+      (24, 0, "24 transactions imported"),
+      (24, 1, "24 transactions imported, 1 skipped"),
+      (24, 2, "24 transactions imported, 2 skipped"),
+    ]
+    for testCase in cases {
+      let summary = ImportSummary(created: testCase.created, merged: 0, skipped: testCase.skipped)
+      XCTAssertEqual(
+        ImportDoneCopy.title(summary), testCase.expected,
+        "created \(testCase.created), skipped \(testCase.skipped)")
+    }
   }
 
   func testDoneDetailNamesTheAccount() {
@@ -139,10 +156,23 @@ final class ImportLogicTests: XCTestCase {
     XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: "HDFC Savings"), "HDFC Savings")
   }
 
-  func testDoneDetailCountsMergedRowsAfterTheAccount() {
+  func testDoneDetailCountsOneMatchAfterTheAccount() {
+    let summary = ImportSummary(created: 5, merged: 1, skipped: 0)
+    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: "HDFC Savings"), "HDFC Savings · 1 matched an existing transaction")
+    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: nil), "1 matched an existing transaction")
+  }
+
+  func testDoneDetailCountsManyMatchesAfterTheAccount() {
     let summary = ImportSummary(created: 5, merged: 3, skipped: 0)
-    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: "HDFC Savings"), "HDFC Savings · 3 merged with existing")
-    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: nil), "3 merged with existing")
+    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: "HDFC Savings"), "HDFC Savings · 3 matched existing transactions")
+    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: nil), "3 matched existing transactions")
+  }
+
+  /// The re-import case: every parsed row matched, so nothing was created.
+  func testDoneDetailForAReimportNamesTheAccountAndAllMatches() {
+    let summary = ImportSummary(created: 0, merged: 24, skipped: 0)
+    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: "HDFC Savings"), "HDFC Savings · 24 matched existing transactions")
+    XCTAssertEqual(ImportDoneCopy.title(summary), "No new transactions")
   }
 
   func testDoneDetailIsNilWhenThereIsNothingToSay() {
