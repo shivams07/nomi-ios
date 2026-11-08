@@ -64,11 +64,13 @@ enum LedgerGrouping {
 /// received), so — like `TrackedBalanceText` in `Accounts/AccountsLogic.swift`
 /// — this formats a raw signed total rather than a per-transaction
 /// debit/credit, and needs its own sign prefix since
-/// `NomiFormatters.amountString` always strips it.
+/// `NomiFormatters.amountString` always strips it. DEC-03 / A-03.4: the sign
+/// is U+2212 for a negative total and "+" for a positive one, and zero carries
+/// neither.
 enum LedgerDayTotalText {
   static func string(minor: Int) -> String {
-    let sign = minor < 0 ? "-" : (minor > 0 ? "+" : "")
-    return sign + NomiFormatters.amountString(minor: minor)
+    let sign = minor < 0 ? "\u{2212}" : (minor > 0 ? "+" : "")
+    return sign + NomiFormatters.amountString(minor: abs(minor))
   }
 }
 
@@ -103,16 +105,71 @@ enum LedgerFiltering {
   }
 }
 
-/// The magnitude bar's fill fraction — a row's amount relative to the
-/// largest amount in whatever set it's drawn against (design: "a data
-/// mark," not a fixed scale). A single outsized transaction pins at 1.0
-/// rather than the bar overflowing; a zero/empty max floors everyone at 0
-/// rather than dividing by zero.
-enum LedgerMagnitude {
-  static func fraction(amountMinor: Int, maxAmountMinor: Int) -> Double {
-    guard maxAmountMinor > 0 else { return 0 }
-    let ratio = Double(abs(amountMinor)) / Double(maxAmountMinor)
-    return min(max(ratio, 0), 1)
+/// What the windowed list reports up to `LedgerScreen`, which owns the chip row
+/// (its counts) and the search bar (whether either is shown at all).
+/// `hasRows` is the 90-day window alone, not the search results: a window with
+/// no rows is "no transactions yet" even while a whole-ledger search runs.
+struct LedgerWindowSummary: Equatable {
+  /// The 90-day window (or the wider one after "Show older") holds a row.
+  var hasRows: Bool
+  /// The whole table holds a row. Only read when the window is empty, with a
+  /// one-row fetch, so the first-run state is never claimed for a user who
+  /// has older transactions.
+  var storeHasRows: Bool
+  var needsReviewCount: Int
+
+  /// Before the list has reported: chips shown, counts zero.
+  static let unreported = LedgerWindowSummary(hasRows: true, storeHasRows: true, needsReviewCount: 0)
+}
+
+/// Which empty treatment the list shows when it has no rows to draw. `.none`
+/// means rows are drawn and no empty state applies. The enum name `none` is
+/// fine here because the type is not optional.
+enum LedgerEmptyKind: Equatable {
+  /// The store holds no transactions at all, and no filter is set: the
+  /// first-run state, "No transactions yet" with "Add transaction". The chip
+  /// row and search bar are hidden, since there is nothing to search.
+  case empty
+  /// The 90-day window is empty but older rows exist, and no filter is set.
+  /// Shows "Nothing in the last N days". The search bar and chips stay, since
+  /// search reaches the whole ledger (DEC-10); "Show older" sits below.
+  case nothingRecent
+  /// A chip or search is active and empties the list. Shows the query and
+  /// "Clear filters".
+  case noResults
+  case none
+
+  static func of(hasRows: Bool, storeHasRows: Bool, isFiltered: Bool) -> LedgerEmptyKind {
+    if isFiltered { return .noResults }
+    if hasRows { return .none }
+    return storeHasRows ? .nothingRecent : .empty
+  }
+}
+
+/// Copy for the empty and no-results states. The query is shown only when
+/// there is one, trimmed the same way the search runs (`LedgerSearch.normalized`).
+enum LedgerCopy {
+  static func noResultsTitle(query: String) -> String {
+    guard let text = LedgerSearch.normalized(query) else { return "No matches" }
+    return "No matches for “\(text)”"
+  }
+
+  static func nothingRecentTitle(days: Int) -> String {
+    "Nothing in the last \(days) days"
+  }
+
+  /// The search box's prompt. "Search all transactions" only when a whole-ledger
+  /// search service is wired; otherwise the box only filters the 90-day window.
+  static func searchPrompt(wholeLedger: Bool) -> String {
+    wholeLedger ? "Search all transactions" : "Search"
+  }
+
+  /// The nothing-recent message. The whole-ledger clause appears only when
+  /// search can actually reach older rows.
+  static func nothingRecentMessage(wholeLedger: Bool) -> String {
+    wholeLedger
+      ? "Older transactions aren’t shown here. Show older to widen the list, or search the whole ledger."
+      : "Older transactions aren’t shown here. Show older to widen the list."
   }
 }
 
@@ -122,9 +179,13 @@ enum LedgerMagnitude {
 /// render; each "Show older" tap increments it by one, widening the visible
 /// history by another 90 days rather than replacing what's already shown.
 enum LedgerWindow {
+  /// How many days the window reaches back at this step: 90, then 180, and so on.
+  static func days(for stepsBack: Int) -> Int {
+    (stepsBack + 1) * 90
+  }
+
   static func since(for stepsBack: Int, now: Date, calendar: Calendar = .current) -> Date {
-    let days = (stepsBack + 1) * 90
-    return calendar.date(byAdding: .day, value: -days, to: now) ?? now
+    calendar.date(byAdding: .day, value: -days(for: stepsBack), to: now) ?? now
   }
 }
 

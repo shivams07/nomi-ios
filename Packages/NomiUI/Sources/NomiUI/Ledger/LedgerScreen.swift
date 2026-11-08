@@ -17,10 +17,17 @@ enum LedgerDayHeaderText {
   }
 }
 
+/// Geometry from the approved Ledger artboards (LG): rows are 64 pt, day
+/// headers 20 pt high before Dynamic Type grows them.
+private enum LedgerMetrics {
+  static let rowHeight: CGFloat = 64
+  static let dayHeaderHeight: CGFloat = 20
+}
+
 /// The Ledger screen (U14) — the transaction list the UI direction specified
 /// and no unit was ever given (design §2.19(2)). A tab-root screen like
-/// `DashboardView`, not a pushed one: no `NavigationStack`/`.navigationTitle`
-/// of its own, `NomiTabShell` supplies the chrome.
+/// `DashboardView`: `NomiTabShell` supplies the tab chrome, and this screen
+/// sets its own large title.
 ///
 /// Reads categories/accounts via `@Query` directly against the `@Model` types
 /// (design's read/write asymmetry — see `CategoriesScreen`) and takes
@@ -67,6 +74,9 @@ public struct LedgerScreen: View {
   /// closes or a row is changed from the list. Results read before then may
   /// point at a deleted or edited row.
   @State private var searchGeneration = 0
+  /// Reported by the windowed list: whether the window holds any row, and how
+  /// many need review (the chip's count).
+  @State private var windowSummary = LedgerWindowSummary.unreported
 
   /// A sheet does not inherit the root's `modelContainer` — the detail
   /// screen's own `@Query` would trap at runtime (not in CI, which never
@@ -112,6 +122,19 @@ public struct LedgerScreen: View {
     }
   }
 
+  /// A chip other than All is selected, or the search box holds a query.
+  private var isFiltered: Bool {
+    selection != .all || LedgerSearch.normalized(searchText) != nil
+  }
+
+  /// Decides the empty treatment, and whether the chip row and search bar show.
+  /// Only `.empty` hides them: the store has no transactions, so there is
+  /// nothing to filter or search.
+  private var emptyKind: LedgerEmptyKind {
+    LedgerEmptyKind.of(
+      hasRows: windowSummary.hasRows, storeHasRows: windowSummary.storeHasRows, isFiltered: isFiltered)
+  }
+
   /// SwiftData fixes a `@Query`'s predicate at the view instance's
   /// construction (see `.id(queryKey)`'s note, below). Only `since` is baked
   /// into that predicate now — the chip and search box are read back out of
@@ -154,16 +177,17 @@ public struct LedgerScreen: View {
   public var body: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-        chipRow
-          .padding(.horizontal, NomiSpacing.screenGutter)
-          .padding(.vertical, NomiSpacing.sm)
+        if emptyKind != .empty {
+          chipRow
+            .padding(.top, NomiSpacing.xs)
+        }
 
         if searchFailed {
           // Same window arithmetic as `LedgerWindow.since`, so the copy names
           // the span actually shown after any "Show older" taps.
-          Text("Search didn’t run. Showing the last \((stepsBack + 1) * 90) days.")
+          Text("Search didn’t run. Showing the last \(LedgerWindow.days(for: stepsBack)) days.")
             .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.textSecondary)
+            .foregroundStyle(NomiColor.inkSecondary)
             .padding(.horizontal, NomiSpacing.screenGutter)
             .padding(.bottom, NomiSpacing.xs)
         }
@@ -178,6 +202,9 @@ public struct LedgerScreen: View {
           filter: filter,
           since: since,
           now: now,
+          windowDays: LedgerWindow.days(for: stepsBack),
+          wholeLedgerSearch: transactionSearch != nil,
+          isFiltered: isFiltered,
           transactionStore: transactionStore,
           categoryNamesByID: categoryNamesByID,
           categoryPaletteSlotByID: categoryPaletteSlotByID,
@@ -197,17 +224,30 @@ public struct LedgerScreen: View {
             // context menu: those rows may be in `searchResults`.
             searchResults = nil
             searchGeneration += 1
-          }
+          },
+          onWindowChange: { windowSummary = $0 },
+          onClearFilters: clearFilters
         )
         .id(queryKey)
 
-        if searchResults == nil {
+        // Hidden only in the true first-run state, where nothing is older.
+        if searchResults == nil && emptyKind != .empty {
           showOlderButton
         }
       }
     }
-    .background(NomiColor.surfaceCanvas)
-    .searchable(text: $searchText, prompt: "Search all transactions")
+    .background(NomiColor.ground)
+    .modifier(
+      LedgerSearchModifier(
+        text: $searchText,
+        isEnabled: emptyKind != .empty,
+        prompt: LedgerCopy.searchPrompt(wholeLedger: transactionSearch != nil)
+      )
+    )
+    .navigationTitle("Ledger")
+    #if os(iOS)
+      .navigationBarTitleDisplayMode(.large)
+    #endif
     // Sets `now` once per appearance rather than every `dayHeader` call —
     // day headers read it from here, not from a fresh `Date()` in `body`.
     .onAppear { now = Date() }
@@ -270,76 +310,87 @@ public struct LedgerScreen: View {
 
   // MARK: - Filter chips
 
+  /// One horizontal row of `NomiChip`: All, Needs review (with its count),
+  /// Uncategorized, then one chip per category. Scrolls sideways when it
+  /// overflows, and the gutter is inside the scroll so the first chip is not
+  /// clipped at the edge.
   private var chipRow: some View {
     ScrollView(.horizontal, showsIndicators: false) {
-      HStack(spacing: NomiSpacing.xs) {
-        chip(label: "All", systemImage: nil, tint: nil, isSelected: selection == .all) {
+      HStack(spacing: NomiSpacing.xxs) {
+        NomiChip(title: "All", isSelected: selection == .all) {
           selection = .all
         }
-        chip(
-          label: "Needs review", systemImage: "exclamationmark.circle", tint: NomiColor.debitText,
-          isSelected: selection == .needsReview
+        NomiChip(
+          title: "Needs review", count: windowSummary.needsReviewCount, isSelected: selection == .needsReview
         ) {
           selection = .needsReview
         }
+        NomiChip(title: "Uncategorized", isSelected: selection == .uncategorized) {
+          selection = .uncategorized
+        }
         ForEach(categories) { category in
-          chip(
-            label: category.name,
-            systemImage: category.symbolName,
-            tint: paletteSlot(category.paletteSlot),
-            isSelected: selection == .category(category.id)
-          ) {
+          NomiChip(title: category.name, isSelected: selection == .category(category.id)) {
             selection = .category(category.id)
           }
         }
-        chip(
-          label: "Uncategorized", systemImage: "questionmark", tint: CategoryPalette.other,
-          isSelected: selection == .uncategorized
-        ) {
-          selection = .uncategorized
-        }
       }
+      .padding(.horizontal, NomiSpacing.screenGutter)
     }
   }
 
-  private func chip(
-    label: String, systemImage: String?, tint: Color?, isSelected: Bool, action: @escaping () -> Void
-  ) -> some View {
-    HStack(spacing: NomiSpacing.xxs) {
-      if let systemImage {
-        Image(systemName: systemImage)
-          .foregroundStyle(tint ?? NomiColor.textSecondary)
-      }
-      Text(label)
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textPrimary)
-    }
-    .padding(.horizontal, NomiSpacing.sm)
-    .padding(.vertical, NomiSpacing.xs)
-    .background(isSelected ? NomiColor.accent : NomiColor.glassFill)
-    .overlay(Capsule(style: .continuous).stroke(NomiColor.glassHairline, lineWidth: 1))
-    .clipShape(Capsule(style: .continuous))
-    .contentShape(Capsule(style: .continuous))
-    .onTapGesture(perform: action)
-    .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+  private func clearFilters() {
+    searchText = ""
+    selection = .all
   }
 
   // MARK: - Paging
 
-  /// Unconditional, at the foot of the list — this screen never queries
-  /// beyond `since` to find out whether there's anything older to show, since
-  /// doing so would be exactly the whole-table read F1 exists to remove.
+  /// At the foot of the list. This screen never queries beyond `since` to find
+  /// out whether there's anything older to show, since doing so would be
+  /// exactly the whole-table read F1 exists to remove. Shown in the
+  /// "Nothing in the last N days" state, so an empty window can still reach
+  /// older rows; hidden only in the true first-run state.
   private var showOlderButton: some View {
-    Button {
+    Button("Show older") {
       stepsBack += 1
-    } label: {
-      Text("Show older")
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.accent)
-        .frame(maxWidth: .infinity)
     }
+    .buttonStyle(NomiSecondaryButtonStyle())
+    .frame(maxWidth: .infinity)
     .padding(.horizontal, NomiSpacing.screenGutter)
     .padding(.vertical, NomiSpacing.sm)
+  }
+}
+
+/// Hides the search bar, not just its text, when there is nothing to search
+/// (`LedgerEmptyKind.empty`).
+private struct LedgerSearchModifier: ViewModifier {
+  @Binding var text: String
+  let isEnabled: Bool
+  let prompt: String
+
+  func body(content: Content) -> some View {
+    if isEnabled {
+      content.searchable(text: $text, prompt: prompt)
+    } else {
+      content
+    }
+  }
+}
+
+/// The artboard's "Clear filters": a white capsule with a hairline border and
+/// a navy label, 44 pt high. `NomiSecondaryButtonStyle` is text alone, with
+/// no edge, and reads as a link next to the chips.
+private struct LedgerClearFiltersStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .nomiTextStyle(.body)
+      .foregroundStyle(NomiColor.navy)
+      .padding(.horizontal, 22)
+      .frame(minHeight: NomiSpacing.minTarget)
+      .background(Capsule(style: .continuous).fill(NomiColor.card))
+      .overlay(Capsule(style: .continuous).strokeBorder(NomiColor.separator, lineWidth: 1))
+      .contentShape(Capsule(style: .continuous))
+      .opacity(configuration.isPressed ? 0.7 : 1)
   }
 }
 
@@ -353,6 +404,13 @@ public struct LedgerScreen: View {
 private struct LedgerTransactionList: View {
   let filter: TransactionFilter
   let now: Date
+  /// How far back the window reaches, for the "Nothing in the last N days" copy.
+  let windowDays: Int
+  /// Whether a whole-ledger search service is wired. Without one, the search
+  /// box only filters the window, and the copy must not say otherwise.
+  let wholeLedgerSearch: Bool
+  /// A chip other than All is selected, or the search box holds a query.
+  let isFiltered: Bool
   let transactionStore: TransactionStore
   let categoryNamesByID: [UUID: String]
   let categoryPaletteSlotByID: [UUID: Int]
@@ -364,8 +422,15 @@ private struct LedgerTransactionList: View {
   /// Called after this list deletes or marks a row reviewed, so the parent can
   /// drop any whole-ledger rows it still holds.
   let onMutate: () -> Void
+  /// Reports the window's summary to the parent, which owns the chip row.
+  let onWindowChange: (LedgerWindowSummary) -> Void
+  /// Resets the chip and the search box from the no-results state.
+  let onClearFilters: () -> Void
 
   @Query private var transactions: [NomiCore.Transaction]
+
+  @Environment(\.nomiAddTransaction) private var addTransaction
+  @Environment(\.modelContext) private var modelContext
 
   @State private var pendingDeleteID: UUID?
   @State private var errorMessage: String?
@@ -374,6 +439,9 @@ private struct LedgerTransactionList: View {
     filter: TransactionFilter,
     since: Date,
     now: Date,
+    windowDays: Int,
+    wholeLedgerSearch: Bool,
+    isFiltered: Bool,
     transactionStore: TransactionStore,
     categoryNamesByID: [UUID: String],
     categoryPaletteSlotByID: [UUID: Int],
@@ -381,10 +449,15 @@ private struct LedgerTransactionList: View {
     accountNamesByID: [UUID: String],
     searchMatches: [NomiCore.Transaction]?,
     onSelectTransaction: @escaping (UUID) -> Void,
-    onMutate: @escaping () -> Void
+    onMutate: @escaping () -> Void,
+    onWindowChange: @escaping (LedgerWindowSummary) -> Void,
+    onClearFilters: @escaping () -> Void
   ) {
     self.filter = filter
     self.now = now
+    self.windowDays = windowDays
+    self.wholeLedgerSearch = wholeLedgerSearch
+    self.isFiltered = isFiltered
     self.transactionStore = transactionStore
     self.categoryNamesByID = categoryNamesByID
     self.categoryPaletteSlotByID = categoryPaletteSlotByID
@@ -393,6 +466,8 @@ private struct LedgerTransactionList: View {
     self.searchMatches = searchMatches
     self.onSelectTransaction = onSelectTransaction
     self.onMutate = onMutate
+    self.onWindowChange = onWindowChange
+    self.onClearFilters = onClearFilters
     // Only `since` is pushed into the `@Query` itself — see
     // `LedgerFilterPredicate`'s note on why the chip/search criteria are
     // applied below instead, in `filtered`.
@@ -415,36 +490,49 @@ private struct LedgerTransactionList: View {
     return searchMatches.filter { LedgerFilterPredicate.matches($0, filter: chipOnly) }
   }
 
-  /// "No transactions yet" is only true with no query. A query that matches
-  /// nothing gets its own line, so an empty answer is never read as an empty
-  /// ledger.
-  private var emptyMessage: String {
-    LedgerSearch.normalized(filter.searchText) == nil ? "No transactions yet" : "No matches"
+  /// The window, not the search: see `LedgerWindowSummary`. `storeHasRows` is
+  /// read only when the window is empty, since a non-empty window already
+  /// proves the store has rows.
+  private var summary: LedgerWindowSummary {
+    let hasRows = !transactions.isEmpty
+    return LedgerWindowSummary(
+      hasRows: hasRows,
+      storeHasRows: hasRows || storeHasAnyRow,
+      needsReviewCount: transactions.filter { $0.needsReview }.count
+    )
   }
 
-  private var maxAmountMinor: Int {
-    filtered.map { abs($0.amountMinor) }.max() ?? 0
+  /// Whether the whole table holds any transaction. A one-row fetch, so it
+  /// never loads the table (F1). If the fetch throws it answers true, so the
+  /// screen says "Nothing in the last N days" rather than the first-run copy.
+  private var storeHasAnyRow: Bool {
+    var descriptor = FetchDescriptor<NomiCore.Transaction>()
+    descriptor.fetchLimit = 1
+    guard let rows = try? modelContext.fetch(descriptor) else { return true }
+    return !rows.isEmpty
   }
 
   private var groups: [LedgerDayGroup<NomiCore.Transaction>] {
     LedgerGrouping.byDay(filtered)
   }
 
+  private var addAction: (() -> Void)? {
+    guard let addTransaction else { return nil }
+    return { addTransaction() }
+  }
+
   var body: some View {
     Group {
       if groups.isEmpty {
-        emptyState
+        emptyContent
       } else {
         ForEach(groups) { group in
-          Section {
-            ForEach(group.rows) { transaction in
-              row(for: transaction)
-            }
-          } header: {
-            dayHeader(group)
-          }
+          dayGroup(group)
         }
       }
+    }
+    .onChange(of: summary, initial: true) { _, newValue in
+      onWindowChange(newValue)
     }
     // F9: delete used to be immediate, permanent and unconfirmed, with no
     // undo. This is the same `.confirmationDialog` `TransactionDetailScreen`
@@ -468,61 +556,70 @@ private struct LedgerTransactionList: View {
     )
   }
 
+  // MARK: - Day groups
+
+  /// One section per day: a sticky header, then the day's rows in one card
+  /// with 1 pt dividers between them (none after the last).
+  private func dayGroup(_ group: LedgerDayGroup<NomiCore.Transaction>) -> some View {
+    let lastIndex = group.rows.count - 1
+    return Section {
+      VStack(spacing: 0) {
+        ForEach(Array(group.rows.enumerated()), id: \.element.id) { index, transaction in
+          row(for: transaction)
+          if index < lastIndex {
+            Rectangle()
+              .fill(NomiColor.separator)
+              .frame(height: 1)
+          }
+        }
+      }
+      .nomiCard()
+      .padding(.horizontal, NomiSpacing.screenGutter)
+    } header: {
+      dayHeader(group)
+    }
+  }
+
   // MARK: - Day header
 
+  /// The day label on the left, the day's net on the right with its sign
+  /// (A-03.4). Opaque, so content scrolling beneath a pinned header does not
+  /// show through.
   private func dayHeader(_ group: LedgerDayGroup<NomiCore.Transaction>) -> some View {
     HStack {
       Text(LedgerDayHeaderText.string(for: group.day, relativeTo: now))
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textSecondary)
-      Spacer()
+        .nomiTextStyle(.label)
+        .foregroundStyle(NomiColor.dayHeader)
+      Spacer(minLength: NomiSpacing.xs)
       Text(LedgerDayTotalText.string(minor: group.totalMinor))
-        .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 14))
-        .foregroundStyle(NomiColor.textPrimary)
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.inkSecondary)
     }
+    .frame(minHeight: LedgerMetrics.dayHeaderHeight)
     .padding(.horizontal, NomiSpacing.screenGutter)
-    .padding(.vertical, NomiSpacing.xs)
-    // Opaque so pinned content beneath doesn't show through while this
-    // sticks — canvas colour, not the row colour, since the header sits
-    // above the row stack, not inside it.
-    .background(NomiColor.surfaceCanvas)
+    .padding(.top, NomiSpacing.cardGap)
+    .padding(.bottom, NomiSpacing.xs)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(NomiColor.ground)
   }
 
   // MARK: - Rows
 
   private func row(for transaction: NomiCore.Transaction) -> some View {
-    let slot = transaction.categoryID.flatMap { categoryPaletteSlotByID[$0] }
-    let symbolName = transaction.categoryID.flatMap { categorySymbolNameByID[$0] }
-    let barColor = slot.map(paletteSlot) ?? CategoryPalette.other
-    let fraction = LedgerMagnitude.fraction(amountMinor: transaction.amountMinor, maxAmountMinor: maxAmountMinor)
-
-    return Button {
+    Button {
       onSelectTransaction(transaction.id)
     } label: {
-      VStack(alignment: .leading, spacing: 0) {
-        TransactionRow(
-          transaction: transaction,
-          categoryName: transaction.categoryID.flatMap { categoryNamesByID[$0] },
-          accountName: transaction.accountID.flatMap { accountNamesByID[$0] },
-          categorySymbolName: symbolName,
-          categoryPaletteSlot: slot
-        )
-
-        GeometryReader { proxy in
-          Rectangle()
-            .fill(barColor.opacity(0.35))
-            .frame(width: proxy.size.width * max(fraction, 0.02))
-        }
-        .frame(height: 2)
-        .padding(.bottom, NomiSpacing.xxs)
-      }
-      .padding(.horizontal, NomiSpacing.sm)
-      .background(NomiColor.surfaceRow)
-      .nomiCornerRadius(NomiRadius.inset)
+      TransactionRow(
+        transaction: transaction,
+        categoryName: transaction.categoryID.flatMap { categoryNamesByID[$0] },
+        accountName: transaction.accountID.flatMap { accountNamesByID[$0] },
+        categorySymbolName: transaction.categoryID.flatMap { categorySymbolNameByID[$0] },
+        categoryPaletteSlot: transaction.categoryID.flatMap { categoryPaletteSlotByID[$0] }
+      )
+      .frame(maxWidth: .infinity, minHeight: LedgerMetrics.rowHeight, alignment: .leading)
+      .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .padding(.horizontal, NomiSpacing.screenGutter)
-    .padding(.bottom, NomiSpacing.xs)
     .contextMenu {
       if transaction.needsReview {
         Button("Mark reviewed") { markReviewed(transaction.id) }
@@ -531,12 +628,55 @@ private struct LedgerTransactionList: View {
     }
   }
 
-  private var emptyState: some View {
-    Text(emptyMessage)
-      .nomiTextStyle(.caption)
-      .foregroundStyle(NomiColor.textTertiary)
-      .padding(.horizontal, NomiSpacing.screenGutter)
+  // MARK: - Empty states
+
+  /// `.empty` only when the store has no transactions and no filter is set:
+  /// the first-run state. `.nothingRecent` when the window is empty but older
+  /// rows exist. `.noResults` when a chip or the search empties the list. Only
+  /// `.empty` hides the chip row and search bar, in `LedgerScreen`.
+  @ViewBuilder
+  private var emptyContent: some View {
+    switch LedgerEmptyKind.of(
+      hasRows: summary.hasRows, storeHasRows: summary.storeHasRows, isFiltered: isFiltered)
+    {
+    case .empty:
+      NomiEmptyState(
+        systemImage: "receipt",
+        title: "No transactions yet",
+        message: "Transactions appear here once mail is connected, or add one by hand.",
+        actionTitle: addAction == nil ? nil : "Add transaction",
+        action: addAction
+      )
+      .padding(.horizontal, NomiSpacing.md)
       .padding(.top, NomiSpacing.lg)
+    case .nothingRecent:
+      NomiEmptyState(
+        systemImage: "clock",
+        title: LedgerCopy.nothingRecentTitle(days: windowDays),
+        message: LedgerCopy.nothingRecentMessage(wholeLedger: wholeLedgerSearch)
+      )
+      .padding(.horizontal, NomiSpacing.md)
+      .padding(.top, NomiSpacing.lg)
+    case .noResults:
+      noResults
+    case .none:
+      EmptyView()
+    }
+  }
+
+  private var noResults: some View {
+    VStack(spacing: 0) {
+      NomiEmptyState(
+        systemImage: "magnifyingglass",
+        title: LedgerCopy.noResultsTitle(query: filter.searchText),
+        message: "Nothing matches this search and filter."
+      )
+      Button("Clear filters", action: onClearFilters)
+        .buttonStyle(LedgerClearFiltersStyle())
+        .padding(.top, NomiSpacing.md)
+    }
+    .padding(.horizontal, NomiSpacing.md)
+    .padding(.top, NomiSpacing.lg)
   }
 
   // MARK: - Actions
@@ -570,7 +710,7 @@ private struct LedgerTransactionList: View {
 /// `@Query` rather than trapping at runtime the way an uninherited container
 /// would (CI cannot catch that; only opening this preview and tapping a row
 /// can).
-#Preview("Ledger — populated, dark") {
+#Preview("Ledger — populated") {
   NomiTabShell {
     NavigationStack {
       LedgerScreen(
@@ -580,10 +720,10 @@ private struct LedgerTransactionList: View {
     }
   }
   .modelContainer(LedgerPreviewSupport.makeContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Ledger — empty, dark") {
+#Preview("Ledger — empty") {
   NomiTabShell {
     NavigationStack {
       LedgerScreen(
@@ -593,10 +733,10 @@ private struct LedgerTransactionList: View {
     }
   }
   .modelContainer(LedgerPreviewSupport.makeContainer(transactions: []))
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Ledger — single day, dark") {
+#Preview("Ledger — single day") {
   let transactions = LedgerPreviewSupport.singleDayTransactions()
   NomiTabShell {
     NavigationStack {
@@ -607,10 +747,10 @@ private struct LedgerTransactionList: View {
     }
   }
   .modelContainer(LedgerPreviewSupport.makeContainer(transactions: transactions))
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Ledger — month spanning a year boundary, dark") {
+#Preview("Ledger — month spanning a year boundary") {
   let transactions = LedgerPreviewSupport.yearBoundaryTransactions()
   NomiTabShell {
     NavigationStack {
@@ -621,7 +761,7 @@ private struct LedgerTransactionList: View {
     }
   }
   .modelContainer(LedgerPreviewSupport.makeContainer(transactions: transactions))
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
 /// `.constant(true)` rather than exercising the real row's `@State` — that
@@ -629,36 +769,36 @@ private struct LedgerTransactionList: View {
 /// precedent in this codebase for seeding another view's presented-sheet
 /// state from a preview. This shows the exact title/actions the real dialog
 /// presents, standalone.
-#Preview("Ledger — delete confirmation, dark") {
+#Preview("Ledger — delete confirmation") {
   Text("SWIGGY/PAYMENT/REF1")
     .nomiTextStyle(.body)
-    .foregroundStyle(NomiColor.textPrimary)
+    .foregroundStyle(NomiColor.ink)
     .padding()
-    .background(NomiColor.surfaceRow)
+    .background(NomiColor.card)
     .confirmationDialog("Delete this transaction?", isPresented: .constant(true), titleVisibility: .visible) {
       Button("Delete", role: .destructive) {}
       Button("Cancel", role: .cancel) {}
     }
-    .preferredColorScheme(.dark)
+    .preferredColorScheme(.light)
 }
 
-#Preview("Ledger — delete error alert, dark") {
+#Preview("Ledger — delete error alert") {
   Text("SWIGGY/PAYMENT/REF1")
     .nomiTextStyle(.body)
-    .foregroundStyle(NomiColor.textPrimary)
+    .foregroundStyle(NomiColor.ink)
     .padding()
-    .background(NomiColor.surfaceRow)
+    .background(NomiColor.card)
     .alert("Something went wrong", isPresented: .constant(true)) {
       Button("OK", role: .cancel) {}
     } message: {
       Text("Could not delete this transaction.")
     }
-    .preferredColorScheme(.dark)
+    .preferredColorScheme(.light)
 }
 
 /// W1-6: `PreviewData.transactions` includes at least one `needsReview: true`
 /// row, so this chip has something to show without a bespoke fixture.
-#Preview("Ledger — needs review chip selected, dark") {
+#Preview("Ledger — needs review chip selected") {
   NomiTabShell {
     NavigationStack {
       LedgerScreen(
@@ -668,10 +808,12 @@ private struct LedgerTransactionList: View {
     }
   }
   .modelContainer(LedgerPreviewSupport.makeContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Ledger — needs review chip, empty state, dark") {
+/// The no-results state: a chip is selected and it matches nothing. The
+/// artboard's search-and-filter copy shows here too.
+#Preview("Ledger — needs review chip, no results") {
   NomiTabShell {
     NavigationStack {
       LedgerScreen(
@@ -681,10 +823,10 @@ private struct LedgerTransactionList: View {
     }
   }
   .modelContainer(LedgerPreviewSupport.makeContainer(transactions: []))
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Ledger — accessibility 3, dark") {
+#Preview("Ledger — accessibility 3") {
   NomiTabShell {
     NavigationStack {
       LedgerScreen(
@@ -695,5 +837,5 @@ private struct LedgerTransactionList: View {
   }
   .modelContainer(LedgerPreviewSupport.makeContainer())
   .environment(\.dynamicTypeSize, .accessibility3)
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }

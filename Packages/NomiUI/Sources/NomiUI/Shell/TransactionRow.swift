@@ -4,6 +4,10 @@ import SwiftUI
 
 /// A single ledger row. **Never carries `NomiGlow`** — it lives inside a
 /// scrolling list, which is exactly the container that modifier must not enter.
+///
+/// One VoiceOver element per row. The label carries the direction word
+/// ("debit" or "credit") and the unsigned amount, so the sign glyph is never
+/// read as "minus" (DEC-03, A-03.3).
 public struct TransactionRow: View {
   public let transaction: NomiCore.Transaction
   public let categoryName: String?
@@ -31,12 +35,12 @@ public struct TransactionRow: View {
     transaction.direction == .credit
   }
 
-  private var amountText: String {
-    Self.amountText(minor: transaction.amountMinor, direction: transaction.direction, currencyCode: transaction.currencyCode)
-  }
-
   private var subtitle: String {
     Self.subtitle(categoryName: categoryName, accountName: accountName, vpa: transaction.counterpartyVPA)
+  }
+
+  private var displayTitle: String {
+    Self.title(merchantName: transaction.merchantName, descriptionText: transaction.descriptionText, categoryName: categoryName)
   }
 
   /// M6: a P2P/Merchant capsule from `upiKindRaw` — short labels for a
@@ -66,13 +70,38 @@ public struct TransactionRow: View {
     return segments.joined(separator: " · ")
   }
 
-  /// Pure — see `subtitle(categoryName:accountName:vpa:)`. U18: the amount
-  /// goes through `NomiFormatters.amountString(minor:currencyCode:)`, whose
-  /// currency symbol already carries the code — a USD row reads "$12.99",
-  /// never "₹12.99 USD".
-  static func amountText(minor: Int, direction: Direction, currencyCode: String = "INR") -> String {
-    let sign = direction == .credit ? "+" : ""
-    return sign + NomiFormatters.amountString(minor: minor, currencyCode: currencyCode)
+  /// The amount's ink token for a direction (DEC-03): a debit is `ink`, a
+  /// credit is `inkDeep`. Pure, so a test pins the mapping, and a swapped
+  /// mutant fails it.
+  static func amountInk(for direction: Direction) -> AmountInk {
+    direction == .credit ? .inkDeep : .ink
+  }
+
+  /// The two amount inks, kept apart from `Color` so the mapping can be tested.
+  enum AmountInk: Equatable {
+    case ink
+    case inkDeep
+
+    var color: Color {
+      switch self {
+      case .ink: return NomiColor.ink
+      case .inkDeep: return NomiColor.inkDeep
+      }
+    }
+  }
+
+  /// Pure. The row's amount, split for typesetting (DEC-03). A debit is
+  /// negated before formatting, so "−" always prints. A credit is positive
+  /// and carries "+". Zero carries neither. Currency comes through
+  /// `NomiFormatters.amountString`, so a USD row reads "$12.99", never
+  /// "₹12.99 USD".
+  static func amountParts(minor: Int, direction: Direction, currencyCode: String = "INR") -> NomiAmountParts {
+    let magnitude = abs(minor)
+    return NomiAmountFormat.parts(
+      minor: direction == .credit ? magnitude : -magnitude,
+      currencyCode: currencyCode,
+      showPlus: direction == .credit
+    )
   }
 
   /// Pure — see `subtitle(categoryName:accountName:vpa:)`. Fallback order for
@@ -86,6 +115,45 @@ public struct TransactionRow: View {
     return "Manual entry"
   }
 
+  /// Pure. Two letters for an uncategorized row's badge: the first letter of
+  /// each of the first two words, or the first two letters of a single word
+  /// ("Amazon" gives "AM"). Upper-cased.
+  static func initials(for title: String) -> String {
+    let words = title.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    let letters: String
+    if words.count >= 2 {
+      letters = String(words[0].prefix(1)) + String(words[1].prefix(1))
+    } else {
+      letters = String((words.first ?? "").prefix(2))
+    }
+    return letters.uppercased()
+  }
+
+  /// Pure. The row's single VoiceOver label. It carries the direction word and
+  /// the unsigned amount, then the UPI kind, a merge count and "Needs review"
+  /// when they apply. `mergedSourceCount` is nil for a row with one source.
+  static func accessibilityLabel(
+    title: String,
+    subtitle: String,
+    direction: Direction,
+    minor: Int,
+    currencyCode: String = "INR",
+    upiKind: String?,
+    needsReview: Bool,
+    mergedSourceCount: Int?
+  ) -> String {
+    var parts = [
+      title,
+      subtitle,
+      direction == .credit ? "credit" : "debit",
+      NomiFormatters.amountString(minor: abs(minor), currencyCode: currencyCode),
+    ]
+    if let upiKind { parts.append(upiKind) }
+    if let mergedSourceCount { parts.append("Merged from \(mergedSourceCount) sources") }
+    if needsReview { parts.append("Needs review") }
+    return parts.joined(separator: ", ")
+  }
+
   public var body: some View {
     // At accessibility Dynamic Type sizes the amount moves below the merchant
     // line rather than fighting it for horizontal space — the AC requires
@@ -93,7 +161,7 @@ public struct TransactionRow: View {
     Group {
       if dynamicTypeSize.isAccessibilitySize {
         VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-          HStack(alignment: .top, spacing: NomiSpacing.sm) {
+          HStack(alignment: .center, spacing: NomiSpacing.sm) {
             iconTile
             header
           }
@@ -101,7 +169,7 @@ public struct TransactionRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
       } else {
-        HStack(alignment: .top, spacing: NomiSpacing.sm) {
+        HStack(alignment: .center, spacing: NomiSpacing.sm) {
           iconTile
           header
           Spacer(minLength: NomiSpacing.xs)
@@ -112,16 +180,27 @@ public struct TransactionRow: View {
       }
     }
     .padding(.vertical, NomiSpacing.xs)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(
+      Self.accessibilityLabel(
+        title: displayTitle,
+        subtitle: subtitle,
+        direction: transaction.direction,
+        minor: transaction.amountMinor,
+        currencyCode: transaction.currencyCode,
+        upiKind: upiKindCapsuleText,
+        needsReview: transaction.needsReview,
+        mergedSourceCount: transaction.mergedCount > 1 ? transaction.sourceRefs.count : nil
+      )
+    )
   }
 
   private var header: some View {
     VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
       HStack(spacing: NomiSpacing.xxs) {
-        Text(
-          Self.title(merchantName: transaction.merchantName, descriptionText: transaction.descriptionText, categoryName: categoryName)
-        )
-          .nomiTextStyle(.body)
-          .foregroundStyle(NomiColor.textPrimary)
+        Text(displayTitle)
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(NomiColor.ink)
           .fixedSize(horizontal: false, vertical: true)
         if let upiKindCapsuleText {
           upiKindCapsule(text: upiKindCapsuleText)
@@ -134,57 +213,89 @@ public struct TransactionRow: View {
         }
       }
       Text(subtitle)
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.textTertiary)
+        .nomiTextStyle(.footnote)
+        .foregroundStyle(NomiColor.inkSecondary)
         .fixedSize(horizontal: false, vertical: true)
     }
   }
 
+  /// The amount in one line, typeset like `NomiAmountText` (sign, integer,
+  /// dimmed decimals) but in the direction's colour: a debit is `ink`, a
+  /// credit is `inkDeep` at SemiBold. `NomiAmountText` paints `ink` for every
+  /// amount and has no colour parameter, so the split is done here.
   private var amountView: some View {
-    Text(amountText)
-      .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 16))
-      .foregroundStyle(isCredit ? NomiColor.creditText : NomiColor.debitText)
+    let parts = Self.amountParts(
+      minor: transaction.amountMinor, direction: transaction.direction, currencyCode: transaction.currencyCode)
+    let style: NomiTextStyle = isCredit ? .amountStrong : .amount
+    let color = Self.amountInk(for: transaction.direction).color
+    return (Text(parts.sign + parts.integer)
+      .font(style.font)
+      .tracking(style.tracking)
+      .foregroundStyle(color)
+      + Text(parts.decimals)
+      .font(style.font)
+      .tracking(style.tracking)
+      .foregroundStyle(color.opacity(NomiColor.decimalOpacityGround)))
+      .lineLimit(1)
+      .minimumScaleFactor(0.5)
       .fixedSize(horizontal: false, vertical: true)
   }
 
-  /// Sized to the widest realistic amount, not a sample row — Montserrat is
-  /// wider than Inter at the same size, so this column cannot assume v2's width.
+  /// Sized to the widest realistic amount, not a sample row, at the credit
+  /// weight (SemiBold), the wider of the two.
   private var amountColumnWidth: CGFloat {
-    let font = TabularFigures.platformFont(name: NomiFont.montserratMedium, size: 16)
+    let font = TabularFigures.platformFont(name: NomiFont.interSemiBold, size: 16)
     let attributes: [NSAttributedString.Key: Any] = [.font: font]
     let size = (NomiFormatters.widestRealisticAmount as NSString).size(withAttributes: attributes)
     return size.width
   }
 
+  /// The category's tinted tile (`.neutral`, 40 pt). An uncategorized row has
+  /// no category to show, so it gets its initials on `secondaryFill` instead.
+  @ViewBuilder
   private var iconTile: some View {
-    NomiCategoryBadge(symbolName: categorySymbolName ?? "questionmark", paletteSlot: categoryPaletteSlot, size: 32)
+    if categoryName == nil {
+      Text(Self.initials(for: displayTitle))
+        .nomiTextStyle(.label)
+        .foregroundStyle(NomiColor.inkSecondary)
+        .frame(width: 40, height: 40)
+        .background(Circle().fill(NomiColor.secondaryFill))
+        .accessibilityHidden(true)
+    } else {
+      NomiCategoryBadge(
+        symbolName: categorySymbolName ?? "questionmark",
+        paletteSlot: categoryPaletteSlot,
+        size: 40,
+        style: .neutral
+      )
+    }
   }
 
-  /// Same capsule shape as `mergeFlag` — glass fill, no new token.
+  /// Same capsule shape as `mergeFlag` — secondary fill, no new token.
   private func upiKindCapsule(text: String) -> some View {
     Text(text)
       .nomiTextStyle(.caption)
-      .foregroundStyle(NomiColor.textTertiary)
+      .foregroundStyle(NomiColor.inkSecondary)
       .padding(.horizontal, NomiSpacing.xxs)
-      .background(NomiColor.glassFill)
+      .background(NomiColor.secondaryFill)
       .clipShape(Capsule(style: .continuous))
   }
 
   private var mergeFlag: some View {
     Text("\(transaction.mergedCount)")
       .nomiTextStyle(.caption)
-      .foregroundStyle(NomiColor.textTertiary)
+      .foregroundStyle(NomiColor.inkSecondary)
       .padding(.horizontal, NomiSpacing.xxs)
-      .background(NomiColor.glassFill)
+      .background(NomiColor.secondaryFill)
       .clipShape(Capsule(style: .continuous))
-      .accessibilityLabel("Merged from \(transaction.sourceRefs.count) sources")
+      .accessibilityHidden(true)
   }
 
   private var reviewFlag: some View {
     Circle()
       .fill(CategoryPalette.other)
       .frame(width: 6, height: 6)
-      .accessibilityLabel("Needs review")
+      .accessibilityHidden(true)
   }
 }
 
@@ -197,8 +308,8 @@ public struct TransactionRow: View {
     categoryPaletteSlot: 0
   )
   .padding()
-  .background(NomiColor.surfaceRow)
-  .preferredColorScheme(.dark)
+  .background(NomiColor.card)
+  .preferredColorScheme(.light)
 }
 
 #Preview("Uncategorized-only") {
@@ -208,8 +319,8 @@ public struct TransactionRow: View {
     accountName: nil
   )
   .padding()
-  .background(NomiColor.surfaceRow)
-  .preferredColorScheme(.dark)
+  .background(NomiColor.card)
+  .preferredColorScheme(.light)
 }
 
 #Preview("Merged row — flag and both sources") {
@@ -224,11 +335,11 @@ public struct TransactionRow: View {
     )
     Text(merged.sourceRefs.map { $0.source.rawValue }.joined(separator: " + "))
       .nomiTextStyle(.caption)
-      .foregroundStyle(NomiColor.textTertiary)
+      .foregroundStyle(NomiColor.inkSecondary)
   }
   .padding()
-  .background(NomiColor.surfaceRow)
-  .preferredColorScheme(.dark)
+  .background(NomiColor.card)
+  .preferredColorScheme(.light)
 }
 
 /// `PreviewData.transactions`' main seed rows already carry `upiKindRaw:
@@ -259,15 +370,15 @@ private enum TransactionRowUPIFixtures {
   }()
 }
 
-#Preview("UPI — P2P row, dark") {
+#Preview("UPI — P2P row") {
   TransactionRow(
     transaction: TransactionRowUPIFixtures.p2p,
     categoryName: nil,
     accountName: "HDFC •• 4471"
   )
   .padding()
-  .background(NomiColor.surfaceRow)
-  .preferredColorScheme(.dark)
+  .background(NomiColor.card)
+  .preferredColorScheme(.light)
 }
 
 /// U18/M4 fixtures — a non-INR row for the currency formatter and a blank
@@ -313,7 +424,7 @@ private enum TransactionRowCurrencyFixtures {
   }()
 }
 
-#Preview("USD row, dark") {
+#Preview("USD row") {
   TransactionRow(
     transaction: TransactionRowCurrencyFixtures.usd,
     categoryName: "Shopping",
@@ -322,22 +433,22 @@ private enum TransactionRowCurrencyFixtures {
     categoryPaletteSlot: 1
   )
   .padding()
-  .background(NomiColor.surfaceRow)
-  .preferredColorScheme(.dark)
+  .background(NomiColor.card)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Blank-title manual row, dark") {
+#Preview("Blank-title manual row") {
   TransactionRow(
     transaction: TransactionRowCurrencyFixtures.blankTitleManual,
     categoryName: nil,
     accountName: nil
   )
   .padding()
-  .background(NomiColor.surfaceRow)
-  .preferredColorScheme(.dark)
+  .background(NomiColor.card)
+  .preferredColorScheme(.light)
 }
 
-#Preview("UPI — merchant row, dark") {
+#Preview("Merchant row") {
   TransactionRow(
     transaction: PreviewData.transactions.first { $0.mergedCount == 1 && !$0.needsReview }!,
     categoryName: "Food & Dining",
@@ -346,8 +457,8 @@ private enum TransactionRowCurrencyFixtures {
     categoryPaletteSlot: 0
   )
   .padding()
-  .background(NomiColor.surfaceRow)
-  .preferredColorScheme(.dark)
+  .background(NomiColor.card)
+  .preferredColorScheme(.light)
 }
 
 #Preview("Accessibility 3") {
@@ -359,7 +470,7 @@ private enum TransactionRowCurrencyFixtures {
     categoryPaletteSlot: 0
   )
   .padding()
-  .background(NomiColor.surfaceRow)
+  .background(NomiColor.card)
   .environment(\.dynamicTypeSize, .accessibility3)
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }

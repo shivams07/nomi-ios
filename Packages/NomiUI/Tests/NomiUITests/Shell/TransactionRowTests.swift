@@ -18,16 +18,6 @@ final class TransactionRowTests: XCTestCase {
     XCTAssertTrue(subtitle.contains("Uncategorized"))
   }
 
-  func testCreditGetsPlusPrefix() {
-    let text = TransactionRow.amountText(minor: 100, direction: .credit)
-    XCTAssertTrue(text.hasPrefix("+"))
-  }
-
-  func testDebitHasNoSignPrefix() {
-    let text = TransactionRow.amountText(minor: 100, direction: .debit)
-    XCTAssertFalse(text.hasPrefix("+"))
-  }
-
   // MARK: - M6: UPI surfacing
 
   func testSubtitleAppendsVPAAsThirdSegmentWhenPresent() {
@@ -42,22 +32,44 @@ final class TransactionRowTests: XCTestCase {
 
   // MARK: - U18: currency symbol carries the code, not a trailing suffix
 
-  func testAmountTextForAUSDRowCarriesNoRupeeSymbolAndNoTrailingCode() {
-    let text = TransactionRow.amountText(minor: 1299, direction: .debit, currencyCode: "USD")
+  /// The amount without its sign: integer and decimals joined.
+  private func digits(_ parts: NomiAmountParts) -> String {
+    parts.integer + parts.decimals
+  }
+
+  func testAmountPartsForAUSDRowCarryNoRupeeSymbolAndNoTrailingCode() {
+    let text = digits(TransactionRow.amountParts(minor: 1299, direction: .debit, currencyCode: "USD"))
     XCTAssertFalse(text.contains("₹"))
     XCTAssertFalse(text.hasSuffix(" USD"))
     XCTAssertEqual(text, NomiFormatters.amountString(minor: 1299, currencyCode: "USD"))
   }
 
-  func testAmountTextOmitsSuffixForINR() {
-    let text = TransactionRow.amountText(minor: 1299, direction: .debit, currencyCode: "INR")
+  func testAmountPartsOmitTheSuffixForINR() {
+    let text = digits(TransactionRow.amountParts(minor: 1299, direction: .debit, currencyCode: "INR"))
     XCTAssertEqual(text, NomiFormatters.amountString(minor: 1299))
   }
 
-  func testAmountTextDefaultsToINRWhenCurrencyCodeOmitted() {
-    let withDefault = TransactionRow.amountText(minor: 1299, direction: .debit)
-    let withExplicitINR = TransactionRow.amountText(minor: 1299, direction: .debit, currencyCode: "INR")
+  func testAmountPartsDefaultToINRWhenCurrencyCodeOmitted() {
+    let withDefault = TransactionRow.amountParts(minor: 1299, direction: .debit)
+    let withExplicitINR = TransactionRow.amountParts(minor: 1299, direction: .debit, currencyCode: "INR")
     XCTAssertEqual(withDefault, withExplicitINR)
+  }
+
+  // MARK: - LG: debit ink and credit ink (DEC-03)
+
+  /// Lim's mutant M3 swapped these two and survived. Pinning the mapping
+  /// directly fails on any swap.
+  func testDebitAmountIsInk() {
+    XCTAssertEqual(TransactionRow.amountInk(for: .debit), .ink)
+  }
+
+  func testCreditAmountIsInkDeep() {
+    XCTAssertEqual(TransactionRow.amountInk(for: .credit), .inkDeep)
+  }
+
+  func testEachInkResolvesToItsToken() {
+    XCTAssertEqual(TransactionRow.AmountInk.ink.color, NomiColor.ink)
+    XCTAssertEqual(TransactionRow.AmountInk.inkDeep.color, NomiColor.inkDeep)
   }
 
   func testUPIKindCapsuleTextForP2P() {
@@ -92,5 +104,83 @@ final class TransactionRowTests: XCTestCase {
   func testTitleFallsBackToManualEntryWhenEverythingIsBlank() {
     let title = TransactionRow.title(merchantName: nil, descriptionText: "", categoryName: nil)
     XCTAssertEqual(title, "Manual entry")
+  }
+
+  // MARK: - LG: signed amounts (DEC-03 / A-03.2)
+
+  func testDebitPartsCarryAUnicodeMinusSign() {
+    let parts = TransactionRow.amountParts(minor: 648_00, direction: .debit)
+    XCTAssertEqual(parts.sign, "\u{2212}")
+    XCTAssertEqual(parts.integer + parts.decimals, NomiFormatters.amountString(minor: 648_00))
+  }
+
+  func testCreditPartsCarryAPlusSign() {
+    let parts = TransactionRow.amountParts(minor: 38_500_00, direction: .credit)
+    XCTAssertEqual(parts.sign, "+")
+  }
+
+  func testZeroCarriesNoSignInEitherDirection() {
+    XCTAssertEqual(TransactionRow.amountParts(minor: 0, direction: .debit).sign, "")
+    XCTAssertEqual(TransactionRow.amountParts(minor: 0, direction: .credit).sign, "")
+  }
+
+  func testNegativeStoredMinorStillPrintsOneMinusForADebit() {
+    let parts = TransactionRow.amountParts(minor: -1_299, direction: .debit)
+    XCTAssertEqual(parts.sign, "\u{2212}")
+    XCTAssertFalse(parts.integer.contains("\u{2212}"))
+  }
+
+  func testLakhValueDebitSplitsIntegerAndDecimals() {
+    let parts = TransactionRow.amountParts(minor: 1_148_00, direction: .debit)
+    XCTAssertEqual(parts.sign, "\u{2212}")
+    XCTAssertTrue(parts.decimals.hasSuffix("00"))
+  }
+
+  // MARK: - LG: one accessibility element with a direction word
+
+  func testDebitLabelSaysDebitAndNeverMinus() {
+    let label = TransactionRow.accessibilityLabel(
+      title: "Swiggy", subtitle: "Food · HDFC", direction: .debit, minor: 648_00,
+      upiKind: nil, needsReview: false, mergedSourceCount: nil
+    )
+    XCTAssertTrue(label.contains("debit"))
+    XCTAssertFalse(label.contains("credit"))
+    XCTAssertFalse(label.contains("\u{2212}"))
+    XCTAssertTrue(label.hasPrefix("Swiggy, Food · HDFC, debit, "))
+  }
+
+  func testCreditLabelSaysCredit() {
+    let label = TransactionRow.accessibilityLabel(
+      title: "Acme Payroll", subtitle: "Salary", direction: .credit, minor: 38_500_00,
+      upiKind: nil, needsReview: false, mergedSourceCount: nil
+    )
+    XCTAssertTrue(label.contains("credit"))
+    XCTAssertFalse(label.contains("debit"))
+  }
+
+  func testLabelAddsReviewAndMergeFactsWhenPresent() {
+    let label = TransactionRow.accessibilityLabel(
+      title: "Amazon", subtitle: "Uncategorized", direction: .debit, minor: 1_299_00,
+      upiKind: "Merchant", needsReview: true, mergedSourceCount: 2
+    )
+    XCTAssertTrue(label.hasSuffix("Merchant, Merged from 2 sources, Needs review"))
+  }
+
+  // MARK: - LG: uncategorized initials
+
+  func testInitialsTakeFirstLetterOfTwoWords() {
+    XCTAssertEqual(TransactionRow.initials(for: "Acme Payroll"), "AP")
+  }
+
+  func testInitialsTakeTwoLettersOfOneWord() {
+    XCTAssertEqual(TransactionRow.initials(for: "Amazon"), "AM")
+  }
+
+  func testInitialsAreUppercased() {
+    XCTAssertEqual(TransactionRow.initials(for: "swiggy"), "SW")
+  }
+
+  func testInitialsIgnoreExtraWhitespace() {
+    XCTAssertEqual(TransactionRow.initials(for: "  Manual   entry "), "ME")
   }
 }
