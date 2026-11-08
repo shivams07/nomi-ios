@@ -104,3 +104,25 @@ enum UnmatchedSenderDisplay {
     senders.map { "\($0.domain) — \($0.count)" }
   }
 }
+
+/// ST copy that the Settings screen builds from data, kept pure so it can be
+/// tested without rendering.
+enum SettingsLogic {
+  /// The disclosure row under the Mail card (SIMP §3 item 17): "Not matched (2)".
+  /// The screen shows the row only when `count` is above zero.
+  static func notMatchedTitle(count: Int) -> String {
+    "Not matched (\(count))"
+  }
+
+  /// The attention row's title when mail is not connected (artboard states
+  /// ST Edges). `nil` for `.connected`, which shows the address and status
+  /// instead.
+  static func attentionTitle(for state: MailConnectionState) -> String? {
+    switch state {
+    case .connected: return nil
+    case .disconnected: return "Mail disconnected"
+    case .connecting: return "Connecting…"
+    case .failed: return "Couldn’t reach your mail"
+    }
+  }
+}

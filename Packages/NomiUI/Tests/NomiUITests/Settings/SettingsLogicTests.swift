@@ -234,4 +234,43 @@ final class SettingsLogicTests: XCTestCase {
       XCTAssertNil(StorageMode.cloudKitPaused(reason).reason)
     }
   }
+
+  // MARK: - ST: Not matched disclosure and the mail attention row
+
+  func testNotMatchedTitleCarriesTheCount() {
+    XCTAssertEqual(SettingsLogic.notMatchedTitle(count: 2), "Not matched (2)")
+    XCTAssertEqual(SettingsLogic.notMatchedTitle(count: 1), "Not matched (1)")
+  }
+
+  func testAttentionTitleForEachNotConnectedState() {
+    XCTAssertEqual(SettingsLogic.attentionTitle(for: .disconnected), "Mail disconnected")
+    XCTAssertEqual(SettingsLogic.attentionTitle(for: .connecting), "Connecting…")
+    XCTAssertEqual(SettingsLogic.attentionTitle(for: .failed(.connectionFailed)), "Couldn’t reach your mail")
+    XCTAssertEqual(SettingsLogic.attentionTitle(for: .failed(.authenticationFailed)), "Couldn’t reach your mail")
+  }
+
+  func testConnectedMailHasNoAttentionTitle() {
+    XCTAssertNil(SettingsLogic.attentionTitle(for: .connected(address: "a@example.com", lastSync: nil)))
+  }
+}
+
+// MARK: - ST / A-07: the About privacy statement
+
+final class AboutPrivacyTextTests: XCTestCase {
+  /// DEC-07 (nomi-ios-decisions.md), verbatim. A change to `AboutScreen.privacyText`
+  /// must come with a re-read of DEC-07 and a fresh App Store privacy check.
+  private let dec07 =
+    "Nomi reads transaction emails from the mail account you connect and keeps your transactions on this device. If you use iCloud, they also sync to your private iCloud storage so your other devices can show them. Your mail password stays in this device's Keychain and is sent only to your mail provider to sign in. It does not sync, so you enter it again on each device. Nomi does not send your data to its developer."
+
+  func testPrivacyTextIsTheDEC07SentenceVerbatim() {
+    XCTAssertEqual(AboutScreen.privacyText, dec07)
+  }
+
+  /// The shipped sentence claimed the mail credential "never leave[s] your
+  /// device" except through iCloud. Both halves are false against the code
+  /// (DEC-07, Problem item 2), so neither may come back.
+  func testPrivacyTextDoesNotRestoreTheShippedClaim() {
+    XCTAssertFalse(AboutScreen.privacyText.contains("never leave"))
+    XCTAssertFalse(AboutScreen.privacyText.contains("mail credentials"))
+  }
 }
