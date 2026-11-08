@@ -84,4 +84,13 @@ public enum PreferenceKey {
   /// Read by `AppSyncCoordinator` to decide whether to ask iOS for the backfill
   /// processing task. See `CursorPersistingMailConnectionService`.
   public static let mailBackfillUnfinished = "nomi.mailBackfillUnfinished"
+
+  /// Set once a `connect` has succeeded and never cleared, not even by
+  /// `disconnect`. Read back as `MailConnectionHistory.hasEverConnected`.
+  public static let mailHasConnected = "nomi.mailHasConnected"
+
+  /// The last successful sync or backfill, JSON-encoded as a `Date`. Written
+  /// only on success, and left alone by `disconnect`. Read back as
+  /// `MailConnectionHistory.lastSync`. See `CursorPersistingMailConnectionService`.
+  public static let mailLastSyncAt = "nomi.mailLastSyncAt"
 }

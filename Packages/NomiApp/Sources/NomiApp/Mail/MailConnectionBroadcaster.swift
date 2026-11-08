@@ -135,6 +135,10 @@ public final class BroadcastingMailConnectionService: MailConnectionService, @un
   public var state: AsyncStream<MailConnectionState> { stateHub.stream() }
   public var backfillProgress: AsyncStream<BackfillProgress> { progressHub.stream() }
 
+  /// Forwarded, not replayed: history is read from the store on every access,
+  /// so there is no latest value to hand to a new subscriber.
+  public var history: MailConnectionHistory { upstream.history }
+
   public func connect(_ credentials: IMAPCredentials) async throws {
     try await upstream.connect(credentials)
   }

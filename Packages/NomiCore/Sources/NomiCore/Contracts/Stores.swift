@@ -206,13 +206,44 @@ public protocol PostCommitObserver: AnyObject, Sendable {
   func didCommit(affectedCategoryIDs: Set<UUID>) async
 }
 
+/// What the app remembers about a mailbox across launches. `MailConnectionState`
+/// is in memory and starts at `.disconnected` on every launch, so without this
+/// nothing can say "Last synced three days ago" after a relaunch.
+///
+/// Both values are history, not status: `disconnect` leaves them alone, and a
+/// failed sync leaves `lastSync` at the last one that succeeded.
+public struct MailConnectionHistory: Sendable, Equatable {
+  /// A `connect` has completed successfully on this device at least once.
+  public let hasEverConnected: Bool
+  /// The last successful `syncNow` or `startBackfill`, by the injected clock.
+  public let lastSync: Date?
+
+  public init(hasEverConnected: Bool, lastSync: Date?) {
+    self.hasEverConnected = hasEverConnected
+    self.lastSync = lastSync
+  }
+
+  /// A fresh install: never connected, never synced.
+  public static let never = MailConnectionHistory(hasEverConnected: false, lastSync: nil)
+}
+
 public protocol MailConnectionService: AnyObject, Sendable {
   var state: AsyncStream<MailConnectionState> { get }
   var backfillProgress: AsyncStream<BackfillProgress> { get }
+  /// Synchronous on purpose: the screens read it once, before their state loop
+  /// starts, and the value is already on disk.
+  var history: MailConnectionHistory { get }
   func connect(_ credentials: IMAPCredentials) async throws
   func disconnect() async throws
   @discardableResult func syncNow() async throws -> SyncSummary
   @discardableResult func startBackfill(months: Int) async throws -> SyncSummary
+}
+
+/// The default for a conformer that keeps no history. Every conformer that
+/// predates `history` (the fakes, the UI test doubles) inherits it, so none of
+/// them had to be edited to add the requirement.
+extension MailConnectionService {
+  public var history: MailConnectionHistory { .never }
 }
 
 public protocol FileImportService: AnyObject, Sendable {

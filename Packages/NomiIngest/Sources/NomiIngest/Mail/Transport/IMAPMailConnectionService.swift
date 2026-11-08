@@ -68,9 +68,16 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
   ///
   /// A credential that connects once and is not persisted leaves the user
   /// "connected" until the app is killed and silently disconnected afterwards.
-  /// If the connection then fails, the credential is removed again — storing a
-  /// password that was just rejected only produces a background sync that fails
-  /// forever without telling anyone.
+  /// If the server then rejects the password, the credential is removed again:
+  /// storing a password that was just rejected only produces a background sync
+  /// that fails forever without telling anyone.
+  ///
+  /// **Only a rejected password is removed.** `connect` also runs at every
+  /// launch with the stored credential (`MailStack.reconnectFromKeychain`), so
+  /// removing it on any failure meant an offline launch, or a mail server that
+  /// was down, silently erased the saved password. A transport failure says
+  /// nothing about the password, so the stored one stays. See
+  /// `meansThePasswordIsBad`.
   public func connect(_ credentials: IMAPCredentials) async throws {
     stateContinuation.yield(.connecting)
 
@@ -78,7 +85,9 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
       try self.credentials.save(credentials)
       try await fetcher.connect(credentials)
     } catch {
-      try? self.credentials.delete()
+      if Self.meansThePasswordIsBad(error) {
+        try? self.credentials.delete()
+      }
       setConnected(nil)
       stateContinuation.yield(.failed(mailError(from: error)))
       throw error
@@ -191,6 +200,28 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
 
       try await fetcher.connect(stored)
       return try await work()
+    }
+  }
+
+  /// Whether the failure is a judgement on the password itself: the server said
+  /// it is wrong (`authenticationFailed`), or the transport guard refused it
+  /// before anything was sent (`invalidCredentials`).
+  ///
+  /// Everything else leaves the stored credential alone. `notConnected`,
+  /// `connectionClosed` and `serverClosedMidCommand` are the server or the
+  /// network; `commandFailed` and `malformedResponse` are the server being
+  /// odd; and an error that is not an `IMAPTransportError` at all, such as the
+  /// channel failing to open while offline, says nothing about the password.
+  /// Deleting on any of those is how a launch with no network erased it.
+  ///
+  /// Exhaustive on purpose: a new transport case has to be classified here.
+  private static func meansThePasswordIsBad(_ error: Error) -> Bool {
+    guard let transportError = error as? IMAPTransportError else { return false }
+    switch transportError {
+    case .authenticationFailed, .invalidCredentials:
+      return true
+    case .notConnected, .connectionClosed, .serverClosedMidCommand, .commandFailed, .malformedResponse:
+      return false
     }
   }
 
