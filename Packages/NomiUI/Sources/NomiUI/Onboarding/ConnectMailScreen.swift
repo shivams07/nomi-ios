@@ -21,15 +21,21 @@ public struct ConnectMailScreen: View {
   @State private var isConnecting = false
   @State private var didAttemptOnce = false
   @State private var errorMessage: String?
-  /// What this screen has seen of the connection. The state stream carries
+  /// What this screen knows of the connection. The state stream carries
   /// `lastSync` only while connected, so these are what the attention card
-  /// needs to say "Last synced …" after a disconnect.
-  @State private var hadConnection = false
+  /// needs to say "Last synced …" after a disconnect. Seeded from the persisted
+  /// history in `init`, so a relaunch does not start from "never connected".
+  @State private var hadConnection: Bool
   @State private var lastKnownSync: Date?
 
   public init(mailConnectionService: MailConnectionService, onBackfillStart: (() -> Void)? = nil) {
     self.mailConnectionService = mailConnectionService
     self.onBackfillStart = onBackfillStart
+    // `history` is synchronous and already on disk; read it before the state
+    // loop in `.task` starts, so the first render carries the right card.
+    let seed = MailAttentionSeed(history: mailConnectionService.history)
+    _hadConnection = State(initialValue: seed.hadConnection)
+    _lastKnownSync = State(initialValue: seed.lastSync)
   }
 
   private var canConnect: Bool {

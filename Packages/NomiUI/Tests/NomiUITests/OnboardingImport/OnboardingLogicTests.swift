@@ -219,6 +219,63 @@ final class OnboardingLogicTests: XCTestCase {
     XCTAssertEqual(copy.message, SyncStatusRow.failureMessage(for: .authenticationFailed))
   }
 
+  // MARK: - Seeded from persisted history (OB2, A-20 item 10)
+
+  func testSeedFromAFreshInstallHasNoPriorConnection() {
+    let seed = MailAttentionSeed(history: .never)
+    XCTAssertFalse(seed.hadConnection)
+    XCTAssertNil(seed.lastSync)
+  }
+
+  func testSeedCarriesEverConnectedAndLastSyncFromHistory() {
+    let lastSync = Date(timeIntervalSince1970: 1_750_000_000)
+    let seed = MailAttentionSeed(history: MailConnectionHistory(hasEverConnected: true, lastSync: lastSync))
+    XCTAssertTrue(seed.hadConnection)
+    XCTAssertEqual(seed.lastSync, lastSync)
+  }
+
+  /// A-20 item 10: `.disconnected` with history (ever connected, last sync three
+  /// days ago) yields the card with "Last synced 3 days ago.".
+  func testDisconnectedWithHistoryShowsTheCardWithLastSyncThreeDaysAgo() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let seed = MailAttentionSeed(
+      history: MailConnectionHistory(hasEverConnected: true, lastSync: now.addingTimeInterval(-3 * 86_400))
+    )
+    let copy = try XCTUnwrap(
+      MailAttentionLogic.copy(for: .disconnected, hadConnection: seed.hadConnection, lastSync: seed.lastSync, now: now)
+    )
+    XCTAssertEqual(copy.title, "Mail disconnected")
+    XCTAssertEqual(copy.message, "Last synced 3 days ago. Connect again to keep your numbers current.")
+  }
+
+  /// A-20 item 10: `.disconnected` with no history yields no card.
+  func testDisconnectedWithNoHistoryShowsNoCard() {
+    let seed = MailAttentionSeed(history: .never)
+    XCTAssertNil(
+      MailAttentionLogic.copy(for: .disconnected, hadConnection: seed.hadConnection, lastSync: seed.lastSync, now: Date())
+    )
+  }
+
+  /// Ever connected but never synced: the card still shows, without the sync sentence.
+  func testDisconnectedWithHistoryButNoSyncOmitsTheSyncSentence() throws {
+    let seed = MailAttentionSeed(history: MailConnectionHistory(hasEverConnected: true, lastSync: nil))
+    let copy = try XCTUnwrap(
+      MailAttentionLogic.copy(for: .disconnected, hadConnection: seed.hadConnection, lastSync: seed.lastSync, now: Date())
+    )
+    XCTAssertEqual(copy.message, "Connect again to keep your numbers current.")
+  }
+
+  /// A-20 item 10: `.failed` is unchanged. Its copy does not depend on history.
+  func testFailedCopyIsTheSameWhetherOrNotHistoryIsSeeded() {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let fresh = MailAttentionLogic.copy(for: .failed(.connectionFailed), hadConnection: false, lastSync: nil, now: now)
+    let seeded = MailAttentionLogic.copy(
+      for: .failed(.connectionFailed), hadConnection: true, lastSync: now.addingTimeInterval(-86_400), now: now
+    )
+    XCTAssertNotNil(fresh)
+    XCTAssertEqual(fresh, seeded)
+  }
+
   // MARK: - Credential claim (DEC-07, checked against the code)
 
   /// Pins the caption to Amendment 4 (R2), character for character, and to the
