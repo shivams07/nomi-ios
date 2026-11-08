@@ -88,10 +88,18 @@ public struct CategoriesScreen: View {
       }
     }
     .sheet(isPresented: $isCreating) {
-      CategoryEditorSheet(categoryStore: categoryStore, category: nil)
+      CategoryEditorSheet(
+        categoryStore: categoryStore,
+        category: nil,
+        existingNames: categories.map(\.name)
+      )
     }
     .sheet(item: $editingCategory) { category in
-      CategoryEditorSheet(categoryStore: categoryStore, category: category)
+      CategoryEditorSheet(
+        categoryStore: categoryStore,
+        category: category,
+        existingNames: categories.filter { $0.id != category.id }.map(\.name)
+      )
     }
     .alert(
       CategoryDeletion.blockedTitle,
@@ -209,16 +217,20 @@ public struct CategoriesScreen: View {
 
 private struct CategoriesScreenDeleteFailure: Error {}
 
-/// Delete always throws, so swiping to delete a non-system category and
-/// confirming the alert in the canvas exercises the `deleteErrorMessage`
-/// alert — the UI-side `CategoryDeletion.isDeletable` gate only covers the
-/// system-category case, not a genuine store failure like this one.
+/// Delete and update always throw, so swiping to delete a non-system category
+/// and confirming the alert in the canvas exercises the `deleteErrorMessage`
+/// alert, and saving in the editor exercises its inline save error. The
+/// UI-side `CategoryDeletion.isDeletable` gate only covers the system-category
+/// case, not a genuine store failure like this one.
 @MainActor
 private final class AlwaysFailingCategoryStore: CategoryStore {
   func create(name: String, symbolName: String, paletteSlot: Int) throws -> NomiCore.Category {
     NomiCore.Category(name: name, symbolName: symbolName, paletteSlot: paletteSlot)
   }
   func rename(_ id: UUID, to name: String) throws {}
+  func update(_ id: UUID, name: String, symbolName: String, paletteSlot: Int) throws {
+    throw CategoriesScreenDeleteFailure()
+  }
   func delete(_ id: UUID) throws { throw CategoriesScreenDeleteFailure() }
 }
 

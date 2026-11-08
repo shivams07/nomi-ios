@@ -24,18 +24,11 @@ public protocol CategoryStore: AnyObject {
   /// Like `rename`, it reports no category as moved, so the observer is not
   /// called.
   ///
-  /// This is a requirement with a default in the extension below, not a bare
-  /// requirement. A preview conformer in `NomiUI` cannot change in this unit,
-  /// and a bare requirement would stop that target compiling. A conformer that
-  /// does not implement `update` throws `CategoryUpdateError.notSupported`.
+  /// A strict requirement: every conformer implements it. A conformer that
+  /// cannot edit must throw rather than drop the edit, so the editor can show
+  /// the refusal.
   func update(_ id: UUID, name: String, symbolName: String, paletteSlot: Int) throws
   func delete(_ id: UUID) throws
-}
-
-extension CategoryStore {
-  public func update(_ id: UUID, name: String, symbolName: String, paletteSlot: Int) throws {
-    throw CategoryUpdateError.notSupported
-  }
 }
 
 @MainActor

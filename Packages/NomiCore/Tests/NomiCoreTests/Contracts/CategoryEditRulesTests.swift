@@ -96,25 +96,3 @@ struct CategoryEditRulesTests {
     }
   }
 }
-
-/// A conformer that never implements `update`. The protocol default must throw
-/// rather than succeed silently, so an edit can never vanish unreported.
-@MainActor
-private final class StoreWithoutUpdate: CategoryStore {
-  func create(name: String, symbolName: String, paletteSlot: Int) throws -> NomiCore.Category {
-    NomiCore.Category(name: name, symbolName: symbolName, paletteSlot: paletteSlot)
-  }
-  func rename(_ id: UUID, to name: String) throws {}
-  func delete(_ id: UUID) throws {}
-}
-
-@MainActor
-struct CategoryStoreUpdateDefaultTests {
-
-  @Test func aConformerThatDoesNotImplementUpdateThrowsNotSupported() {
-    let store: CategoryStore = StoreWithoutUpdate()
-    #expect(throws: CategoryUpdateError.notSupported) {
-      try store.update(UUID(), name: "Food", symbolName: "tag", paletteSlot: 0)
-    }
-  }
-}
