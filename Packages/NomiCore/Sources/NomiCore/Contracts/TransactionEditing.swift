@@ -16,4 +16,12 @@ public protocol TransactionEditing: AnyObject {
   /// doc, deliberately feeds neither derivation. `needsReview`, `categoryID`,
   /// `accountID`, `sourceRefs` and `mergedCount` are untouched.
   func update(_ id: UUID, amountMinor: Int, date: Date, descriptionText: String, note: String?) throws
+
+  /// DEC-05. Marks or unmarks a row as a transfer, in one write. Marking also
+  /// marks the single free partner that `TransferRules.manualPartner` finds, in
+  /// the same write; a partner is read back by its shared `transferGroupID`.
+  /// Unmarking clears every row in the group and records `rejected` on the row
+  /// touched. Never changes a balance: `accountSummaries` reads the rows, not
+  /// the marks.
+  func setTransfer(_ id: UUID, isTransfer: Bool) throws
 }

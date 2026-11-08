@@ -321,7 +321,12 @@ final class DefaultRuleSeedTests: XCTestCase {
       sourceRaw: IngestSource.email.rawValue,
       dedupeKey: "seed-scope-1",
       createdAt: Date(timeIntervalSince1970: 0),
-      updatedAt: Date(timeIntervalSince1970: 0))
+      updatedAt: Date(timeIntervalSince1970: 0),
+      senderDomain: nil,
+      cardFragment: nil,
+      needsReviewReason: nil,
+      transferGroupID: nil,
+      transferSourceRaw: nil)
 
     XCTAssertNotNil(RuleEngine.firstMatch(row: row, in: rules), "the seed must match this at all")
     XCTAssertEqual(

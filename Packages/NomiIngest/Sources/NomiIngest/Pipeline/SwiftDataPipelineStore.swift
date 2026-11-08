@@ -159,8 +159,12 @@ extension TransactionSnapshot {
       updatedAt: transaction.updatedAt,
       senderDomain: transaction.senderDomain,
       cardFragment: transaction.cardFragment,
-      needsReviewReason: transaction.needsReviewReason
+      needsReviewReason: transaction.needsReviewReason,
+      transferGroupID: transaction.transferGroupID,
+      transferSourceRaw: transaction.transferSourceRaw
     )
+    // Amendment 3. The only place the pair this snapshot was read with is set.
+    self.transferPairAtRead = transaction.transferPair
   }
 }
 
@@ -192,7 +196,9 @@ extension Transaction {
       updatedAt: snapshot.updatedAt,
       senderDomain: snapshot.senderDomain,
       cardFragment: snapshot.cardFragment,
-      needsReviewReasonRaw: snapshot.needsReviewReason?.rawValue
+      needsReviewReasonRaw: snapshot.needsReviewReason?.rawValue,
+      transferGroupID: snapshot.transferGroupID,
+      transferSourceRaw: snapshot.transferSourceRaw
     )
   }
 
@@ -201,6 +207,16 @@ extension Transaction {
   /// here on purpose. So are `senderDomain`, `cardFragment` and
   /// `needsReviewReasonRaw` (C4): they record what the *ingester* saw when the
   /// row was created, and a later merge does not change that.
+  ///
+  /// The transfer pair (DEC-05) is written by compare-and-set (Amendment 3, rule
+  /// C): only if the snapshot carries the pair it read from the store, that pair
+  /// still equals the row's current pair, and `TransferRules.pipelineMayWrite`
+  /// allows the change. Both fields are written together, or neither. A
+  /// snapshot not read from the store carries no read pair and never writes the
+  /// pair. So a stale snapshot never clears, changes or re-creates a decision,
+  /// and never overwrites an unrecognised pair. Residual window, accepted and in
+  /// the PR: the read and the current pair both come from this context's copy
+  /// of the row, which can predate a save made in another context.
   func apply(_ snapshot: TransactionSnapshot) {
     merchantName = snapshot.merchantName
     upiKindRaw = snapshot.upiKindRaw
@@ -213,5 +229,13 @@ extension Transaction {
     mergedCount = snapshot.mergedCount
     needsReview = snapshot.needsReview
     updatedAt = snapshot.updatedAt
+    if TransferRules.pipelineMayWrite(
+      read: snapshot.transferPairAtRead,
+      current: transferPair,
+      incoming: snapshot.transferPair
+    ) {
+      transferGroupID = snapshot.transferGroupID
+      transferSourceRaw = snapshot.transferSourceRaw
+    }
   }
 }

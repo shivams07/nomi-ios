@@ -36,7 +36,15 @@ extension TransactionSnapshot {
       needsReview: transaction.needsReview,
       dedupeKey: transaction.dedupeKey,
       createdAt: transaction.createdAt,
-      updatedAt: transaction.updatedAt
+      updatedAt: transaction.updatedAt,
+      // C4 and DEC-05. Carried in full, and the initialiser has no defaults for
+      // them, so a field left out here is a compile error, not a silent drop.
+      // This bridge was missing the three C4 fields before T1 (A-05 item 11).
+      senderDomain: transaction.senderDomain,
+      cardFragment: transaction.cardFragment,
+      needsReviewReason: transaction.needsReviewReason,
+      transferGroupID: transaction.transferGroupID,
+      transferSourceRaw: transaction.transferSourceRaw
     )
   }
 }

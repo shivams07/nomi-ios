@@ -38,7 +38,8 @@ final class InsightsAggregatorTests: XCTestCase {
     merchant: String? = nil,
     description: String = "raw description",
     needsReview: Bool = false,
-    currency: String = "INR"
+    currency: String = "INR",
+    transfer: Bool = false
   ) -> LedgerRow {
     LedgerRow(
       id: UUID(),
@@ -51,7 +52,8 @@ final class InsightsAggregatorTests: XCTestCase {
       merchantName: merchant,
       descriptionText: description,
       needsReview: needsReview,
-      currencyCode: currency
+      currencyCode: currency,
+      isTransfer: transfer
     )
   }
 

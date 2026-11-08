@@ -15,6 +15,10 @@ public struct RecurrenceRow: Sendable, Equatable {
   public let normalizedDescription: String
   public let merchantName: String?
   public let descriptionText: String
+  /// DEC-05. A transfer leg is never a subscription: a monthly card payment must
+  /// not become a series. Passed explicitly, with no default, so a caller cannot
+  /// forget it and let transfers through.
+  public let isTransfer: Bool
   /// UI refresh P2. Read for the newest row only; see `RecurringSeries.categoryID`.
   public let categoryID: UUID?
 
@@ -25,6 +29,7 @@ public struct RecurrenceRow: Sendable, Equatable {
     normalizedDescription: String,
     merchantName: String?,
     descriptionText: String,
+    isTransfer: Bool,
     categoryID: UUID? = nil
   ) {
     self.date = date
@@ -33,6 +38,7 @@ public struct RecurrenceRow: Sendable, Equatable {
     self.normalizedDescription = normalizedDescription
     self.merchantName = merchantName
     self.descriptionText = descriptionText
+    self.isTransfer = isTransfer
     self.categoryID = categoryID
   }
 
@@ -158,7 +164,8 @@ public enum RecurrenceDetector {
   ///   runs.
   public static func series(in rows: [RecurrenceRow], now: Date, calendar: Calendar) -> [RecurringSeries] {
     var groups: [String: [RecurrenceRow]] = [:]
-    for row in rows where row.isDebit {
+    // DEC-05: transfers are not spend, so they cannot form a series.
+    for row in rows where row.isDebit && !row.isTransfer {
       let key = row.normalizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
       // A blank key is not a group. Rows that normalize to nothing have no
       // description in common — they have no description at all — and letting

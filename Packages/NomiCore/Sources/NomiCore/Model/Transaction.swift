@@ -13,6 +13,20 @@ public enum CategorySource: String, Codable, Sendable {
   case none, rule, manual
 }
 
+/// How a row came to be a transfer leg (DEC-05). Stored as `transferSourceRaw`.
+/// The rules that read and write it are in `TransferRules`.
+///
+/// Above the `@Model` line on purpose: the CLT harness copies only the head of
+/// this file, and `TransferRules` needs this type.
+public enum TransferSource: String, Codable, Sendable {
+  /// Matched by the automatic detector on narration evidence.
+  case auto
+  /// Marked by the user in Detail.
+  case manual
+  /// The user said "not a transfer". The detector never marks this row again.
+  case rejected
+}
+
 /// Why a row was flagged **at insert time**, and only at insert time.
 ///
 /// It exists so that clearing the flag can be specific. Assigning an account to
@@ -111,6 +125,20 @@ public final class Transaction {
   /// transaction into two.
   public var note: String?
 
+  // DEC-05. Both optional with a `nil` default, same recipe as `note`: additive,
+  // no schema bump, CloudKit-safe, not part of `dedupeKey`. Invariant:
+  // `transferGroupID != nil` exactly when `transferSource` is `.auto` or `.manual`.
+  // Any other pair is `TransferPairState.unrecognized`; the pipeline never writes
+  // one and never overwrites one (Amendment 3).
+
+  /// Non-`nil` means this row is a transfer leg. The two legs of one transfer
+  /// share a value; a row marked alone has one of its own. See `TransferGroupID`.
+  public var transferGroupID: UUID?
+
+  /// `TransferSource` raw. Kept so a row written by a newer build with an
+  /// unknown value still round-trips. Read through `transferSource`.
+  public var transferSourceRaw: String?
+
   public init(
     id: UUID = UUID(),
     date: Date = Date(),
@@ -136,7 +164,9 @@ public final class Transaction {
     senderDomain: String? = nil,
     cardFragment: String? = nil,
     needsReviewReasonRaw: String? = nil,
-    note: String? = nil
+    note: String? = nil,
+    transferGroupID: UUID? = nil,
+    transferSourceRaw: String? = nil
   ) {
     self.id = id
     self.date = date
@@ -163,6 +193,17 @@ public final class Transaction {
     self.cardFragment = cardFragment
     self.needsReviewReasonRaw = needsReviewReasonRaw
     self.note = note
+    self.transferGroupID = transferGroupID
+    self.transferSourceRaw = transferSourceRaw
+  }
+
+  /// `true` for a transfer leg. Exclusion reads this and nothing else: a row
+  /// is excluded by its own group id, never by finding its partner (DEC-05).
+  public var isTransfer: Bool { transferGroupID != nil }
+
+  public var transferSource: TransferSource? {
+    get { transferSourceRaw.flatMap(TransferSource.init(rawValue:)) }
+    set { transferSourceRaw = newValue?.rawValue }
   }
 
   public var needsReviewReason: NeedsReviewReason? {
@@ -183,5 +224,28 @@ public final class Transaction {
   public var source: IngestSource {
     get { IngestSource(rawValue: sourceRaw) ?? .manual }
     set { sourceRaw = newValue.rawValue }
+  }
+}
+
+/// The value view `TransferRules` reads, for both `setTransfer` conformers.
+/// Below the `@Model` line, so the harness does not compile it; the rules
+/// themselves are harness-tested on `TransferLeg` directly.
+extension Transaction {
+  /// The row's transfer pair, the unit the pipeline compares and writes (Amendment 3).
+  public var transferPair: TransferPair {
+    TransferPair(groupID: transferGroupID, sourceRaw: transferSourceRaw)
+  }
+
+  public var transferLeg: TransferLeg {
+    TransferLeg(
+      id: id,
+      date: date,
+      amountMinor: amountMinor,
+      currencyCode: currencyCode,
+      directionRaw: directionRaw,
+      accountID: accountID,
+      transferGroupID: transferGroupID,
+      transferSourceRaw: transferSourceRaw
+    )
   }
 }
