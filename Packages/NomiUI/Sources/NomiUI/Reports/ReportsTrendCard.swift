@@ -5,7 +5,7 @@ import SwiftUI
 
 /// The bar card on Insights: "Daily spend" for a calendar month (one bar per
 /// day) or "Monthly spend" for a financial year (the trend's 12 months). Bars
-/// are navy at 28%, with the highlighted bar (today, or the last bar) in full
+/// are navy at `ReportsDonut.mutedBarAlpha` (55%), with the highlighted bar (today, or the last bar) in full
 /// navy. Only the first and last tick are printed, under the chart.
 public struct ReportsTrendCard: View {
   public let title: String
@@ -57,7 +57,7 @@ public struct ReportsTrendCard: View {
           x: .value("Position", index + 1),
           y: .value("Spent", Double(amountMinor) / 100)
         )
-        .foregroundStyle(index == highlightIndex ? NomiColor.navy : NomiColor.navy.opacity(0.28))
+        .foregroundStyle(index == highlightIndex ? NomiColor.navy : NomiColor.navy.opacity(ReportsDonut.mutedBarAlpha))
         .cornerRadius(3)
       }
     }

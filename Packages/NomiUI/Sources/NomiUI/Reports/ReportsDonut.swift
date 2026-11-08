@@ -8,6 +8,9 @@ import SwiftUI
 /// slice is an arc separated by a 2 degree gap, drawn from 12 o'clock
 /// clockwise, with the top slice's share in the centre. The legend beside it
 /// is the text alternative, so the ring itself is hidden from VoiceOver.
+///
+/// The ring takes the output of `displaySlices`, so it never shows more than
+/// four slices (decisions Amendment 2, R3).
 public struct ReportsDonut: View {
   public let slices: [CategorySlice]
 
@@ -19,24 +22,50 @@ public struct ReportsDonut: View {
   static let ringWidth: CGFloat = 12
   static let gapDegrees: Double = 2
 
-  /// Slice colours, darkest first. Built from `NomiColor` tokens only; the
-  /// artboard's two lightest tints (#8DB3EA, #BBD3EE) are not tokens, so they
-  /// are approximated as `blueMid` at lower opacity until F1 adds them.
-  /// Index 7 is the grey used for the folded Other slice.
+  /// The most slices the ring and legend show.
+  static let maxDisplayedSlices = 4
+
+  /// Stable identity for the folded "Other" slice on the ring and legend. A
+  /// separate constant from `ReportsCategoryFold.otherOverflowID`, which is
+  /// not touched by this unit.
+  static let displayOtherID = UUID(uuidString: "00000000-0000-0000-0000-0000000000fd")!
+
+  /// Alpha of the muted daily and monthly bars on the card, composited over the
+  /// card colour. 0.55 gives 3.30:1 against `card` and 3.64:1 against the full
+  /// `navy` highlight, so the bars clear WCAG 1.4.11 (decisions Amendment 2, R4).
+  static let mutedBarAlpha: Double = 0.55
+
+  /// Slice fills in artboard order: navyDeep, blueMid, chartTintMid,
+  /// chartTintLight. Four stops only, because `displaySlices` caps the count.
   static func color(at index: Int) -> Color {
-    let ramp: [Color] = [
-      NomiColor.navyDeep,
-      NomiColor.blueMid,
-      NomiColor.blueMid.opacity(0.6),
-      NomiColor.navy,
-      NomiColor.blueMid.opacity(0.4),
-      NomiColor.blueMid.opacity(0.25),
-      NomiColor.inkSecondary.opacity(0.5),
-    ]
-    return ramp.indices.contains(index) ? ramp[index] : NomiColor.inkSecondary.opacity(0.35)
+    switch index {
+    case 0: return NomiColor.navyDeep
+    case 1: return NomiColor.blueMid
+    case 2: return NomiColor.chartTintMid
+    default: return NomiColor.chartTintLight
+    }
   }
 
-  /// Share of the total for each slice, as whole percent.
+  /// The slices the ring and legend show. Up to four are returned as given.
+  /// From five, the top three by total are kept, then one "Other" holding the
+  /// exact sum of the rest, so the shown totals always sum to the input total.
+  static func displaySlices(_ slices: [CategorySlice]) -> [CategorySlice] {
+    guard slices.count > maxDisplayedSlices else { return slices }
+    let sorted = slices.sorted { $0.totalMinor > $1.totalMinor }
+    let top = Array(sorted.prefix(maxDisplayedSlices - 1))
+    let rest = sorted.dropFirst(maxDisplayedSlices - 1)
+    let other = CategorySlice(
+      id: displayOtherID,
+      name: "Other",
+      paletteSlot: -1,
+      totalMinor: rest.reduce(0) { $0 + $1.totalMinor },
+      share: rest.reduce(0.0) { $0 + $1.share }
+    )
+    return top + [other]
+  }
+
+  /// Share of the total for each slice, as whole percent, from the slices as
+  /// passed (the caller passes the displayed slices).
   static func percentages(_ slices: [CategorySlice]) -> [Int] {
     let total = slices.reduce(0) { $0 + $1.totalMinor }
     guard total > 0 else { return slices.map { _ in 0 } }

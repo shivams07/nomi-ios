@@ -19,8 +19,13 @@ public struct ReportsCategoryBreakdownCard: View {
     ReportsCategoryFold.foldToSevenSlots(slices)
   }
 
+  /// What the ring and legend show: at most four slices (decisions Amendment 2, R3).
+  private var shown: [CategorySlice] {
+    ReportsDonut.displaySlices(folded)
+  }
+
   private var total: Int {
-    folded.reduce(0) { $0 + $1.totalMinor }
+    shown.reduce(0) { $0 + $1.totalMinor }
   }
 
   public var body: some View {
@@ -28,7 +33,7 @@ public struct ReportsCategoryBreakdownCard: View {
       Text("Spending by category")
         .nomiTextStyle(.headline)
         .foregroundStyle(NomiColor.ink)
-      if folded.isEmpty || total <= 0 {
+      if shown.isEmpty || total <= 0 {
         Text("No categorized spend this period")
           .nomiTextStyle(.caption)
           .foregroundStyle(NomiColor.inkSecondary)
@@ -47,7 +52,7 @@ public struct ReportsCategoryBreakdownCard: View {
       ? AnyLayout(VStackLayout(alignment: .leading, spacing: NomiSpacing.sm))
       : AnyLayout(HStackLayout(alignment: .center, spacing: NomiSpacing.sm))
     layout {
-      ReportsDonut(slices: folded)
+      ReportsDonut(slices: shown)
       legend
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -55,8 +60,8 @@ public struct ReportsCategoryBreakdownCard: View {
 
   private var legend: some View {
     VStack(alignment: .leading, spacing: 6) {
-      let percents = ReportsDonut.percentages(folded)
-      ForEach(Array(folded.enumerated()), id: \.element.id) { index, slice in
+      let percents = ReportsDonut.percentages(shown)
+      ForEach(Array(shown.enumerated()), id: \.element.id) { index, slice in
         HStack(spacing: 10) {
           Circle()
             .fill(ReportsDonut.color(at: index))

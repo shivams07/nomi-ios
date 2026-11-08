@@ -179,7 +179,7 @@ public struct ReportsScreen: View {
       Text(label)
         .nomiTextStyle(.subhead)
         .foregroundStyle(NomiColor.inkSecondary)
-      NomiAmountText(minor: minor, style: .displayValue)
+      NomiAmountText(minor: minor, style: .summaryValue)
       Text(change ?? "No prior period to compare")
         .nomiTextStyle(.footnote)
         .foregroundStyle(NomiColor.inkSecondary)

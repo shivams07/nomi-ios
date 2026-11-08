@@ -96,6 +96,14 @@ struct LightTokenTests {
     }
   }
 
+  @Test func insightsSliceTintsArePinnedWithTheirContrast() {
+    // IN, decisions Amendment 2 R3: the artboard's third and fourth donut slices.
+    #expect(NomiHex.chartTintMid == 0x8DB3EA)
+    #expect(NomiHex.chartTintLight == 0xBBD3EE)
+    #expect(abs(NomiContrast.ratio(NomiHex.chartTintMid, NomiHex.card) - 2.15) < 0.01)
+    #expect(abs(NomiContrast.ratio(NomiHex.chartTintLight, NomiHex.card) - 1.54) < 0.01)
+  }
+
   @Test func heroRampHexesArePinned() {
     #expect(NomiHex.navyDeep == 0x04174B)
     #expect(NomiHex.navy == 0x023571)
@@ -156,6 +164,7 @@ struct LightTokenTests {
     #expect(NomiTextStyle.largeTitle.tracking == -0.4)
     #expect(NomiTextStyle.heroAmount.tracking == -1.4)
     #expect(NomiTextStyle.displayValue.tracking == -0.6)
+    #expect(NomiTextStyle.summaryValue.tracking == -0.4)
     #expect(NomiTextStyle.body.tracking == 0)
   }
 
