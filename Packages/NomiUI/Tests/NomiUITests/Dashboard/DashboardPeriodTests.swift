@@ -116,4 +116,20 @@ final class DashboardPeriodTests: XCTestCase {
     XCTAssertTrue(label.contains("2026"))
     XCTAssertTrue(label.contains("27"))
   }
+
+  /// UF1: the month name is read back in the calendar's own zone, so the label
+  /// does not depend on the zone the test process runs in. 1 Oct in Kolkata is
+  /// 30 Sep in Los Angeles; a formatter on the process zone named September
+  /// there. Run under TZ=America/Los_Angeles to see the regression.
+  func testMonthLabelNamesTheCalendarsMonthWhateverTheProcessZone() {
+    for identifier in ["Asia/Kolkata", "America/Los_Angeles", "Pacific/Auckland"] {
+      var calendar = Calendar(identifier: .gregorian)
+      calendar.timeZone = TimeZone(identifier: identifier)!
+      calendar.locale = Locale(identifier: "en_US_POSIX")
+      XCTAssertEqual(
+        DashboardPeriod.label(for: .month(year: 2026, month: 10), calendar: calendar), "October 2026", identifier)
+      XCTAssertEqual(
+        DashboardPeriod.label(for: .month(year: 2027, month: 1), calendar: calendar), "January 2027", identifier)
+    }
+  }
 }

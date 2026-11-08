@@ -41,6 +41,27 @@ enum ColumnMappingFormGate {
   }
 }
 
+/// What the column-mapping sheet writes back to its binding when it closes
+/// (UF1). Edits live in a draft; Cancel discards it and Save writes it back,
+/// and Save only ever writes a draft that passes `ColumnMappingFormGate`. The
+/// sheet's Save button is disabled on the same gate, so this adds no new
+/// refusal, but it makes the Cancel decision reachable from a test.
+enum ColumnMappingSheetOutcome {
+  enum Close: Equatable {
+    case save, cancel
+  }
+
+  /// The value to assign to the sheet's binding, or nil to leave it alone.
+  static func writeBack(_ close: Close, draft: ColumnMapping, headerCount: Int) -> ColumnMapping? {
+    switch close {
+    case .cancel:
+      return nil
+    case .save:
+      return ColumnMappingFormGate.isValid(draft, headerCount: headerCount) ? draft : nil
+    }
+  }
+}
+
 /// What `saveMapping` is called with — pulled out of the commit closure so a
 /// test can reach the decision. `preview.formatSignature` is the file's real
 /// signature (finding 5: the view body was calling `saveMapping` with the

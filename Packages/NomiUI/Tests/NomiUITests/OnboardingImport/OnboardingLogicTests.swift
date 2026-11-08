@@ -213,6 +213,51 @@ final class OnboardingLogicTests: XCTestCase {
     XCTAssertEqual(copy.message, "Connect again to keep your numbers current.")
   }
 
+  // UF1: a `lastSync` with no age to report (clock skew puts it ahead of `now`,
+  // or it was stamped this instant) reads "just now". The formatter alone would
+  // say "in 1 hr." or "in 0 sec.".
+  private static let justNowMessage = "Last synced just now. Connect again to keep your numbers current."
+
+  func testFutureLastSyncReadsAsJustNowNotAsAFutureTime() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let copy = try XCTUnwrap(
+      MailAttentionLogic.copy(for: .disconnected, hadConnection: true, lastSync: now.addingTimeInterval(3_600), now: now))
+    XCTAssertEqual(copy.title, "Mail disconnected")
+    XCTAssertEqual(copy.message, Self.justNowMessage)
+  }
+
+  func testFutureLastSyncOfOneSecondReadsAsJustNow() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let copy = try XCTUnwrap(
+      MailAttentionLogic.copy(for: .disconnected, hadConnection: true, lastSync: now.addingTimeInterval(1), now: now))
+    XCTAssertEqual(copy.message, Self.justNowMessage)
+  }
+
+  func testZeroAgeLastSyncReadsAsJustNow() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let copy = try XCTUnwrap(
+      MailAttentionLogic.copy(for: .disconnected, hadConnection: true, lastSync: now, now: now))
+    XCTAssertEqual(copy.message, Self.justNowMessage)
+  }
+
+  func testSubSecondAgeLastSyncReadsAsJustNow() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let copy = try XCTUnwrap(
+      MailAttentionLogic.copy(for: .disconnected, hadConnection: true, lastSync: now.addingTimeInterval(-0.4), now: now))
+    XCTAssertEqual(copy.message, Self.justNowMessage)
+  }
+
+  /// One second old is the first age the formatter reports, so it keeps the
+  /// relative form and does not fall to "just now".
+  func testOneSecondOldLastSyncKeepsTheRelativeForm() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let copy = try XCTUnwrap(
+      MailAttentionLogic.copy(for: .disconnected, hadConnection: true, lastSync: now.addingTimeInterval(-1), now: now))
+    XCTAssertTrue(copy.message.hasPrefix("Last synced "), copy.message)
+    XCTAssertFalse(copy.message.contains("just now"), copy.message)
+    XCTAssertTrue(copy.message.hasSuffix(" ago. Connect again to keep your numbers current."), copy.message)
+  }
+
   func testFailedStateGetsTheSettingsFailureCopy() throws {
     let copy = try XCTUnwrap(MailAttentionLogic.copy(for: .failed(.authenticationFailed), hadConnection: true, lastSync: nil, now: Date()))
     XCTAssertEqual(copy.title, "Couldn’t reach your mail")

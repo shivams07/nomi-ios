@@ -94,8 +94,14 @@ enum DashboardPeriod {
       components.month = month
       components.day = 1
       let date = calendar.date(from: components) ?? Date()
+      // The date above is 1 of the month at midnight in `calendar`'s zone. The
+      // formatter must read it back in that same zone and calendar; left at the
+      // process default, a machine in a zone west of the calendar's would name
+      // the month before (1 Oct IST is 30 Sep in Los Angeles).
       let formatter = DateFormatter()
       formatter.locale = Locale(identifier: "en_IN")
+      formatter.calendar = calendar
+      formatter.timeZone = calendar.timeZone
       formatter.dateFormat = "MMMM yyyy"
       return formatter.string(from: date)
     case .financialYear(let startingYear):
