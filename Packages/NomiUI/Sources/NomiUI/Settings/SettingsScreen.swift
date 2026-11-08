@@ -3,14 +3,12 @@ import NomiPreview
 import SwiftUI
 import UserNotifications
 
-/// The Settings screen (U7, v5 addition — folded in here rather than a
-/// separate unit, since its two largest rows ARE this unit's other screens:
-/// mail account management is the connect/disconnect flow, and the CSV import
-/// entry point is the import flow). Contains: connected-account row
-/// (connect/disconnect/force re-scan), CSV import entry, navigation to
-/// Categories and Rules (U6's screens, public for exactly this reason), the
-/// budget-alert toggle, and an about/version row.
-/// Reads `Design/**`. Must not edit it.
+/// The Settings screen (U7, v5 addition; restyled to the Settings artboard by
+/// ST). Five groups, top to bottom: Mail account (address and status, one
+/// "Scan mail" menu, Manage connection, Not matched), Organize (Categories,
+/// Budgets when its stores are passed, Rules), Data (Import from file, and
+/// iCloud sync as a read-only value), Preferences (the budget-alert switch),
+/// and About. Reads `Design/**`. Must not edit it.
 public struct SettingsScreen: View {
   public let mailConnectionService: MailConnectionService
   public let fileImportService: FileImportService
@@ -23,6 +21,11 @@ public struct SettingsScreen: View {
   /// the default `[]` keeps every preview compiling and leaves the picker at
   /// "Any", which is what an empty list shows anyway.
   public let accounts: [NomiCore.Account]
+  /// The Budgets row (ST). It appears under Organize only when both stores
+  /// are passed, so every call site that does not pass them compiles and shows
+  /// no row. The toolbar icon this replaces is `RootView`'s to remove (S1).
+  public let budgetStore: BudgetStore?
+  public let insightsStore: InsightsStore?
 
   @State private var connectionState: MailConnectionState = .disconnected
   @State private var permissionDenied = false
@@ -43,7 +46,9 @@ public struct SettingsScreen: View {
     ruleStore: RuleStore,
     notificationSettings: Binding<NotificationSettings>,
     storageMode: StorageMode = .cloudKit,
-    accounts: [NomiCore.Account] = []
+    accounts: [NomiCore.Account] = [],
+    budgetStore: BudgetStore? = nil,
+    insightsStore: InsightsStore? = nil
   ) {
     self.mailConnectionService = mailConnectionService
     self.fileImportService = fileImportService
@@ -52,6 +57,8 @@ public struct SettingsScreen: View {
     _notificationSettings = notificationSettings
     self.storageMode = storageMode
     self.accounts = accounts
+    self.budgetStore = budgetStore
+    self.insightsStore = insightsStore
     forcedPermissionDenied = nil
   }
 
@@ -66,7 +73,9 @@ public struct SettingsScreen: View {
     notificationSettings: Binding<NotificationSettings>,
     forcedPermissionDenied: Bool,
     storageMode: StorageMode = .cloudKit,
-    accounts: [NomiCore.Account] = []
+    accounts: [NomiCore.Account] = [],
+    budgetStore: BudgetStore? = nil,
+    insightsStore: InsightsStore? = nil
   ) {
     self.mailConnectionService = mailConnectionService
     self.fileImportService = fileImportService
@@ -75,6 +84,8 @@ public struct SettingsScreen: View {
     _notificationSettings = notificationSettings
     self.storageMode = storageMode
     self.accounts = accounts
+    self.budgetStore = budgetStore
+    self.insightsStore = insightsStore
     self.forcedPermissionDenied = forcedPermissionDenied
   }
 
@@ -86,38 +97,18 @@ public struct SettingsScreen: View {
   }
 
   public var body: some View {
-    List {
-      mailSection
-      if !unmatchedSenderRows.isEmpty {
-        Section("Not Matched") {
-          ForEach(unmatchedSenderRows, id: \.self) { row in
-            Text(row)
-              .nomiTextStyle(.caption)
-              .foregroundStyle(NomiColor.textTertiary)
-          }
-        }
+    ScrollView {
+      VStack(alignment: .leading, spacing: 0) {
+        mailGroup
+        organizeGroup
+        dataGroup
+        preferencesGroup
+        aboutGroup
       }
-      Section("Organize") {
-        NavigationLink("Categories") {
-          CategoriesScreen(categoryStore: categoryStore)
-        }
-        NavigationLink("Rules") {
-          rulesScreen()
-        }
-      }
-      Section("Import") {
-        NavigationLink("Import from File") {
-          ImportEntryView(fileImportService: fileImportService)
-        }
-      }
-      notificationsSection
-      storageSection
-      Section {
-        NavigationLink("About") {
-          AboutScreen()
-        }
-      }
+      .padding(.horizontal, NomiSpacing.screenGutter)
+      .padding(.bottom, NomiSpacing.lg)
     }
+    .background(NomiColor.ground)
     .alert(
       "Couldn't re-scan",
       isPresented: Binding(get: { rescanError != nil }, set: { if !$0 { rescanError = nil } })
@@ -126,9 +117,8 @@ public struct SettingsScreen: View {
     } message: {
       Text(rescanError ?? "")
     }
-    .scrollContentBackground(.hidden)
-    .background(NomiColor.surfaceCanvas)
     .navigationTitle("Settings")
+    .navigationBarTitleDisplayMode(.large)
     .task {
       for await state in mailConnectionService.state {
         connectionState = state
@@ -150,101 +140,294 @@ public struct SettingsScreen: View {
     }
   }
 
-  private var mailSection: some View {
-    Section("Mail Account") {
-      switch connectionState {
-      case .connected(let address, _):
-        VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-          Text(address)
-            .nomiTextStyle(.body)
-            .foregroundStyle(NomiColor.textPrimary)
-          SyncStatusRow(state: connectionState)
-        }
-        Button {
-          rescan()
-        } label: {
-          if isRescanning {
-            ProgressView()
-          } else {
-            Text("Force Re-scan")
-          }
-        }
-        Button {
-          scanRecent()
-        } label: {
-          if isScanningRecent {
-            ProgressView()
-          } else {
-            Text("Scan last 6 months")
-          }
-        }
-        NavigationLink("Manage Connection") {
-          ConnectMailScreen(mailConnectionService: mailConnectionService)
-        }
-      case .disconnected, .connecting, .failed:
-        NavigationLink {
-          ConnectMailScreen(mailConnectionService: mailConnectionService)
-        } label: {
-          VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-            Text("Connect Mail")
-              .nomiTextStyle(.body)
-              .foregroundStyle(NomiColor.textPrimary)
-            SyncStatusRow(state: connectionState)
-          }
-        }
+  // MARK: - Groups
+
+  private var connectedAddress: String? {
+    if case .connected(let address, _) = connectionState {
+      return address
+    }
+    return nil
+  }
+
+  private var mailGroup: some View {
+    settingsGroup("Mail account", first: true) {
+      if let address = connectedAddress {
+        connectedMailCard(address: address)
+      } else if let title = SettingsLogic.attentionTitle(for: connectionState) {
+        disconnectedMailContent(title: title)
       }
     }
   }
 
-  private var notificationsSection: some View {
-    Section("Notifications") {
-      Toggle(
-        "Budget Alerts",
-        isOn: Binding(
-          get: { NotificationToggleDisplay.isOn(settings: notificationSettings, permissionDenied: permissionDenied) },
-          set: { newValue in
-            guard !permissionDenied else { return }
-            notificationSettings.budgetAlertsEnabled = newValue
-          }
-        )
-      )
-      .disabled(permissionDenied)
-      if NotificationToggleDisplay.showsPermissionExplanation(permissionDenied: permissionDenied) {
-        Text("Notifications are turned off for Nomi in iOS Settings, so budget alerts can't be delivered.")
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.textTertiary)
+  /// Connected: address and status, the scan menu, Manage connection, and the
+  /// Not matched disclosure when there is something to show.
+  private func connectedMailCard(address: String) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(address)
+          .nomiTextStyle(.rowBody)
+          .foregroundStyle(NomiColor.ink)
+        HStack(spacing: NomiSpacing.xxs) {
+          Circle()
+            .fill(NomiColor.inkSecondary)
+            .frame(width: 6, height: 6)
+            .accessibilityHidden(true)
+          Text(SyncStatusRow.statusText(for: connectionState))
+            .nomiTextStyle(.footnote)
+            .foregroundStyle(NomiColor.inkSecondary)
+        }
+      }
+      .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+      .padding(.vertical, NomiSpacing.xs)
+      rowDivider
+      scanMailRow
+      rowDivider
+      navigationRow("Manage connection") {
+        ConnectMailScreen(mailConnectionService: mailConnectionService)
+      }
+      if !unmatchedSenderRows.isEmpty {
+        rowDivider
+        notMatchedDisclosure
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .nomiCard()
+  }
+
+  /// Not connected: the attention row is the first row of the Mail group. It
+  /// draws its own card, so the Not matched disclosure, if any, gets a card
+  /// of its own beneath it.
+  private func disconnectedMailContent(title: String) -> some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.cardGap) {
+      NavigationLink {
+        ConnectMailScreen(mailConnectionService: mailConnectionService)
+      } label: {
+        NomiAttentionRow(systemImage: "envelope", title: title, message: nil)
+      }
+      .buttonStyle(.plain)
+      if !unmatchedSenderRows.isEmpty {
+        notMatchedDisclosure
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .nomiCard()
+      }
+    }
+  }
+
+  /// One "Scan mail" row that opens a menu. Both actions are the same two as
+  /// before: `rescan()` (syncNow) and `scanRecent()` (6 months).
+  private var scanMailRow: some View {
+    Menu {
+      Button("Force re-scan") {
+        rescan()
+      }
+      Button("Scan last 6 months") {
+        scanRecent()
+      }
+    } label: {
+      HStack(spacing: NomiSpacing.xs) {
+        Text("Scan mail")
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(NomiColor.navy)
+        Spacer(minLength: 0)
+        if isRescanning || isScanningRecent {
+          ProgressView()
+        } else {
+          Image(systemName: "ellipsis")
+            .foregroundStyle(NomiColor.inkSecondary)
+            .accessibilityHidden(true)
+        }
+      }
+      .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+      .contentShape(Rectangle())
+    }
+  }
+
+  /// Shown only when there are unmatched senders. The rows are domain and
+  /// count, as before, and sit under one disclosure row in place of the old
+  /// card of grey captions.
+  private var notMatchedDisclosure: some View {
+    DisclosureGroup {
+      VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+        ForEach(unmatchedSenderRows, id: \.self) { row in
+          Text(row)
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.inkSecondary)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.bottom, NomiSpacing.xs)
+    } label: {
+      Text(SettingsLogic.notMatchedTitle(count: unmatchedSenderRows.count))
+        .nomiTextStyle(.rowBody)
+        .foregroundStyle(NomiColor.ink)
+    }
+    .disclosureGroupStyle(SettingsDisclosureStyle())
+  }
+
+  private var organizeGroup: some View {
+    settingsGroup("Organize") {
+      VStack(alignment: .leading, spacing: 0) {
+        navigationRow("Categories") {
+          CategoriesScreen(categoryStore: categoryStore)
+        }
+        rowDivider
+        if let budgetStore, let insightsStore {
+          navigationRow("Budgets") {
+            BudgetsScreen(budgetStore: budgetStore, insightsStore: insightsStore)
+          }
+          rowDivider
+        }
+        navigationRow("Rules") {
+          rulesScreen()
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .nomiCard()
+    }
+  }
+
+  private var dataGroup: some View {
+    settingsGroup("Data") {
+      VStack(alignment: .leading, spacing: 0) {
+        navigationRow("Import from file") {
+          ImportEntryView(fileImportService: fileImportService)
+        }
+        rowDivider
+        iCloudRow
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .nomiCard()
+    }
+  }
+
+  private var preferencesGroup: some View {
+    settingsGroup("Preferences") {
+      VStack(alignment: .leading, spacing: 0) {
+        Toggle(isOn: budgetAlertsBinding) {
+          Text("Budget Alerts")
+            .nomiTextStyle(.rowBody)
+            .foregroundStyle(NomiColor.ink)
+        }
+        .tint(NomiColor.navy)
+        .disabled(permissionDenied)
+        .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+        if NotificationToggleDisplay.showsPermissionExplanation(permissionDenied: permissionDenied) {
+          Text("Notifications are turned off for Nomi in iOS Settings, so budget alerts can't be delivered.")
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.inkSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, NomiSpacing.xs)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .nomiCard()
+    }
+  }
+
+  /// The About row, on its own card below the groups, as the artboard draws it.
+  private var aboutGroup: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      navigationRow("About") {
+        AboutScreen()
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .nomiCard()
+    .padding(.top, 18)
+  }
+
+  // MARK: - Rows
+
+  /// B11, then U9b, now ST. The value is `StorageModeDisplay.text`, read-only.
+  /// The caption under it stays for every state that is not syncing, so the
+  /// reason is not lost in the restyle.
+  private var iCloudRow: some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+      HStack(alignment: .firstTextBaseline, spacing: NomiSpacing.xs) {
+        Text("iCloud sync")
+          .nomiTextStyle(.rowBody)
+          .foregroundStyle(NomiColor.ink)
+        Spacer(minLength: 0)
+        Text(StorageModeDisplay.text(for: storageMode))
+          .nomiTextStyle(.rowBody)
+          .foregroundStyle(storageMode.isSyncing ? NomiColor.inkDeep : NomiColor.ink)
+          .multilineTextAlignment(.trailing)
+      }
+      if let caption = StorageModeDisplay.caption(for: storageMode) {
+        Text(caption)
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+    }
+    .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+    .padding(.vertical, NomiSpacing.xs)
+  }
+
+  /// A label that opens a destination, with a trailing chevron. Tap target is
+  /// the full row, at least 52 pt high.
+  private func navigationRow<Destination: View>(
+    _ title: String,
+    @ViewBuilder destination: @escaping () -> Destination
+  ) -> some View {
+    NavigationLink {
+      destination()
+    } label: {
+      HStack(spacing: NomiSpacing.xs) {
+        Text(title)
+          .nomiTextStyle(.rowBody)
+          .foregroundStyle(NomiColor.ink)
+        Spacer(minLength: 0)
+        RowChevron()
+      }
+      .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+  }
+
+  /// A section label and the card under it. The label is `label` style in
+  /// `inkDeep`, 18 pt above (none for the first group) and 8 pt below.
+  private func settingsGroup<Content: View>(
+    _ title: String,
+    first: Bool = false,
+    @ViewBuilder content: () -> Content
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Text(title)
+        .nomiTextStyle(.label)
+        .foregroundStyle(NomiColor.inkDeep)
+        .accessibilityAddTraits(.isHeader)
+        .padding(.top, first ? 0 : 18)
+        .padding(.bottom, NomiSpacing.xs)
+        .padding(.horizontal, NomiSpacing.xxs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+      content()
+    }
+  }
+
+  /// The hairline between rows inside a card: `separator`, inset by the card's
+  /// own padding, as the artboard draws it.
+  private var rowDivider: some View {
+    Rectangle()
+      .fill(NomiColor.separator)
+      .frame(height: 1)
+      .accessibilityHidden(true)
+  }
+
+  private var budgetAlertsBinding: Binding<Bool> {
+    Binding(
+      get: { NotificationToggleDisplay.isOn(settings: notificationSettings, permissionDenied: permissionDenied) },
+      set: { newValue in
+        guard !permissionDenied else { return }
+        notificationSettings.budgetAlertsEnabled = newValue
+      }
+    )
   }
 
   private var unmatchedSenderRows: [String] {
     guard let lastSyncSummary else { return [] }
     return UnmatchedSenderDisplay.rows(for: lastSyncSummary.unmatchedSenders)
-  }
-
-  /// B11. One row, always shown - "On" is worth saying too, because the whole
-  /// problem was that the app never mentioned iCloud at all and the user had
-  /// no way to tell which state they were in.
-  private var storageSection: some View {
-    Section("Storage") {
-      VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-        HStack {
-          Text("iCloud sync")
-            .nomiTextStyle(.body)
-            .foregroundStyle(NomiColor.textPrimary)
-          Spacer()
-          Text(StorageModeDisplay.text(for: storageMode))
-            .nomiTextStyle(.body)
-            .foregroundStyle(
-              storageMode.isSyncing ? NomiColor.textSecondary : NomiColor.textPrimary)
-        }
-        if let caption = StorageModeDisplay.caption(for: storageMode) {
-          Text(caption)
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.textTertiary)
-        }
-      }
-    }
   }
 
   /// The `try?` here swallowed every re-scan failure - a wrong password, a
@@ -264,9 +447,9 @@ public struct SettingsScreen: View {
     }
   }
 
-  /// M7: same shape as `rescan()` — its own loading flag so the two buttons
-  /// don't share a spinner, but the same `lastSyncSummary`/`rescanError`,
-  /// since both feed the same "Not Matched" list and the same failure alert.
+  /// M7: same shape as `rescan()` — its own loading flag, so the menu shows
+  /// which action is running, but the same `lastSyncSummary`/`rescanError`,
+  /// since both feed the same "Not matched" list and the same failure alert.
   private func scanRecent() {
     isScanningRecent = true
     rescanError = nil
@@ -290,12 +473,53 @@ public struct SettingsScreen: View {
   }
 }
 
+/// The trailing chevron on a settings row: 16 pt, `inkSecondary`, hidden from
+/// VoiceOver because the row is the control.
+private struct RowChevron: View {
+  var body: some View {
+    Image(systemName: "chevron.right")
+      .resizable()
+      .scaledToFit()
+      .frame(width: 16, height: 16)
+      .foregroundStyle(NomiColor.inkSecondary)
+      .accessibilityHidden(true)
+  }
+}
+
+/// The "Not matched" disclosure with its chevron on the trailing edge, as the
+/// artboard draws it. The default style puts the chevron on the leading edge.
+private struct SettingsDisclosureStyle: DisclosureGroupStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Button {
+        withAnimation(.easeInOut(duration: 0.2)) {
+          configuration.isExpanded.toggle()
+        }
+      } label: {
+        HStack(spacing: NomiSpacing.xs) {
+          configuration.label
+          Spacer(minLength: 0)
+          RowChevron()
+            .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
+        }
+        .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
+      if configuration.isExpanded {
+        configuration.content
+      }
+    }
+  }
+}
+
 /// M7 done-when: "mail section with both buttons" — `FakeMailConnectionService`
 /// only reaches `.connected` live, via `connect()`, which a static preview
 /// never calls. `ConnectedFakeMailConnectionService` already exists for
 /// exactly this (`Onboarding/OnboardingPreviewSupport.swift`, internal to
 /// this module, not edited here) and starts already connected.
-#Preview("Settings — mail connected, both scan buttons, dark") {
+#Preview("Settings — mail connected, scan menu, light") {
   NavigationStack {
     SettingsScreen(
       mailConnectionService: ConnectedFakeMailConnectionService(),
@@ -306,10 +530,26 @@ public struct SettingsScreen: View {
     )
   }
   .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Settings — alerts on, dark") {
+#Preview("Settings — with Budgets row, light") {
+  NavigationStack {
+    SettingsScreen(
+      mailConnectionService: ConnectedFakeMailConnectionService(),
+      fileImportService: FakeFileImportService(),
+      categoryStore: FakeCategoryStore(),
+      ruleStore: FakeRuleStore(),
+      notificationSettings: .constant(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9)),
+      budgetStore: FakeBudgetStore(budgets: []),
+      insightsStore: BudgetsPreviewSupport.makeInsightsStore(progress: [])
+    )
+  }
+  .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
+  .preferredColorScheme(.light)
+}
+
+#Preview("Settings — alerts on, light") {
   NavigationStack {
     SettingsScreen(
       mailConnectionService: FakeMailConnectionService(),
@@ -320,10 +560,10 @@ public struct SettingsScreen: View {
     )
   }
   .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Settings — iCloud sync off, dark") {
+#Preview("Settings — iCloud sync off, light") {
   NavigationStack {
     SettingsScreen(
       mailConnectionService: FakeMailConnectionService(),
@@ -339,10 +579,10 @@ public struct SettingsScreen: View {
     )
   }
   .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Settings — iCloud signed out, dark") {
+#Preview("Settings — iCloud signed out, light") {
   // U9b's state, and the one a user is most likely to be in: the container
   // constructed fine, so B11's preview above cannot show it. Sync is paused,
   // not failed, and the caption says where to go rather than what broke.
@@ -357,10 +597,10 @@ public struct SettingsScreen: View {
     )
   }
   .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Settings — alerts off, dark") {
+#Preview("Settings — alerts off, light") {
   NavigationStack {
     SettingsScreen(
       mailConnectionService: FakeMailConnectionService(),
@@ -371,10 +611,10 @@ public struct SettingsScreen: View {
     )
   }
   .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Settings — permission denied, dark") {
+#Preview("Settings — permission denied, light") {
   NavigationStack {
     SettingsScreen(
       mailConnectionService: FakeMailConnectionService(),
@@ -386,5 +626,5 @@ public struct SettingsScreen: View {
     )
   }
   .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }

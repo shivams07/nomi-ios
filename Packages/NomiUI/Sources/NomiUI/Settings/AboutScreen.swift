@@ -1,37 +1,56 @@
 import SwiftUI
 
-/// About/version row (U7, v5 addition).
+/// About screen (U7, v5 addition; ST). One card: name, version, and the
+/// privacy statement. The About artboard draws a large title and the card
+/// alone, below it.
 public struct AboutScreen: View {
+  /// The privacy statement, verbatim from DEC-07 (nomi-ios-decisions.md).
+  /// Every clause is checked against the code there. Do not edit this text
+  /// without re-reading DEC-07: a human compares it with the App Store privacy
+  /// form before submission (release check).
+  public static let privacyText =
+    "Nomi reads transaction emails from the mail account you connect and keeps your transactions on this device. If you use iCloud, they also sync to your private iCloud storage so your other devices can show them. Your mail password stays in this device's Keychain and is sent only to your mail provider to sign in. It does not sync, so you enter it again on each device. Nomi does not send your data to its developer."
+
   public init() {}
 
   public var body: some View {
-    List {
-      Section {
-        VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
           Text("Nomi")
             .nomiTextStyle(.title)
-            .foregroundStyle(NomiColor.textPrimary)
+            .foregroundStyle(NomiColor.ink)
           Text("Version \(NomiUIModule.version)")
+            .nomiTextStyle(.footnote)
+            .foregroundStyle(NomiColor.inkSecondary)
+            .padding(.top, NomiSpacing.xxs)
+          Rectangle()
+            .fill(NomiColor.separator)
+            .frame(height: 1)
+            .padding(.top, 14)
+            .accessibilityHidden(true)
+          Text(Self.privacyText)
             .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.textTertiary)
+            .foregroundStyle(NomiColor.inkSecondary)
+            .lineSpacing(4)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 14)
         }
-        .padding(.vertical, NomiSpacing.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .nomiCard(padding: EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16))
       }
-      Section {
-        Text("Your transactions and mail credentials never leave your device except to sync between your own devices via iCloud.")
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.textTertiary)
-      }
+      .padding(.horizontal, NomiSpacing.screenGutter)
+      .padding(.bottom, NomiSpacing.lg)
     }
-    .scrollContentBackground(.hidden)
-    .background(NomiColor.surfaceCanvas)
+    .background(NomiColor.ground)
     .navigationTitle("About")
+    .navigationBarTitleDisplayMode(.large)
   }
 }
 
-#Preview("About, dark") {
+#Preview("About, light") {
   NavigationStack {
     AboutScreen()
   }
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
