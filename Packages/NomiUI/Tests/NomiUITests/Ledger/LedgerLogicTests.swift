@@ -178,30 +178,67 @@ final class LedgerDayTotalTextTests: XCTestCase {
   }
 }
 
-/// The empty treatment is one pure decision, so every combination is pinned
-/// here rather than inferred from the view.
+/// The empty treatment is one pure decision over the window, the whole store
+/// and the filter, so every combination is pinned here rather than inferred
+/// from the view.
 final class LedgerEmptyKindTests: XCTestCase {
-  func testNoRowsAndNoFilterIsEmpty() {
-    XCTAssertEqual(LedgerEmptyKind.of(hasRows: false, isFiltered: false), .empty)
+  func testStoreWithNoTransactionsAndNoFilterIsTheFirstRunState() {
+    XCTAssertEqual(LedgerEmptyKind.of(hasRows: false, storeHasRows: false, isFiltered: false), .empty)
+  }
+
+  /// The ruling: an empty 90-day window with older rows must not claim "No
+  /// transactions yet". It is "Nothing in the last N days", with search and
+  /// Show older still available.
+  func testEmptyWindowWithOlderRowsIsNothingRecentNotFirstRun() {
+    XCTAssertEqual(LedgerEmptyKind.of(hasRows: false, storeHasRows: true, isFiltered: false), .nothingRecent)
   }
 
   func testRowsAndAFilterThatEmptiesThemIsNoResults() {
-    XCTAssertEqual(LedgerEmptyKind.of(hasRows: true, isFiltered: true), .noResults)
+    XCTAssertEqual(LedgerEmptyKind.of(hasRows: true, storeHasRows: true, isFiltered: true), .noResults)
   }
 
   func testRowsWithNoFilterShowNoEmptyState() {
-    XCTAssertEqual(LedgerEmptyKind.of(hasRows: true, isFiltered: false), .none)
+    XCTAssertEqual(LedgerEmptyKind.of(hasRows: true, storeHasRows: true, isFiltered: false), .none)
   }
 
   /// An active filter over an empty window still says "no results" and offers
-  /// "Clear filters". It must not fall through to the "no transactions" copy,
-  /// which would hide the chips the user needs to get back out.
+  /// "Clear filters". It must not fall through to the first-run copy, which
+  /// would hide the chips the user needs to get back out.
   func testFilterOverAnEmptyWindowIsNoResults() {
-    XCTAssertEqual(LedgerEmptyKind.of(hasRows: false, isFiltered: true), .noResults)
+    XCTAssertEqual(LedgerEmptyKind.of(hasRows: false, storeHasRows: true, isFiltered: true), .noResults)
+    XCTAssertEqual(LedgerEmptyKind.of(hasRows: false, storeHasRows: false, isFiltered: true), .noResults)
+  }
+
+  /// Search and the chip row hide only in the first-run state: `.empty` is the
+  /// one case `LedgerScreen` uses to hide them.
+  func testOnlyTheFirstRunStateIsEmpty() {
+    let kinds: [LedgerEmptyKind] = [
+      LedgerEmptyKind.of(hasRows: false, storeHasRows: false, isFiltered: false),
+      LedgerEmptyKind.of(hasRows: false, storeHasRows: true, isFiltered: false),
+      LedgerEmptyKind.of(hasRows: true, storeHasRows: true, isFiltered: false),
+      LedgerEmptyKind.of(hasRows: false, storeHasRows: true, isFiltered: true),
+    ]
+    XCTAssertEqual(kinds.filter { $0 == .empty }.count, 1)
+  }
+}
+
+final class LedgerWindowDaysTests: XCTestCase {
+  func testFirstStepIsNinetyDays() {
+    XCTAssertEqual(LedgerWindow.days(for: 0), 90)
+  }
+
+  func testEachShowOlderWidensByNinetyDays() {
+    XCTAssertEqual(LedgerWindow.days(for: 1), 180)
+    XCTAssertEqual(LedgerWindow.days(for: 2), 270)
   }
 }
 
 final class LedgerCopyTests: XCTestCase {
+  func testNothingRecentNamesTheWindowDays() {
+    XCTAssertEqual(LedgerCopy.nothingRecentTitle(days: 90), "Nothing in the last 90 days")
+    XCTAssertEqual(LedgerCopy.nothingRecentTitle(days: 180), "Nothing in the last 180 days")
+  }
+
   func testNoQueryReadsNoMatches() {
     XCTAssertEqual(LedgerCopy.noResultsTitle(query: ""), "No matches")
   }

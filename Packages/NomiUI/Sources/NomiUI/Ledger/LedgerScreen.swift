@@ -127,10 +127,12 @@ public struct LedgerScreen: View {
     selection != .all || LedgerSearch.normalized(searchText) != nil
   }
 
-  /// Decides whether the chip row and search bar show. Only `.empty` hides
-  /// them: an empty ledger has nothing to filter.
+  /// Decides the empty treatment, and whether the chip row and search bar show.
+  /// Only `.empty` hides them: the store has no transactions, so there is
+  /// nothing to filter or search.
   private var emptyKind: LedgerEmptyKind {
-    LedgerEmptyKind.of(hasRows: windowSummary.hasRows, isFiltered: isFiltered)
+    LedgerEmptyKind.of(
+      hasRows: windowSummary.hasRows, storeHasRows: windowSummary.storeHasRows, isFiltered: isFiltered)
   }
 
   /// SwiftData fixes a `@Query`'s predicate at the view instance's
@@ -183,7 +185,7 @@ public struct LedgerScreen: View {
         if searchFailed {
           // Same window arithmetic as `LedgerWindow.since`, so the copy names
           // the span actually shown after any "Show older" taps.
-          Text("Search didn’t run. Showing the last \((stepsBack + 1) * 90) days.")
+          Text("Search didn’t run. Showing the last \(LedgerWindow.days(for: stepsBack)) days.")
             .nomiTextStyle(.caption)
             .foregroundStyle(NomiColor.inkSecondary)
             .padding(.horizontal, NomiSpacing.screenGutter)
@@ -200,6 +202,7 @@ public struct LedgerScreen: View {
           filter: filter,
           since: since,
           now: now,
+          windowDays: LedgerWindow.days(for: stepsBack),
           isFiltered: isFiltered,
           transactionStore: transactionStore,
           categoryNamesByID: categoryNamesByID,
@@ -226,7 +229,8 @@ public struct LedgerScreen: View {
         )
         .id(queryKey)
 
-        if searchResults == nil {
+        // Hidden only in the true first-run state, where nothing is older.
+        if searchResults == nil && emptyKind != .empty {
           showOlderButton
         }
       }
@@ -334,11 +338,11 @@ public struct LedgerScreen: View {
 
   // MARK: - Paging
 
-  /// Unconditional, at the foot of the list — this screen never queries
-  /// beyond `since` to find out whether there's anything older to show, since
-  /// doing so would be exactly the whole-table read F1 exists to remove.
-  /// Stays visible in the empty state, so an empty window can still reach
-  /// older rows.
+  /// At the foot of the list. This screen never queries beyond `since` to find
+  /// out whether there's anything older to show, since doing so would be
+  /// exactly the whole-table read F1 exists to remove. Shown in the
+  /// "Nothing in the last N days" state, so an empty window can still reach
+  /// older rows; hidden only in the true first-run state.
   private var showOlderButton: some View {
     Button("Show older") {
       stepsBack += 1
@@ -392,6 +396,8 @@ private struct LedgerClearFiltersStyle: ButtonStyle {
 private struct LedgerTransactionList: View {
   let filter: TransactionFilter
   let now: Date
+  /// How far back the window reaches, for the "Nothing in the last N days" copy.
+  let windowDays: Int
   /// A chip other than All is selected, or the search box holds a query.
   let isFiltered: Bool
   let transactionStore: TransactionStore
@@ -413,6 +419,7 @@ private struct LedgerTransactionList: View {
   @Query private var transactions: [NomiCore.Transaction]
 
   @Environment(\.nomiAddTransaction) private var addTransaction
+  @Environment(\.modelContext) private var modelContext
 
   @State private var pendingDeleteID: UUID?
   @State private var errorMessage: String?
@@ -421,6 +428,7 @@ private struct LedgerTransactionList: View {
     filter: TransactionFilter,
     since: Date,
     now: Date,
+    windowDays: Int,
     isFiltered: Bool,
     transactionStore: TransactionStore,
     categoryNamesByID: [UUID: String],
@@ -435,6 +443,7 @@ private struct LedgerTransactionList: View {
   ) {
     self.filter = filter
     self.now = now
+    self.windowDays = windowDays
     self.isFiltered = isFiltered
     self.transactionStore = transactionStore
     self.categoryNamesByID = categoryNamesByID
@@ -468,12 +477,26 @@ private struct LedgerTransactionList: View {
     return searchMatches.filter { LedgerFilterPredicate.matches($0, filter: chipOnly) }
   }
 
-  /// The window, not the search: see `LedgerWindowSummary`.
+  /// The window, not the search: see `LedgerWindowSummary`. `storeHasRows` is
+  /// read only when the window is empty, since a non-empty window already
+  /// proves the store has rows.
   private var summary: LedgerWindowSummary {
-    LedgerWindowSummary(
-      hasRows: !transactions.isEmpty,
+    let hasRows = !transactions.isEmpty
+    return LedgerWindowSummary(
+      hasRows: hasRows,
+      storeHasRows: hasRows || storeHasAnyRow,
       needsReviewCount: transactions.filter { $0.needsReview }.count
     )
+  }
+
+  /// Whether the whole table holds any transaction. A one-row fetch, so it
+  /// never loads the table (F1). If the fetch throws it answers true, so the
+  /// screen says "Nothing in the last N days" rather than the first-run copy.
+  private var storeHasAnyRow: Bool {
+    var descriptor = FetchDescriptor<NomiCore.Transaction>()
+    descriptor.fetchLimit = 1
+    guard let rows = try? modelContext.fetch(descriptor) else { return true }
+    return !rows.isEmpty
   }
 
   private var groups: [LedgerDayGroup<NomiCore.Transaction>] {
@@ -594,12 +617,15 @@ private struct LedgerTransactionList: View {
 
   // MARK: - Empty states
 
-  /// `.empty` when the window holds nothing and no filter is set. `.noResults`
-  /// when a chip or the search empties the list. The chip row and search bar
-  /// are hidden only for `.empty`, in `LedgerScreen`.
+  /// `.empty` only when the store has no transactions and no filter is set:
+  /// the first-run state. `.nothingRecent` when the window is empty but older
+  /// rows exist. `.noResults` when a chip or the search empties the list. Only
+  /// `.empty` hides the chip row and search bar, in `LedgerScreen`.
   @ViewBuilder
   private var emptyContent: some View {
-    switch LedgerEmptyKind.of(hasRows: summary.hasRows, isFiltered: isFiltered) {
+    switch LedgerEmptyKind.of(
+      hasRows: summary.hasRows, storeHasRows: summary.storeHasRows, isFiltered: isFiltered)
+    {
     case .empty:
       NomiEmptyState(
         systemImage: "receipt",
@@ -607,6 +633,14 @@ private struct LedgerTransactionList: View {
         message: "Transactions appear here once mail is connected, or add one by hand.",
         actionTitle: addAction == nil ? nil : "Add transaction",
         action: addAction
+      )
+      .padding(.horizontal, NomiSpacing.md)
+      .padding(.top, NomiSpacing.lg)
+    case .nothingRecent:
+      NomiEmptyState(
+        systemImage: "clock",
+        title: LedgerCopy.nothingRecentTitle(days: windowDays),
+        message: "Older transactions aren’t shown here. Show older to widen the list, or search the whole ledger."
       )
       .padding(.horizontal, NomiSpacing.md)
       .padding(.top, NomiSpacing.lg)

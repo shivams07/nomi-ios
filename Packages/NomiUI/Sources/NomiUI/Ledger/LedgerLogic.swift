@@ -110,37 +110,52 @@ enum LedgerFiltering {
 /// `hasRows` is the 90-day window alone, not the search results: a window with
 /// no rows is "no transactions yet" even while a whole-ledger search runs.
 struct LedgerWindowSummary: Equatable {
+  /// The 90-day window (or the wider one after "Show older") holds a row.
   var hasRows: Bool
+  /// The whole table holds a row. Only read when the window is empty, with a
+  /// one-row fetch, so the first-run state is never claimed for a user who
+  /// has older transactions.
+  var storeHasRows: Bool
   var needsReviewCount: Int
 
   /// Before the list has reported: chips shown, counts zero.
-  static let unreported = LedgerWindowSummary(hasRows: true, needsReviewCount: 0)
+  static let unreported = LedgerWindowSummary(hasRows: true, storeHasRows: true, needsReviewCount: 0)
 }
 
 /// Which empty treatment the list shows when it has no rows to draw. `.none`
 /// means rows are drawn and no empty state applies. The enum name `none` is
 /// fine here because the type is not optional.
 enum LedgerEmptyKind: Equatable {
-  /// No rows in the window and no filter: icon, "No transactions yet", and
-  /// "Add transaction". The chip row and search bar are hidden.
+  /// The store holds no transactions at all, and no filter is set: the
+  /// first-run state, "No transactions yet" with "Add transaction". The chip
+  /// row and search bar are hidden, since there is nothing to search.
   case empty
-  /// A chip or search is active and empties the list, or there is nothing in
-  /// the window to filter. Shows the query and "Clear filters".
+  /// The 90-day window is empty but older rows exist, and no filter is set.
+  /// Shows "Nothing in the last N days". The search bar and chips stay, since
+  /// search reaches the whole ledger (DEC-10); "Show older" sits below.
+  case nothingRecent
+  /// A chip or search is active and empties the list. Shows the query and
+  /// "Clear filters".
   case noResults
   case none
 
-  static func of(hasRows: Bool, isFiltered: Bool) -> LedgerEmptyKind {
+  static func of(hasRows: Bool, storeHasRows: Bool, isFiltered: Bool) -> LedgerEmptyKind {
     if isFiltered { return .noResults }
-    return hasRows ? .none : .empty
+    if hasRows { return .none }
+    return storeHasRows ? .nothingRecent : .empty
   }
 }
 
-/// Copy for the no-results state. The query is shown only when there is one,
-/// trimmed the same way the search runs (`LedgerSearch.normalized`).
+/// Copy for the empty and no-results states. The query is shown only when
+/// there is one, trimmed the same way the search runs (`LedgerSearch.normalized`).
 enum LedgerCopy {
   static func noResultsTitle(query: String) -> String {
     guard let text = LedgerSearch.normalized(query) else { return "No matches" }
     return "No matches for “\(text)”"
+  }
+
+  static func nothingRecentTitle(days: Int) -> String {
+    "Nothing in the last \(days) days"
   }
 }
 
@@ -150,9 +165,13 @@ enum LedgerCopy {
 /// render; each "Show older" tap increments it by one, widening the visible
 /// history by another 90 days rather than replacing what's already shown.
 enum LedgerWindow {
+  /// How many days the window reaches back at this step: 90, then 180, and so on.
+  static func days(for stepsBack: Int) -> Int {
+    (stepsBack + 1) * 90
+  }
+
   static func since(for stepsBack: Int, now: Date, calendar: Calendar = .current) -> Date {
-    let days = (stepsBack + 1) * 90
-    return calendar.date(byAdding: .day, value: -days, to: now) ?? now
+    calendar.date(byAdding: .day, value: -days(for: stepsBack), to: now) ?? now
   }
 }
 
