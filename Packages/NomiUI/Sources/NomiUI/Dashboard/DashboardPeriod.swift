@@ -1,6 +1,8 @@
 import Foundation
 import NomiCore
 
+// clt-harness: include
+
 /// Pure period arithmetic for the dashboard's period selector — kept free of
 /// SwiftUI and `@Model` types so it is directly unit-testable. The single
 /// source of truth for how a calendar period turns into a range stays
@@ -19,6 +21,19 @@ enum DashboardPeriod {
       let year = components.year ?? 1970
       let startingYear = month >= 4 ? year : year - 1
       return .financialYear(startingYear: startingYear)
+    }
+  }
+
+  /// The period menu's shortcuts (HM1): 12 calendar-month anchors, this month
+  /// first, or 3 financial-year anchors. Years further back are not offered,
+  /// since most users have no data that far. Each anchor is `now` moved back
+  /// by whole periods, so `period(basis:anchor:)` reads the period back out.
+  static func recentAnchors(basis: PeriodBasis, now: Date, calendar: Calendar = .current) -> [Date] {
+    switch basis {
+    case .calendarMonth:
+      return (0..<12).compactMap { calendar.date(byAdding: .month, value: -$0, to: now) }
+    case .financialYear:
+      return (0..<3).compactMap { calendar.date(byAdding: .year, value: -$0, to: now) }
     }
   }
 

@@ -97,4 +97,68 @@ final class HeroTotalCardTests: XCTestCase {
     ]
     XCTAssertEqual(HeroSparkline.points(byDay: byDay), [100, 350, 400])
   }
+
+  // MARK: - HM1: the date axis, the flat zero state, the VoiceOver value, the
+  // ticks and the chip copy. Pure helpers, so XCTest here (V3) and not a
+  // harness file: `HeroSparkline` imports Charts.
+
+  private func calendarDay(_ year: Int, _ month: Int, _ dayOfMonth: Int) -> Date {
+    var components = DateComponents()
+    components.year = year
+    components.month = month
+    components.day = dayOfMonth
+    components.hour = 12
+    return Calendar.current.date(from: components)!
+  }
+
+  func testSamplesStepFromZeroAndHoldTheTotalToThePeriodEnd() {
+    let range = dateRange(for: .month(year: 2026, month: 2), calendar: .current)
+    let byDay = [
+      DayBucket(id: calendarDay(2026, 2, 10), debitMinor: 250),
+      DayBucket(id: calendarDay(2026, 2, 3), debitMinor: 100),
+    ]
+    let samples = HeroSparkline.samples(byDay: byDay, range: range)
+    XCTAssertEqual(samples.count, 4)
+    XCTAssertEqual(samples.first, HeroSparkline.Sample(date: range.lowerBound, total: 0))
+    XCTAssertEqual(samples[1].total, 100)
+    XCTAssertEqual(samples[2].total, 350)
+    XCTAssertEqual(samples.last, HeroSparkline.Sample(date: range.upperBound, total: 350))
+  }
+
+  func testSamplesAreEmptyWithFewerThanTwoSpendDaysSoTheFlatLineDraws() {
+    let range = dateRange(for: .month(year: 2026, month: 2), calendar: .current)
+    XCTAssertTrue(HeroSparkline.samples(byDay: [], range: range).isEmpty)
+    XCTAssertTrue(
+      HeroSparkline.samples(byDay: [DayBucket(id: calendarDay(2026, 2, 3), debitMinor: 100)], range: range).isEmpty
+    )
+  }
+
+  func testAccessibilityValueNamesTheLastSpendDayAndTheTotal() {
+    let byDay = [
+      DayBucket(id: calendarDay(2026, 2, 3), debitMinor: 100),
+      DayBucket(id: calendarDay(2026, 2, 10), debitMinor: 250),
+    ]
+    XCTAssertEqual(HeroSparkline.accessibilityValue(byDay: byDay), "Highest on day 10, ₹3.50")
+    XCTAssertEqual(HeroSparkline.accessibilityValue(byDay: []), "No spending this period")
+  }
+
+  func testMonthTicksAreDayNumbersAndFollowLeapFebruary() {
+    let february2026 = HeroSparkline.tickLabels(for: .month(year: 2026, month: 2))
+    XCTAssertEqual(february2026.first, "1")
+    XCTAssertEqual(february2026.last, "28")
+    XCTAssertEqual(HeroSparkline.tickLabels(for: .month(year: 2024, month: 2)).last, "29")
+  }
+
+  func testFinancialYearTicksNameTheMonth() {
+    let fy = HeroSparkline.tickLabels(for: .financialYear(startingYear: 2026))
+    XCTAssertEqual(fy.first, "1 Apr")
+    XCTAssertEqual(fy.last, "31 Mar")
+  }
+
+  func testChipCopyReadsTheDirectionAsAWord() {
+    let up = HeroDelta.compute(current: 64_824_24, prior: 58_404_00)!
+    XCTAssertEqual(HeroDelta.chipCopy(up), "up ₹6,420.24 vs last period")
+    let down = HeroDelta.compute(current: 1_000_00, prior: 1_500_00)!
+    XCTAssertEqual(HeroDelta.chipCopy(down), "down ₹500.00 vs last period")
+  }
 }
