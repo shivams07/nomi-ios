@@ -155,8 +155,8 @@ struct LightTokenTests {
     #expect(NomiFont.interSemiBold == "Inter-SemiBold")
   }
 
-  @Test func bundledFontsAreTheFourFilesPresentInTheRepo() {
-    #expect(NomiFont.bundledFileNames.count == 4)
+  @Test func bundledFontsAreTheSixFilesPresentInTheRepo() {
+    #expect(NomiFont.bundledFileNames.count == 6)
     #expect(NomiFont.bundledFileNames.contains("Inter-Regular.otf"))
   }
 

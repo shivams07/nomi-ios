@@ -19,10 +19,8 @@ public typealias NomiPlatformFont = NSFont
 /// `App/Info.plist` does not declare them (U18). `registerIfNeeded` below is
 /// the only thing that puts these on the process font table.
 ///
-/// Inter Medium and Inter SemiBold are not in the repo yet (Q2, pending). Until
-/// F2F adds them, `Font.custom` falls back to the system font for those two
-/// faces. That fallback is visible and is flagged in the PR. Do not add font
-/// files here without the approval.
+/// Inter Medium and Inter SemiBold ship beside Regular under DEC-02 (F2F), all
+/// three from one Inter 4.1 release. Add font files here only under DEC-02.
 ///
 /// This file targets iOS at runtime but also compiles under plain macOS
 /// (`swift test` on the CI runner has no iOS simulator attached). The platform
@@ -39,13 +37,15 @@ public enum NomiFont {
   @available(*, deprecated, message: "Use NomiFont.interSemiBold")
   public static let montserratBold = interSemiBold
 
-  /// Font files present in `Resources/Fonts`. F1 lists the four files that
-  /// exist today: Inter Regular and three Montserrat, which X1 removes.
+  /// Font files present in `Resources/Fonts`. Inter Regular, Medium and SemiBold
+  /// (F2F), plus three Montserrat files, which X1 removes.
   public static let bundledFileNames: [String] = [
     "Montserrat-Medium.otf",
     "Montserrat-SemiBold.otf",
     "Montserrat-Bold.otf",
     "Inter-Regular.otf",
+    "Inter-Medium.otf",
+    "Inter-SemiBold.otf",
   ]
 
   /// One-time registration for every file in `bundledFileNames`. See the type
