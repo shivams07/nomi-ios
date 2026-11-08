@@ -44,7 +44,9 @@ public struct AboutScreen: View {
     }
     .background(NomiColor.ground)
     .navigationTitle("About")
+    #if os(iOS)
     .navigationBarTitleDisplayMode(.large)
+    #endif
   }
 }
 
