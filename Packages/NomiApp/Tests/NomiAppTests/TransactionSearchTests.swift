@@ -21,6 +21,9 @@ import XCTest
 @MainActor
 final class TransactionSearchTests: XCTestCase {
 
+  /// Owns each test's container for the life of the test. See `InMemoryStack`.
+  private var stacks: [InMemoryStack] = []
+
   /// The done-when, in one test: 300 rows, and "swiggy" reaches each of the
   /// four searchable fields exactly once.
   ///
@@ -250,16 +253,9 @@ final class TransactionSearchTests: XCTestCase {
   /// A fresh container per test, and deliberately not
   /// `InMemoryModelContainer.shared`: these tests count rows.
   private func makeContext() throws -> ModelContext {
-    let schema = Schema([
-      Transaction.self, NomiCore.Category.self, Budget.self, BudgetAlertLog.self,
-      Rule.self, Account.self, AccountBinding.self, ColumnMappingRecord.self,
-    ])
-    let container = try ModelContainer(
-      for: schema,
-      configurations: [
-        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
-      ])
-    return container.mainContext
+    let stack = try InMemoryStack()
+    stacks.append(stack)
+    return stack.context
   }
 
   /// Rows that cannot match "swiggy" on any of the four fields, one per day so

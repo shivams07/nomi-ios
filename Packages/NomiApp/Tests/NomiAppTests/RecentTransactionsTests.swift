@@ -19,6 +19,9 @@ import XCTest
 @MainActor
 final class RecentTransactionsTests: XCTestCase {
 
+  /// Owns each test's container for the life of the test. See `InMemoryStack`.
+  private var stacks: [InMemoryStack] = []
+
   func testRecentReturnsTheNewestRowsNewestFirst() throws {
     let (store, context, _) = try makeStore()
     let dates = insertRows(count: 20, into: context)
@@ -104,16 +107,9 @@ final class RecentTransactionsTests: XCTestCase {
   }
 
   private func makeStore() throws -> (SwiftDataInsightsStore, ModelContext, InsightsCache) {
-    let schema = Schema([
-      Transaction.self, NomiCore.Category.self, Budget.self, BudgetAlertLog.self,
-      Rule.self, Account.self, AccountBinding.self, ColumnMappingRecord.self,
-    ])
-    let container = try ModelContainer(
-      for: schema,
-      configurations: [
-        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
-      ])
-    let context = container.mainContext
+    let stack = try InMemoryStack()
+    stacks.append(stack)
+    let context = stack.context
     let cache = InsightsCache()
     return (SwiftDataInsightsStore(context: context, cache: cache), context, cache)
   }

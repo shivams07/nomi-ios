@@ -22,10 +22,15 @@ final class ReferenceDataReconcilerTests: XCTestCase {
   private static let later = Date(timeIntervalSince1970: 1_780_086_400)
   private static let stampTime = Date(timeIntervalSince1970: 1_789_000_000)
 
+  /// The test case holds each test's stack. A `Harness` that owned its own
+  /// container would be a local of the test, and could lose it while the test
+  /// still uses `harness.context`. See `InMemoryStack` and `makeHarness`.
+  private var stacks: [InMemoryStack] = []
+
   // MARK: - Categories
 
   func testTwoDatedCategoriesSharingAnIDCollapseToTheEarlier() throws {
-    let harness = try Harness()
+    let harness = try makeHarness()
     let id = UUID()
     harness.context.insert(NomiCore.Category(id: id, name: "Pets", createdAt: Self.later))
     harness.context.insert(NomiCore.Category(id: id, name: "Pets", createdAt: Self.earlier))
@@ -40,7 +45,7 @@ final class ReferenceDataReconcilerTests: XCTestCase {
   }
 
   func testAnUndatedMemberIsStampedAndItsGroupIsLeftForTheNextPass() throws {
-    let harness = try Harness()
+    let harness = try makeHarness()
     let id = UUID()
     harness.context.insert(NomiCore.Category(id: id, name: "Pets", createdAt: nil))
     harness.context.insert(NomiCore.Category(id: id, name: "Pets", createdAt: Self.earlier))
@@ -62,7 +67,7 @@ final class ReferenceDataReconcilerTests: XCTestCase {
   /// keep whichever the fetch returned first — the tie the survivor rule cannot
   /// break.
   func testTwoUndatedCopiesAreStampedApartSoTheNextPassHasAnAnswer() throws {
-    let harness = try Harness()
+    let harness = try makeHarness()
     let id = UUID()
     harness.context.insert(NomiCore.Category(id: id, name: "Pets", createdAt: nil))
     harness.context.insert(NomiCore.Category(id: id, name: "Pets", createdAt: nil))
@@ -79,7 +84,7 @@ final class ReferenceDataReconcilerTests: XCTestCase {
   }
 
   func testARenameOnTheLosingCopyIsCarriedOntoTheSurvivor() throws {
-    let harness = try Harness()
+    let harness = try makeHarness()
     let spec = DefaultCategorySeed.specs[0]
     harness.context.insert(
       NomiCore.Category(
@@ -102,7 +107,7 @@ final class ReferenceDataReconcilerTests: XCTestCase {
   // MARK: - Rules and budgets
 
   func testTwoRulesSharingAnIDCollapseToTheEarlier() throws {
-    let harness = try Harness()
+    let harness = try makeHarness()
     let id = UUID()
     let category = UUID()
     harness.context.insert(
@@ -120,7 +125,7 @@ final class ReferenceDataReconcilerTests: XCTestCase {
   }
 
   func testTwoBudgetsForOneCategoryCollapseToTheEarlier() throws {
-    let harness = try Harness()
+    let harness = try makeHarness()
     let category = UUID()
     let other = UUID()
     harness.context.insert(Budget(categoryID: category, amountMinor: 900_000, createdAt: Self.later))
@@ -141,7 +146,7 @@ final class ReferenceDataReconcilerTests: XCTestCase {
   // MARK: - didWrite
 
   func testARemovalDropsTheCache() throws {
-    let harness = try Harness()
+    let harness = try makeHarness()
     let id = UUID()
     harness.context.insert(NomiCore.Category(id: id, name: "Pets", createdAt: Self.later))
     harness.context.insert(NomiCore.Category(id: id, name: "Pets", createdAt: Self.earlier))
@@ -156,7 +161,7 @@ final class ReferenceDataReconcilerTests: XCTestCase {
   /// The pass has work to do — a row to stamp — so "nothing happened" cannot be
   /// why the cache survives.
   func testAPassThatRemovesNothingDoesNotDropTheCache() throws {
-    let harness = try Harness()
+    let harness = try makeHarness()
     harness.context.insert(NomiCore.Category(name: "Pets", createdAt: nil))
     try harness.context.save()
     let before = harness.cache.generation
@@ -170,24 +175,26 @@ final class ReferenceDataReconcilerTests: XCTestCase {
   // MARK: -
 
   @MainActor
+  private func makeHarness() throws -> Harness {
+    let stack = try InMemoryStack()
+    stacks.append(stack)
+    return Harness(stack: stack)
+  }
+
+  @MainActor
   private struct Harness {
     let context: ModelContext
     let cache: InsightsCache
     let reconciler: ReferenceDataReconciler
 
-    init() throws {
-      let container = try ModelContainer(
-        for: NomiModelContainer.schema,
-        configurations: [
-          ModelConfiguration(
-            schema: NomiModelContainer.schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
-        ])
+    /// Takes the stack from the test case, which keeps it alive; see `makeHarness`.
+    init(stack: InMemoryStack) {
       let cache = InsightsCache()
       let stamp = ReferenceDataReconcilerTests.stampTime
-      self.context = container.mainContext
+      self.context = stack.context
       self.cache = cache
       self.reconciler = ReferenceDataReconciler(
-        context: container.mainContext,
+        context: stack.context,
         coordinator: WriteCoordinator(cache: cache),
         now: { stamp })
     }

@@ -11,6 +11,9 @@ import XCTest
 /// and everything that can be wrong about this seed is in the specs.
 final class DefaultRuleSeedTests: XCTestCase {
 
+  /// Owns each test's container for the life of the test. See `InMemoryStack`.
+  private var stacks: [InMemoryStack] = []
+
   private var specs: [RuleSeedSpec] { DefaultRuleSeed.specs }
 
   // MARK: - Idempotence
@@ -263,16 +266,9 @@ final class DefaultRuleSeedTests: XCTestCase {
   /// `InMemoryModelContainer`.
   @MainActor
   private func makeContext() throws -> ModelContext {
-    let schema = Schema([
-      Transaction.self, NomiCore.Category.self, Budget.self, BudgetAlertLog.self,
-      Rule.self, Account.self, AccountBinding.self, ColumnMappingRecord.self,
-    ])
-    let container = try ModelContainer(
-      for: schema,
-      configurations: [
-        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
-      ])
-    return container.mainContext
+    let stack = try InMemoryStack()
+    stacks.append(stack)
+    return stack.context
   }
 
   // MARK: - Scope (W2-5)

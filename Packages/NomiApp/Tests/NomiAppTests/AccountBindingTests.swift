@@ -21,6 +21,9 @@ import XCTest
 @MainActor
 final class AccountBindingTests: XCTestCase {
 
+  /// Owns each test's container for the life of the test. See `InMemoryStack`.
+  private var stacks: [InMemoryStack] = []
+
   private let domain = "alerts.hdfcbank.net"
   private let fragment = "4471"
 
@@ -292,19 +295,12 @@ final class AccountBindingTests: XCTestCase {
   private func makeStoreAndContainer() throws
     -> (SwiftDataTransactionStore, ModelContext, ModelContainer)
   {
-    let schema = Schema([
-      Transaction.self, NomiCore.Category.self, Budget.self, BudgetAlertLog.self,
-      Rule.self, Account.self, AccountBinding.self, ColumnMappingRecord.self,
-    ])
-    let container = try ModelContainer(
-      for: schema,
-      configurations: [
-        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
-      ])
-    let context = container.mainContext
+    let stack = try InMemoryStack()
+    stacks.append(stack)
+    let context = stack.context
     let store = SwiftDataTransactionStore(
       context: context,
       coordinator: WriteCoordinator(cache: InsightsCache()))
-    return (store, context, container)
+    return (store, context, stack.container)
   }
 }

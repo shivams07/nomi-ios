@@ -20,6 +20,9 @@ import XCTest
 @MainActor
 final class LedgerFilterPredicateMatchesTests: XCTestCase {
 
+  /// Owns each test's container for the life of the test. See `InMemoryStack`.
+  private var stacks: [InMemoryStack] = []
+
   func testUncategorizedOnlyMatchesOnlyRowsWithNoCategory() throws {
     let context = try makeContext()
     let categorized = insert(Transaction(categoryID: UUID()), into: context)
@@ -173,12 +176,8 @@ final class LedgerFilterPredicateMatchesTests: XCTestCase {
   }
 
   private func makeContext() throws -> ModelContext {
-    let schema = Schema([Transaction.self])
-    let container = try ModelContainer(
-      for: schema,
-      configurations: [
-        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
-      ])
-    return container.mainContext
+    let stack = try InMemoryStack(schema: Schema([Transaction.self]))
+    stacks.append(stack)
+    return stack.context
   }
 }
