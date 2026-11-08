@@ -43,6 +43,10 @@ public struct LedgerScreen: View {
   public let accountStore: AccountStore
   public let editor: TransactionEditing
   public let suggester: (any CategorySuggesting)?
+  /// Searches the whole ledger for a non-blank query (D2). Nil in previews and
+  /// until the app passes it; the box then filters the 90-day window in memory,
+  /// as it always did.
+  public let transactionSearch: (any TransactionSearching)?
 
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
   @Query private var accounts: [NomiCore.Account]
@@ -52,6 +56,17 @@ public struct LedgerScreen: View {
   @State private var now = Date()
   @State private var searchText = ""
   @State private var presented: PresentedTransaction?
+  /// Rows from `transactionSearch` for the current query. Nil means "no
+  /// whole-ledger results to show", which is the windowed list. A non-nil
+  /// array is shown as-is, even when empty.
+  @State private var searchResults: [NomiCore.Transaction]?
+  /// The last whole-ledger search threw. The list falls back to the window and
+  /// says so, rather than showing nothing or a silent partial answer.
+  @State private var searchFailed = false
+  /// Bumped to re-run the search with the same query, once the detail sheet
+  /// closes or a row is changed from the list. Results read before then may
+  /// point at a deleted or edited row.
+  @State private var searchGeneration = 0
 
   /// A sheet does not inherit the root's `modelContainer` — the detail
   /// screen's own `@Query` would trap at runtime (not in CI, which never
@@ -64,13 +79,15 @@ public struct LedgerScreen: View {
     accountStore: AccountStore,
     editor: TransactionEditing,
     initialChip: LedgerChipSelection = .all,
-    suggester: (any CategorySuggesting)? = nil
+    suggester: (any CategorySuggesting)? = nil,
+    transactionSearch: (any TransactionSearching)? = nil
   ) {
     self.transactionStore = transactionStore
     self.categoryStore = categoryStore
     self.accountStore = accountStore
     self.editor = editor
     self.suggester = suggester
+    self.transactionSearch = transactionSearch
     self._selection = State(initialValue: initialChip)
   }
 
@@ -141,6 +158,16 @@ public struct LedgerScreen: View {
           .padding(.horizontal, NomiSpacing.screenGutter)
           .padding(.vertical, NomiSpacing.sm)
 
+        if searchFailed {
+          // Same window arithmetic as `LedgerWindow.since`, so the copy names
+          // the span actually shown after any "Show older" taps.
+          Text("Search didn’t run. Showing the last \((stepsBack + 1) * 90) days.")
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.textSecondary)
+            .padding(.horizontal, NomiSpacing.screenGutter)
+            .padding(.bottom, NomiSpacing.xs)
+        }
+
         // `.id(queryKey)` is load-bearing: SwiftData's `@Query` fixes its
         // filter at the view instance's construction and never re-evaluates
         // it in place. Only widening the window changes that predicate, so
@@ -156,19 +183,38 @@ public struct LedgerScreen: View {
           categoryPaletteSlotByID: categoryPaletteSlotByID,
           categorySymbolNameByID: categorySymbolNameByID,
           accountNamesByID: accountNamesByID,
-          onSelectTransaction: { id in presented = PresentedTransaction(id: id) }
+          searchMatches: searchResults,
+          onSelectTransaction: { id in
+            // Drop the whole-ledger rows before the sheet opens. The sheet can
+            // delete or edit the row it shows, and a model read after that
+            // can trap; the list then falls back to the live window until the
+            // sheet closes and the search runs again.
+            searchResults = nil
+            presented = PresentedTransaction(id: id)
+          },
+          onMutate: {
+            // Same reason as above, for delete and "Mark reviewed" in the
+            // context menu: those rows may be in `searchResults`.
+            searchResults = nil
+            searchGeneration += 1
+          }
         )
         .id(queryKey)
 
-        showOlderButton
+        if searchResults == nil {
+          showOlderButton
+        }
       }
     }
     .background(NomiColor.surfaceCanvas)
-    .searchable(text: $searchText, prompt: "Search transactions")
+    .searchable(text: $searchText, prompt: "Search all transactions")
     // Sets `now` once per appearance rather than every `dayHeader` call —
     // day headers read it from here, not from a fresh `Date()` in `body`.
     .onAppear { now = Date() }
-    .sheet(item: $presented) { presented in
+    .task(id: searchKey) {
+      await runSearch(for: searchKey.text)
+    }
+    .sheet(item: $presented, onDismiss: { searchGeneration += 1 }) { presented in
       TransactionDetailScreen(
         transactionID: presented.id,
         transactionStore: transactionStore,
@@ -178,6 +224,47 @@ public struct LedgerScreen: View {
         suggester: suggester
       )
       .modelContainer(modelContext.container)
+    }
+  }
+
+  // MARK: - Whole-ledger search
+
+  /// What the search task is keyed on: the settled query and the reload
+  /// counter. Typing changes `text`; closing the detail sheet or changing a
+  /// row from the list changes `generation`.
+  private struct SearchKey: Hashable {
+    let text: String?
+    let generation: Int
+  }
+
+  private var searchKey: SearchKey {
+    SearchKey(text: LedgerSearch.normalized(searchText), generation: searchGeneration)
+  }
+
+  /// Runs one search after the debounce. `.task(id:)` cancels the previous
+  /// task on each keystroke, so only the last query reaches the store, and a
+  /// cancelled wait returns without touching state.
+  ///
+  /// Between keystrokes `searchResults` still holds the previous query's rows
+  /// for up to the debounce plus the fetch, which is a short stale window, not
+  /// a wrong answer that persists.
+  private func runSearch(for text: String?) async {
+    guard let text, let transactionSearch else {
+      searchResults = nil
+      searchFailed = false
+      return
+    }
+    do {
+      try await Task.sleep(nanoseconds: LedgerSearch.debounceNanoseconds)
+    } catch {
+      return
+    }
+    do {
+      searchResults = try transactionSearch.search(text, limit: LedgerSearch.limit)
+      searchFailed = false
+    } catch {
+      searchResults = nil
+      searchFailed = true
     }
   }
 
@@ -271,7 +358,12 @@ private struct LedgerTransactionList: View {
   let categoryPaletteSlotByID: [UUID: Int]
   let categorySymbolNameByID: [UUID: String]
   let accountNamesByID: [UUID: String]
+  /// Whole-ledger rows for the current query, or nil for the windowed list.
+  let searchMatches: [NomiCore.Transaction]?
   let onSelectTransaction: (UUID) -> Void
+  /// Called after this list deletes or marks a row reviewed, so the parent can
+  /// drop any whole-ledger rows it still holds.
+  let onMutate: () -> Void
 
   @Query private var transactions: [NomiCore.Transaction]
 
@@ -287,7 +379,9 @@ private struct LedgerTransactionList: View {
     categoryPaletteSlotByID: [UUID: Int],
     categorySymbolNameByID: [UUID: String],
     accountNamesByID: [UUID: String],
-    onSelectTransaction: @escaping (UUID) -> Void
+    searchMatches: [NomiCore.Transaction]?,
+    onSelectTransaction: @escaping (UUID) -> Void,
+    onMutate: @escaping () -> Void
   ) {
     self.filter = filter
     self.now = now
@@ -296,7 +390,9 @@ private struct LedgerTransactionList: View {
     self.categoryPaletteSlotByID = categoryPaletteSlotByID
     self.categorySymbolNameByID = categorySymbolNameByID
     self.accountNamesByID = accountNamesByID
+    self.searchMatches = searchMatches
     self.onSelectTransaction = onSelectTransaction
+    self.onMutate = onMutate
     // Only `since` is pushed into the `@Query` itself — see
     // `LedgerFilterPredicate`'s note on why the chip/search criteria are
     // applied below instead, in `filtered`.
@@ -307,7 +403,23 @@ private struct LedgerTransactionList: View {
   }
 
   private var filtered: [NomiCore.Transaction] {
-    transactions.filter { LedgerFilterPredicate.matches($0, filter: filter) }
+    // A blank box never shows whole-ledger rows, even for the one frame before
+    // `runSearch` clears `searchMatches`.
+    guard let searchMatches, LedgerSearch.normalized(filter.searchText) != nil else {
+      return transactions.filter { LedgerFilterPredicate.matches($0, filter: filter) }
+    }
+    // The whole-ledger search already matched the text. Only the chip still
+    // applies, so the text is cleared here rather than matched twice.
+    var chipOnly = filter
+    chipOnly.searchText = ""
+    return searchMatches.filter { LedgerFilterPredicate.matches($0, filter: chipOnly) }
+  }
+
+  /// "No transactions yet" is only true with no query. A query that matches
+  /// nothing gets its own line, so an empty answer is never read as an empty
+  /// ledger.
+  private var emptyMessage: String {
+    LedgerSearch.normalized(filter.searchText) == nil ? "No transactions yet" : "No matches"
   }
 
   private var maxAmountMinor: Int {
@@ -420,7 +532,7 @@ private struct LedgerTransactionList: View {
   }
 
   private var emptyState: some View {
-    Text("No transactions yet")
+    Text(emptyMessage)
       .nomiTextStyle(.caption)
       .foregroundStyle(NomiColor.textTertiary)
       .padding(.horizontal, NomiSpacing.screenGutter)
@@ -432,6 +544,7 @@ private struct LedgerTransactionList: View {
   private func markReviewed(_ id: UUID) {
     do {
       try transactionStore.dismissReview(id)
+      onMutate()
     } catch {
       errorMessage = "Could not mark this reviewed."
     }
@@ -442,6 +555,7 @@ private struct LedgerTransactionList: View {
     pendingDeleteID = nil
     do {
       try transactionStore.delete(id)
+      onMutate()
     } catch {
       errorMessage = "Could not delete this transaction."
     }
