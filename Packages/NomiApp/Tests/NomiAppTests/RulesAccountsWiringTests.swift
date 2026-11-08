@@ -15,6 +15,9 @@ import XCTest
 @MainActor
 final class RulesAccountsWiringTests: XCTestCase {
 
+  /// Owns each test's container for the life of the test. See `InMemoryStack`.
+  private var stacks: [InMemoryStack] = []
+
   func testSettingsPassesItsAccountsToRules() throws {
     let context = try makeContext()
     let checking = NomiCore.Account(displayName: "Checking", institution: "Bank A", lastFour: "1234")
@@ -58,12 +61,8 @@ final class RulesAccountsWiringTests: XCTestCase {
   }
 
   private func makeContext() throws -> ModelContext {
-    let schema = Schema([NomiCore.Account.self])
-    let container = try ModelContainer(
-      for: schema,
-      configurations: [
-        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
-      ])
-    return container.mainContext
+    let stack = try InMemoryStack(schema: Schema([NomiCore.Account.self]))
+    stacks.append(stack)
+    return stack.context
   }
 }

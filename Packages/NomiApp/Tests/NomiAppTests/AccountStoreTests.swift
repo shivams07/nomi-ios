@@ -25,6 +25,9 @@ import XCTest
 @MainActor
 final class AccountStoreTests: XCTestCase {
 
+  /// Owns each test's container for the life of the test. See `InMemoryStack`.
+  private var stacks: [InMemoryStack] = []
+
   // MARK: - The real store
 
   /// The whole unit, in one test: create, then read the summaries through a
@@ -516,16 +519,9 @@ final class AccountStoreTests: XCTestCase {
   ///
   /// Deliberately not `InMemoryModelContainer.shared`: these tests count rows.
   private func makeStore() throws -> (SwiftDataAccountStore, ModelContext, InsightsCache) {
-    let schema = Schema([
-      Transaction.self, NomiCore.Category.self, Budget.self, BudgetAlertLog.self,
-      Rule.self, Account.self, AccountBinding.self, ColumnMappingRecord.self,
-    ])
-    let container = try ModelContainer(
-      for: schema,
-      configurations: [
-        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
-      ])
-    let context = container.mainContext
+    let stack = try InMemoryStack()
+    stacks.append(stack)
+    let context = stack.context
     let cache = InsightsCache()
     let store = SwiftDataAccountStore(context: context, coordinator: WriteCoordinator(cache: cache))
     return (store, context, cache)

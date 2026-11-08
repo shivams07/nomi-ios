@@ -18,6 +18,9 @@ import XCTest
 @MainActor
 final class CategorySuggesterTests: XCTestCase {
 
+  /// Owns each test's container for the life of the test. See `InMemoryStack`.
+  private var stacks: [InMemoryStack] = []
+
   /// Fixed ids so the tie-break is decidable: `food` sorts before `shopping`.
   private let food = UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
   private let shopping = UUID(uuidString: "00000000-0000-0000-0000-0000000000A2")!
@@ -213,16 +216,9 @@ final class CategorySuggesterTests: XCTestCase {
   }
 
   private func makeSuggester() throws -> (SwiftDataCategorySuggester, ModelContext) {
-    let schema = Schema([
-      Transaction.self, NomiCore.Category.self, Budget.self, BudgetAlertLog.self,
-      Rule.self, Account.self, AccountBinding.self, ColumnMappingRecord.self,
-    ])
-    let container = try ModelContainer(
-      for: schema,
-      configurations: [
-        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
-      ])
-    let context = container.mainContext
+    let stack = try InMemoryStack()
+    stacks.append(stack)
+    let context = stack.context
     return (SwiftDataCategorySuggester(context: context), context)
   }
 

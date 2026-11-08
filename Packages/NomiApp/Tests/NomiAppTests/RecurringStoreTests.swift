@@ -15,6 +15,9 @@ import XCTest
 @MainActor
 final class RecurringStoreTests: XCTestCase {
 
+  /// Owns each test's container for the life of the test. See `InMemoryStack`.
+  private var stacks: [InMemoryStack] = []
+
   func testAMonthlyChargeIsReportedWithItsNextDate() throws {
     let (store, context, _) = try makeStore()
     insertRun(daysAgo: [60, 30, 0], into: context)
@@ -222,16 +225,9 @@ final class RecurringStoreTests: XCTestCase {
   }
 
   private func makeStore() throws -> (SwiftDataRecurringStore, ModelContext, InsightsCache) {
-    let schema = Schema([
-      Transaction.self, NomiCore.Category.self, Budget.self, BudgetAlertLog.self,
-      Rule.self, Account.self, AccountBinding.self, ColumnMappingRecord.self,
-    ])
-    let container = try ModelContainer(
-      for: schema,
-      configurations: [
-        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
-      ])
-    let context = container.mainContext
+    let stack = try InMemoryStack()
+    stacks.append(stack)
+    let context = stack.context
     let cache = InsightsCache()
     // Copied out rather than captured through `self`: the closure outlives
     // this call and there is no reason for the store to hold the test case.

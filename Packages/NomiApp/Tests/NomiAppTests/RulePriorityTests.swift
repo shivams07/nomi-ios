@@ -19,6 +19,9 @@ import XCTest
 @MainActor
 final class RulePriorityTests: XCTestCase {
 
+  /// Owns each test's container for the life of the test. See `InMemoryStack`.
+  private var stacks: [InMemoryStack] = []
+
   // MARK: - The real store
 
   /// The invariant, stated once: after `create`, the new rule outranks
@@ -238,16 +241,9 @@ final class RulePriorityTests: XCTestCase {
   /// A `ModelContainer` under `swift test` is fine in XCTest and traps under
   /// swift-testing — see `InMemoryModelContainer` — which is why this is XCTest.
   private func makeStore() throws -> (SwiftDataRuleStore, ModelContext) {
-    let schema = Schema([
-      Transaction.self, NomiCore.Category.self, Budget.self, BudgetAlertLog.self,
-      Rule.self, Account.self, AccountBinding.self, ColumnMappingRecord.self,
-    ])
-    let container = try ModelContainer(
-      for: schema,
-      configurations: [
-        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
-      ])
-    let context = container.mainContext
+    let stack = try InMemoryStack()
+    stacks.append(stack)
+    let context = stack.context
     let store = SwiftDataRuleStore(context: context, coordinator: WriteCoordinator(cache: InsightsCache()))
     return (store, context)
   }
