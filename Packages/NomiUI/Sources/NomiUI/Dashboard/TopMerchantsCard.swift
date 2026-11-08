@@ -1,10 +1,14 @@
+import Foundation
 import NomiCore
 import SwiftUI
 
-/// Card 4: the top-5 merchant rollup. Distinct from `RecentTransactionsCard`
-/// — this is a rollup by merchant total, not a list of individual rows.
-/// `MerchantTotal.label` is already `merchantName ?? descriptionText` (§2.4),
-/// resolved once in `InsightsStore`, so this view never re-derives it.
+// clt-harness: include
+
+/// "Top merchants" on Insights: the top merchants by total, with an initials
+/// tile per row. Totals only, no order counts and no rank. `MerchantTotal.label`
+/// is already `merchantName ?? descriptionText` (§2.4), resolved once in
+/// `InsightsStore`, so this view never re-derives it. It moved here from Home
+/// (SIMP §1); the initializer is unchanged so Home compiles until HM1 removes it.
 public struct TopMerchantsCard: View {
   public let merchants: [MerchantTotal]
 
@@ -12,71 +16,74 @@ public struct TopMerchantsCard: View {
     self.merchants = merchants
   }
 
+  /// Two letters for the row's initials tile, from the merchant label.
+  static func initials(for label: String) -> String {
+    String(label.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2)).uppercased()
+  }
+
   public var body: some View {
-    DashboardCard {
-      VStack(alignment: .leading, spacing: NomiSpacing.sm) {
-        Text("Top merchants")
-          .nomiTextStyle(.title)
-          .foregroundStyle(NomiColor.textPrimary)
-        if merchants.isEmpty {
-          Text("No merchant spend yet")
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.textTertiary)
-        } else {
-          VStack(spacing: NomiSpacing.xs) {
-            ForEach(Array(merchants.enumerated()), id: \.element.id) { index, merchant in
-              HStack(spacing: NomiSpacing.xs) {
-                Text("\(index + 1)")
-                  .nomiTextStyle(.caption)
-                  .foregroundStyle(NomiColor.textQuaternary)
-                  .frame(width: 16, alignment: .leading)
-                Text(merchant.label)
-                  .nomiTextStyle(.body)
-                  .foregroundStyle(NomiColor.textPrimary)
-                  .lineLimit(1)
-                Spacer(minLength: NomiSpacing.xs)
-                Text(NomiFormatters.amountString(minor: merchant.totalMinor))
-                  .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 14))
-                  .foregroundStyle(NomiColor.textSecondary)
-              }
+    VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+      Text("Top merchants")
+        .nomiTextStyle(.headline)
+        .foregroundStyle(NomiColor.ink)
+      if merchants.isEmpty {
+        Text("No merchant spend yet")
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+      } else {
+        VStack(spacing: 0) {
+          ForEach(merchants) { merchant in
+            HStack(spacing: NomiSpacing.cardGap) {
+              Text(Self.initials(for: merchant.label))
+                .nomiTextStyle(.micro)
+                .foregroundStyle(NomiColor.iconGlyph)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(NomiColor.iconTile))
+                .accessibilityHidden(true)
+              Text(merchant.label)
+                .nomiTextStyle(.rowTitle)
+                .foregroundStyle(NomiColor.ink)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+              NomiAmountText(minor: merchant.totalMinor, style: .amount)
             }
+            .frame(minHeight: NomiSpacing.minTarget)
+            .accessibilityElement(children: .combine)
           }
         }
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .frame(minHeight: 134, alignment: .topLeading)
+    .nomiCard(padding: EdgeInsets(top: NomiSpacing.sm, leading: NomiSpacing.sm, bottom: NomiSpacing.sm, trailing: NomiSpacing.sm))
   }
 }
 
-#Preview("Top merchants — default, dark") {
+#Preview("Top merchants · default") {
   TopMerchantsCard(merchants: [
-    MerchantTotal(id: "SWIGGY", label: "SWIGGY", totalMinor: 4500_00),
-    MerchantTotal(id: "AMAZON", label: "AMAZON", totalMinor: 3200_00),
-    MerchantTotal(id: "UBER", label: "UBER", totalMinor: 2100_00),
-    MerchantTotal(id: "ZOMATO", label: "ZOMATO", totalMinor: 1800_00),
-    MerchantTotal(id: "FLIPKART", label: "FLIPKART", totalMinor: 1200_00),
+    MerchantTotal(id: "SWIGGY", label: "Swiggy", totalMinor: 5420_00),
+    MerchantTotal(id: "AMAZON", label: "Amazon", totalMinor: 4180_50),
+    MerchantTotal(id: "UBER", label: "Uber", totalMinor: 2100_00),
   ])
-  .padding()
-  .background(NomiColor.surfaceCanvas)
-  .preferredColorScheme(.dark)
+  .padding(20)
+  .background(NomiColor.ground)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Top merchants — empty, dark") {
+#Preview("Top merchants · empty") {
   TopMerchantsCard(merchants: [])
-    .padding()
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
+    .padding(20)
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
 }
 
-#Preview("Top merchants — accessibility 3, dark") {
+#Preview("Top merchants · AX3") {
   TopMerchantsCard(merchants: [
-    MerchantTotal(id: "SWIGGY", label: "SWIGGY", totalMinor: 4500_00),
-    MerchantTotal(id: "AMAZON", label: "AMAZON", totalMinor: 3200_00),
-    MerchantTotal(id: "UBER", label: "UBER", totalMinor: 2100_00),
-    MerchantTotal(id: "ZOMATO", label: "ZOMATO", totalMinor: 1800_00),
-    MerchantTotal(id: "FLIPKART", label: "FLIPKART", totalMinor: 1200_00),
+    MerchantTotal(id: "SWIGGY", label: "Swiggy", totalMinor: 5420_00),
+    MerchantTotal(id: "AMAZON", label: "Amazon", totalMinor: 4180_50),
   ])
-  .padding()
-  .background(NomiColor.surfaceCanvas)
+  .padding(20)
+  .background(NomiColor.ground)
   .environment(\.dynamicTypeSize, .accessibility3)
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }

@@ -80,5 +80,35 @@ final class ReportsViewModelTests: XCTestCase {
     )
     XCTAssertNil(model.debitDelta)
     XCTAssertNil(model.creditDelta)
+    XCTAssertNil(model.debitChangeCopy)
+    XCTAssertNil(model.creditChangeCopy)
+  }
+
+  func testViewModelCarriesChangeCopyDailyBarsAndTopMerchants() {
+    let merchants = [MerchantTotal(id: "SWIGGY", label: "Swiggy", totalMinor: 5420_00)]
+    let fixture = PeriodInsights(
+      period: .month(year: 2026, month: 8),
+      debitMinor: 1200,
+      creditMinor: 800,
+      netMinor: -400,
+      priorDebitMinor: 1000,
+      priorCreditMinor: 800,
+      transactionCount: 2,
+      byDay: [DayBucket(id: Date(timeIntervalSince1970: 0), debitMinor: 1200)],
+      byCategory: [],
+      topMerchants: merchants,
+      needsReviewCount: 0,
+      uncategorizedCount: 0
+    )
+    let model = ReportsViewModelBuilder.make(
+      period: .month(year: 2026, month: 8),
+      insights: fixture,
+      trend: [],
+      calendar: Calendar(identifier: .gregorian)
+    )
+    XCTAssertTrue(model.debitChangeCopy?.hasPrefix("up ") == true)
+    XCTAssertTrue(model.creditChangeCopy?.hasPrefix("No change") == true)
+    XCTAssertEqual(model.dailyDebitMinor?.count, 31)
+    XCTAssertEqual(model.topMerchants.map(\.id), ["SWIGGY"])
   }
 }

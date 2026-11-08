@@ -1,16 +1,15 @@
-import Charts
 import Foundation
 import NomiCore
 import SwiftUI
 
-/// Category breakdown for the selected period — same stacked-bar-plus-
-/// ranked-list treatment as `Dashboard/CategoryBreakdownCard`, rebuilt here
-/// rather than imported. It reuses U9's *aggregate* (`PeriodInsights.byCategory`,
-/// from the shared `InsightsStore`), not U9's *view* — this unit's file
-/// boundary excludes `Dashboard/**`, and the design doc's own delta table
-/// calls Reports "a new surface" for this row (§2.1).
+/// "Spending by category" on Insights: the donut beside a legend of the
+/// folded slices with their shares. At accessibility text sizes the legend
+/// stacks under the donut. It reads the shared `PeriodInsights.byCategory`
+/// through `ReportsCategoryFold`, so Other is folded the same way as before.
 public struct ReportsCategoryBreakdownCard: View {
   public let slices: [CategorySlice]
+
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   public init(slices: [CategorySlice]) {
     self.slices = slices
@@ -20,87 +19,89 @@ public struct ReportsCategoryBreakdownCard: View {
     ReportsCategoryFold.foldToSevenSlots(slices)
   }
 
+  private var total: Int {
+    folded.reduce(0) { $0 + $1.totalMinor }
+  }
+
   public var body: some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.sm) {
-      Text("Category breakdown")
-        .nomiTextStyle(.title)
-        .foregroundStyle(NomiColor.textPrimary)
-      if folded.isEmpty {
+    VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+      Text("Spending by category")
+        .nomiTextStyle(.headline)
+        .foregroundStyle(NomiColor.ink)
+      if folded.isEmpty || total <= 0 {
         Text("No categorized spend this period")
           .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.textTertiary)
+          .foregroundStyle(NomiColor.inkSecondary)
       } else {
-        stackedBar
-        rankedList
+        breakdown
       }
     }
-    .padding(NomiSpacing.cardPadding)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(NomiColor.surfaceRaised)
-    .nomiCornerRadius(NomiRadius.card)
+    .frame(minHeight: 140, alignment: .topLeading)
+    .nomiCard(padding: EdgeInsets(top: NomiSpacing.sm, leading: NomiSpacing.sm, bottom: NomiSpacing.sm, trailing: NomiSpacing.sm))
   }
 
-  private var stackedBar: some View {
-    Chart(folded) { slice in
-      BarMark(
-        x: .value("Amount", slice.totalMinor),
-        y: .value("Row", "Total")
-      )
-      .foregroundStyle(paletteSlot(slice.paletteSlot))
-      .cornerRadius(4)
+  @ViewBuilder
+  private var breakdown: some View {
+    let layout: AnyLayout = dynamicTypeSize.isAccessibilitySize
+      ? AnyLayout(VStackLayout(alignment: .leading, spacing: NomiSpacing.sm))
+      : AnyLayout(HStackLayout(alignment: .center, spacing: NomiSpacing.sm))
+    layout {
+      ReportsDonut(slices: folded)
+      legend
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .chartXAxis(.hidden)
-    .chartYAxis(.hidden)
-    .chartLegend(.hidden)
-    .frame(height: 24)
   }
 
-  private var rankedList: some View {
-    VStack(spacing: NomiSpacing.xs) {
-      ForEach(folded) { slice in
-        HStack(spacing: NomiSpacing.xs) {
+  private var legend: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      let percents = ReportsDonut.percentages(folded)
+      ForEach(Array(folded.enumerated()), id: \.element.id) { index, slice in
+        HStack(spacing: 10) {
           Circle()
-            .fill(paletteSlot(slice.paletteSlot))
-            .frame(width: 8, height: 8)
+            .fill(ReportsDonut.color(at: index))
+            .frame(width: 10, height: 10)
           Text(slice.name)
-            .nomiTextStyle(.body)
-            .foregroundStyle(NomiColor.textPrimary)
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.ink)
             .lineLimit(1)
           Spacer(minLength: NomiSpacing.xs)
-          Text(NomiFormatters.amountString(minor: slice.totalMinor))
-            .font(TabularFigures.font(name: NomiFont.montserratMedium, size: 14))
-            .foregroundStyle(NomiColor.textSecondary)
+          Text("\(percents[index])%")
+            .nomiTextStyle(.label)
+            .foregroundStyle(NomiColor.ink)
         }
+        .accessibilityElement(children: .combine)
       }
     }
   }
 }
 
-private func previewSlices() -> [CategorySlice] {
-  let names = ["Food & Dining", "Shopping", "Transport", "Bills & Utilities"]
-  return names.enumerated().map { index, name in
-    CategorySlice(id: UUID(), name: name, paletteSlot: index, totalMinor: (4 - index) * 5000_00, share: 0.25)
-  }
+#Preview("Category breakdown · default") {
+  ReportsCategoryBreakdownCard(slices: [
+    CategorySlice(id: UUID(), name: "Food & Dining", paletteSlot: 0, totalMinor: 25_900_00, share: 0.4),
+    CategorySlice(id: UUID(), name: "Shopping", paletteSlot: 1, totalMinor: 15_500_00, share: 0.24),
+    CategorySlice(id: UUID(), name: "Transport", paletteSlot: 2, totalMinor: 10_300_00, share: 0.16),
+    CategorySlice(id: UUID(), name: "Other", paletteSlot: 3, totalMinor: 13_100_00, share: 0.2),
+  ])
+  .padding(20)
+  .background(NomiColor.ground)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Category breakdown — default, dark") {
-  ReportsCategoryBreakdownCard(slices: previewSlices())
-    .padding()
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
-}
-
-#Preview("Category breakdown — empty, dark") {
+#Preview("Category breakdown · empty") {
   ReportsCategoryBreakdownCard(slices: [])
-    .padding()
-    .background(NomiColor.surfaceCanvas)
-    .preferredColorScheme(.dark)
+    .padding(20)
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
 }
 
-#Preview("Category breakdown — accessibility 3, dark") {
-  ReportsCategoryBreakdownCard(slices: previewSlices())
-    .padding()
-    .background(NomiColor.surfaceCanvas)
-    .environment(\.dynamicTypeSize, .accessibility3)
-    .preferredColorScheme(.dark)
+#Preview("Category breakdown · AX3") {
+  ReportsCategoryBreakdownCard(slices: [
+    CategorySlice(id: UUID(), name: "Food & Dining", paletteSlot: 0, totalMinor: 25_900_00, share: 0.4),
+    CategorySlice(id: UUID(), name: "Shopping", paletteSlot: 1, totalMinor: 15_500_00, share: 0.24),
+  ])
+  .padding(20)
+  .background(NomiColor.ground)
+  .environment(\.dynamicTypeSize, .accessibility3)
+  .preferredColorScheme(.light)
 }
