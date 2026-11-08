@@ -118,7 +118,9 @@ public struct SettingsScreen: View {
       Text(rescanError ?? "")
     }
     .navigationTitle("Settings")
+    #if os(iOS)
     .navigationBarTitleDisplayMode(.large)
+    #endif
     .task {
       for await state in mailConnectionService.state {
         connectionState = state
