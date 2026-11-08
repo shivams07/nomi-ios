@@ -25,16 +25,18 @@ import XCTest
 /// `xcodegen generate` runs before the test steps.
 final class InfoPlistParityTests: XCTestCase {
 
-  /// The two keys this test is about, decoded rather than fished out of an
+  /// The three keys this test is about, decoded rather than fished out of an
   /// `Any`. An untyped `as? [String: Any]` reports a missing key and a
   /// wrong-typed key identically, and both come back `nil`.
   private struct InfoPlist: Decodable {
     let permittedIdentifiers: [String]?
     let backgroundModes: [String]?
+    let interfaceStyle: String?
 
     enum CodingKeys: String, CodingKey {
       case permittedIdentifiers = "BGTaskSchedulerPermittedIdentifiers"
       case backgroundModes = "UIBackgroundModes"
+      case interfaceStyle = "UIUserInterfaceStyle"
     }
   }
 
@@ -120,6 +122,25 @@ final class InfoPlistParityTests: XCTestCase {
       "processing"; it has \(modes). Missing these does not throw or crash — \
       the app registers its tasks and is never woken to run them, which is \
       indistinguishable from no mail having arrived.
+
+      On disk at test time:
+      \(readFromDisk)
+      """)
+  }
+
+  /// DEC-08: the app is light only. The tokens are static light values, so a
+  /// system-following or dark plist would put dark system chrome over light
+  /// content. `.preferredColorScheme` in the scene does not cover UIKit-hosted
+  /// chrome, so the plist is the check that the forcing is there.
+  func testInterfaceStyleIsLight() throws {
+    let style = try infoPlist().interfaceStyle
+
+    XCTAssertEqual(
+      style, "Light",
+      """
+      App/Info.plist's UIUserInterfaceStyle must be "Light" (DEC-08). It is \
+      forced, not removed: removing the key lets the system follow the device \
+      and puts dark bars and pickers over light content.
 
       On disk at test time:
       \(readFromDisk)

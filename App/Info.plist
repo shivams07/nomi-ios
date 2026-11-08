@@ -27,8 +27,10 @@
   <key>ITSAppUsesNonExemptEncryption</key>
   <false/>
 
+  <!-- DEC-08: forced light. The tokens are static light values, and a forced
+       style also covers UIKit-hosted chrome that .preferredColorScheme does not. -->
   <key>UIUserInterfaceStyle</key>
-  <string>Dark</string>
+  <string>Light</string>
 
   <key>UILaunchScreen</key>
   <dict/>
