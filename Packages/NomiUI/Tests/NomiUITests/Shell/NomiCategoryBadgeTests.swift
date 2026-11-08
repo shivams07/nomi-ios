@@ -17,4 +17,12 @@ final class NomiCategoryBadgeTests: XCTestCase {
     let badge = NomiCategoryBadge(symbolName: "fork.knife", paletteSlot: 0, size: 40)
     XCTAssertEqual(badge.resolvedFillForTesting, CategoryPalette.slots[0])
   }
+
+  func testNeutralStyleIgnoresSlot() {
+    let slotted = NomiCategoryBadge(symbolName: "fork.knife", paletteSlot: 0, size: 32, style: .neutral)
+    let unslotted = NomiCategoryBadge(symbolName: "fork.knife", paletteSlot: nil, size: 32, style: .neutral)
+    XCTAssertEqual(slotted.resolvedFillForTesting, NomiColor.iconTile)
+    XCTAssertEqual(unslotted.resolvedFillForTesting, NomiColor.iconTile)
+    XCTAssertEqual(slotted.glyphColorForTesting, NomiColor.iconGlyph)
+  }
 }
