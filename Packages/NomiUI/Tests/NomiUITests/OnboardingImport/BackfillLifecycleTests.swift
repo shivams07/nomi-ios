@@ -71,6 +71,12 @@ final class BackfillLifecycleTests: XCTestCase {
     XCTAssertFalse(BackfillLifecycle.shouldStartOnAppear(phase: .completed))
   }
 
+  /// A failed scan waits for Retry. Coming back to the screen must not start
+  /// a fresh scan the user did not ask for.
+  func testReturningToAFailedScanDoesNotAutoRetry() {
+    XCTAssertFalse(BackfillLifecycle.shouldStartOnAppear(phase: .failed))
+  }
+
   // MARK: - The completion summary's provenance
 
   /// The screen renders what the scan returned. `unmatchedSenders` is the

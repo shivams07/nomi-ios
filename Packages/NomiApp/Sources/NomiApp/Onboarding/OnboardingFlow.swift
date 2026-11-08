@@ -22,14 +22,19 @@ struct OnboardingFlow: View {
     NavigationStack {
       content
         .toolbar {
-          ToolbarItem(placement: .primaryAction) {
-            Button(skipTitle) {
-              environment.firstRun.completeFirstRun()
+          // The backfill step draws its own leave control (see `BackfillScreen`):
+          // it is a full-bleed moment with no nav bar, and its white Done is the
+          // exit once the scan finishes, so a second Done here would duplicate it.
+          if step == .connectMail {
+            ToolbarItem(placement: .primaryAction) {
+              Button("Skip") {
+                environment.firstRun.completeFirstRun()
+              }
             }
           }
         }
     }
-    .background(NomiColor.surfaceCanvas)
+    .background(NomiColor.ground.ignoresSafeArea())
   }
 
   @ViewBuilder
@@ -49,29 +54,20 @@ struct OnboardingFlow: View {
       // Six months at first run (§1.3), and this is the hero screen the design
       // is most protective of: it "lands the user on the populated dashboard".
       //
-      // `BackfillScreen` owns its own cancel/resume and reports completion only
-      // by rendering it — there is no callback to hang the transition on — so
-      // the way out is the toolbar button above, same as the connect step.
-      BackfillScreen(mailConnectionService: environment.mailConnectionService, months: 6)
-    }
-  }
-
-  /// "Skip" before anything has happened; "Done" once a backfill is running.
-  ///
-  /// **"Done" now means what it says.** Unit C removed `BackfillScreen`'s
-  /// `.onDisappear` cancel — `BackfillLifecycle` covers the double-start that
-  /// cancel was guarding against — so tapping this dismisses the screen and
-  /// nothing else. The scan carries on, and M-E's `BackfillBanner` is what
-  /// shows it once this screen is gone.
-  ///
-  /// Tapping Cancel on the screen itself is still a real stop, and §D1 is the
-  /// floor under it: the cancelled backfill leaves `MailStack.backfillIsUnfinished`
-  /// set, so the next time the app is backgrounded `AppSyncCoordinator` asks iOS
-  /// for the processing task and the remaining months are eventually fetched.
-  private var skipTitle: String {
-    switch step {
-    case .connectMail: return "Skip"
-    case .backfill: return "Done"
+      // "Done" leaves onboarding and nothing else. The scan carries on, and
+      // `BackfillBanner` is what shows it once this screen is gone: unit C
+      // removed `BackfillScreen`'s `.onDisappear` cancel, and `BackfillLifecycle`
+      // covers the double-start that cancel was guarding against.
+      //
+      // Cancel on the screen is still a real pause. §D1 is the floor under it:
+      // the cancelled backfill leaves `MailStack.backfillIsUnfinished` set, so the
+      // next time the app is backgrounded `AppSyncCoordinator` asks iOS for the
+      // processing task and the remaining months are eventually fetched.
+      BackfillScreen(
+        mailConnectionService: environment.mailConnectionService,
+        months: 6,
+        onFinish: { environment.firstRun.completeFirstRun() }
+      )
     }
   }
 }
