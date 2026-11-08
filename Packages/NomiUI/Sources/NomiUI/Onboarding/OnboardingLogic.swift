@@ -214,6 +214,21 @@ enum MailAttentionLogic {
   }
 }
 
+/// What the Connect mail screen knows about earlier connections before its
+/// state stream has said anything. It is read once from `history` (persisted by
+/// MH, so it survives a relaunch) and then kept up to date by the stream. The
+/// two values are what `MailAttentionLogic.copy` takes as `hadConnection` and
+/// `lastSync`.
+struct MailAttentionSeed: Equatable {
+  let hadConnection: Bool
+  let lastSync: Date?
+
+  init(history: MailConnectionHistory) {
+    hadConnection = history.hasEverConnected
+    lastSync = history.lastSync
+  }
+}
+
 /// Copy that makes a claim about the mail credential (Amendment 4, R2). Each
 /// clause is checked against the code, so a change here must be re-checked:
 /// the item is saved with `kSecAttrSynchronizable: false`, so it does not sync
