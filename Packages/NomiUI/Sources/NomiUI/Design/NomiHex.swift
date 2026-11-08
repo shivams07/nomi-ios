@@ -32,6 +32,11 @@ public enum NomiHex {
   public static let iconTile: UInt32 = 0xE3EDFB
   public static let iconGlyph: UInt32 = 0x1B4290
 
+  /// Insights donut slices 3 and 4, from the approved artboard (IN, decisions
+  /// Amendment 2 R3). Chart fills only, never text.
+  public static let chartTintMid: UInt32 = 0x8DB3EA
+  public static let chartTintLight: UInt32 = 0xBBD3EE
+
   // MARK: Controls
 
   public static let primary: UInt32 = 0x06080F
