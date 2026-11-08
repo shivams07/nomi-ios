@@ -108,22 +108,32 @@ enum ImportPreviewSummary {
 }
 
 /// Copy for the done state (`ImportDone` artboard). Every number is a count
-/// straight from `ImportSummary`; nothing here adds up money.
+/// straight from `ImportSummary`; nothing here adds up money. Wording follows
+/// the "Import Done copy ruling" (2026-11-09) in the build plan, unit IM.
 enum ImportDoneCopy {
-  /// "24 imported, 2 skipped". `created` is what landed as new transactions.
+  /// "24 transactions imported, 2 skipped". `created` is what landed as new
+  /// transactions. A zero clause is never shown, so "0 skipped" does not appear.
   static func title(_ summary: ImportSummary) -> String {
-    "\(summary.created) imported, \(summary.skipped) skipped"
+    let landed: String
+    switch summary.created {
+    case 0: landed = "No new transactions"
+    case 1: landed = "1 transaction imported"
+    default: landed = "\(summary.created) transactions imported"
+    }
+    return summary.skipped > 0 ? "\(landed), \(summary.skipped) skipped" : landed
   }
 
-  /// The account the rows went to, then how many rows merged into existing
+  /// The account the rows went to, then how many rows matched existing
   /// transactions. Nil when there is neither, so the screen draws no line.
   static func detail(_ summary: ImportSummary, accountName: String?) -> String? {
     var parts: [String] = []
     if let accountName, !accountName.isEmpty {
       parts.append(accountName)
     }
-    if summary.merged > 0 {
-      parts.append("\(summary.merged) merged with existing")
+    switch summary.merged {
+    case 0: break
+    case 1: parts.append("1 matched an existing transaction")
+    default: parts.append("\(summary.merged) matched existing transactions")
     }
     return parts.isEmpty ? nil : parts.joined(separator: " · ")
   }

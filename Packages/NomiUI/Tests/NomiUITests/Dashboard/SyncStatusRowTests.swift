@@ -32,6 +32,56 @@ final class SyncStatusRowTests: XCTestCase {
     XCTAssertFalse(text.contains("!"))
   }
 
+  // MARK: - Future or sub-second lastSync reads "just now"
+
+  /// A fixed clock, so the relative phrase never depends on `Date()`.
+  private let syncNow = Date(timeIntervalSince1970: 1_000_000)
+
+  private func syncText(lastSyncOffset: TimeInterval) -> String {
+    SyncStatusRow.statusText(
+      for: .connected(address: "a@b.com", lastSync: syncNow.addingTimeInterval(lastSyncOffset)),
+      now: syncNow)
+  }
+
+  /// The formatter's own phrase for an offset, so the cases below say what the
+  /// row must show without restating en_IN wording.
+  private func relativePhrase(lastSyncOffset: TimeInterval) -> String {
+    "Synced " + NomiFormatters.relativeTime.localizedString(
+      for: syncNow.addingTimeInterval(lastSyncOffset), relativeTo: syncNow)
+  }
+
+  func testSyncedExactlyNowReadsJustNow() {
+    XCTAssertEqual(syncText(lastSyncOffset: 0), "Synced just now")
+  }
+
+  func testSyncedHalfASecondAgoReadsJustNow() {
+    XCTAssertEqual(syncText(lastSyncOffset: -0.5), "Synced just now")
+  }
+
+  func testSyncedOneSecondAgoKeepsTheRelativeForm() {
+    XCTAssertEqual(syncText(lastSyncOffset: -1), relativePhrase(lastSyncOffset: -1))
+    XCTAssertNotEqual(syncText(lastSyncOffset: -1), "Synced just now")
+  }
+
+  func testSyncedAnHourAheadReadsJustNow() {
+    XCTAssertEqual(syncText(lastSyncOffset: 3_600), "Synced just now")
+    XCTAssertFalse(syncText(lastSyncOffset: 3_600).contains("in "))
+  }
+
+  func testSyncedFiftyNineSecondsAgoKeepsTheRelativeForm() {
+    XCTAssertEqual(syncText(lastSyncOffset: -59), relativePhrase(lastSyncOffset: -59))
+    XCTAssertNotEqual(syncText(lastSyncOffset: -59), "Synced just now")
+  }
+
+  func testSyncedSixtyOneSecondsAgoKeepsTheRelativeForm() {
+    XCTAssertEqual(syncText(lastSyncOffset: -61), relativePhrase(lastSyncOffset: -61))
+    XCTAssertNotEqual(syncText(lastSyncOffset: -61), "Synced just now")
+  }
+
+  func testSyncedThreeDaysAgoReadsThreeDaysAgo() {
+    XCTAssertEqual(syncText(lastSyncOffset: -3 * 86_400), "Synced 3 days ago")
+  }
+
   // MARK: - HM2 Home banner
 
   /// Only states that need attention get the banner. Connected has nothing to ask.
