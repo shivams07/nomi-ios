@@ -15,7 +15,27 @@ public protocol TransactionStore: AnyObject {
 public protocol CategoryStore: AnyObject {
   func create(name: String, symbolName: String, paletteSlot: Int) throws -> Category
   func rename(_ id: UUID, to name: String) throws
+
+  /// Changes a category's name, icon and colour in one write.
+  ///
+  /// The rules are `CategoryEditRules`. A refused edit throws before anything
+  /// is written. Nothing here touches a transaction: an edit changes how a
+  /// category looks, never which category a row belongs to, so no amount moves.
+  /// Like `rename`, it reports no category as moved, so the observer is not
+  /// called.
+  ///
+  /// This is a requirement with a default in the extension below, not a bare
+  /// requirement. A preview conformer in `NomiUI` cannot change in this unit,
+  /// and a bare requirement would stop that target compiling. A conformer that
+  /// does not implement `update` throws `CategoryUpdateError.notSupported`.
+  func update(_ id: UUID, name: String, symbolName: String, paletteSlot: Int) throws
   func delete(_ id: UUID) throws
+}
+
+extension CategoryStore {
+  public func update(_ id: UUID, name: String, symbolName: String, paletteSlot: Int) throws {
+    throw CategoryUpdateError.notSupported
+  }
 }
 
 @MainActor

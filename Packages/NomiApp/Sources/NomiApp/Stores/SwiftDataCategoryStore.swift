@@ -56,6 +56,33 @@ public final class SwiftDataCategoryStore: CategoryStore {
     coordinator.didWrite()
   }
 
+  /// Name, icon and colour in one save. Every rule is checked before the row is
+  /// touched, so a refused edit leaves the row as it was. System categories are
+  /// editable here; only `delete` refuses them. The seed matches by id, so a
+  /// renamed system category is still that category to the reconciler.
+  ///
+  /// Nothing moves between categories, so the observer is not called, as with
+  /// `rename`. Transactions are not written at all.
+  public func update(_ id: UUID, name: String, symbolName: String, paletteSlot: Int) throws {
+    guard let category = try category(id: id) else { throw CategoryUpdateError.notFound(id) }
+
+    let others = try context.fetch(FetchDescriptor<NomiCore.Category>())
+      .filter { $0.id != id }
+      .map(\.name)
+    let stored = try CategoryEditRules.validate(
+      name: name,
+      symbolName: symbolName,
+      paletteSlot: paletteSlot,
+      otherNames: others
+    )
+
+    category.name = stored
+    category.symbolName = symbolName
+    category.paletteSlot = paletteSlot
+    try context.save()
+    coordinator.didWrite()
+  }
+
   public func delete(_ id: UUID) throws {
     guard let category = try category(id: id) else { return }
     guard !category.isSystem else { throw AppStoreError.systemCategoryCannotBeDeleted }
