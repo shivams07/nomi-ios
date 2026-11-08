@@ -4,32 +4,86 @@ import XCTest
 @testable import NomiUI
 
 final class DesignTokenTests: XCTestCase {
-  func testFiveOpaqueSurfaceStepsMatchTheDesignScale() {
+  func testSurfaceStepsMatchTheApprovedLightScale() {
     let environment = EnvironmentValues()
-    // v5 (`nomi-ui-refresh`) hexes. Pinning these against the production
-    // tokens before this unit's change is exactly how a run of this test
-    // would go red first (the gate this done-when asks for) — the old
-    // production values (`#0c0c0c`, `#292929`, `#212121`, `#1C1C1C`,
-    // `#1E1E1E`) fail these five assertions until NomiColor.swift moves too.
+    // Light navy-ocean surfaces (F1 of nomi-ios-build-plan, I-1). Legacy names
+    // resolve to their replacement's value: canvas -> ground, the three card
+    // steps -> card, secondary fill -> #EDF1F8.
     let steps: [(Color, UInt32)] = [
-      (NomiColor.surfaceCanvas, 0x0A0E17),
-      (NomiColor.surface, 0x262C3A),
-      (NomiColor.surfaceRaised, 0x1C2130),
-      (NomiColor.surfaceRow, 0x151A25),
-      (NomiColor.surfaceInput, 0x1A1F2B),
+      (NomiColor.surfaceCanvas, 0xF3F6FB),
+      (NomiColor.surface, 0xEDF1F8),
+      (NomiColor.surfaceRaised, 0xFFFFFF),
+      (NomiColor.surfaceRow, 0xFFFFFF),
+      (NomiColor.surfaceInput, 0xFFFFFF),
     ]
     for (actual, hex) in steps {
-      let resolvedActual = actual.resolve(in: environment)
-      let resolvedExpected = Color(hex: hex).resolve(in: environment)
-      XCTAssertEqual(resolvedActual.red, resolvedExpected.red, accuracy: 0.001)
-      XCTAssertEqual(resolvedActual.green, resolvedExpected.green, accuracy: 0.001)
-      XCTAssertEqual(resolvedActual.blue, resolvedExpected.blue, accuracy: 0.001)
+      assertResolves(actual, toHex: hex, environment: environment)
     }
   }
 
-  func testDirectionColorsNoLongerBorrowTextHierarchy() {
-    XCTAssertNotEqual(NomiColor.creditText, NomiColor.textPrimary)
-    XCTAssertNotEqual(NomiColor.debitText, NomiColor.textSecondary)
+  func testNamedColourTokensResolveToTheirHexValues() {
+    let environment = EnvironmentValues()
+    let tokens: [(Color, UInt32)] = [
+      (NomiColor.ground, 0xF3F6FB),
+      (NomiColor.card, 0xFFFFFF),
+      (NomiColor.ink, 0x0E1424),
+      (NomiColor.inkDeep, 0x0A2150),
+      (NomiColor.inkSecondary, 0x53607A),
+      (NomiColor.inkTab, 0x3A4660),
+      (NomiColor.navy, 0x023571),
+      (NomiColor.navyDeep, 0x04174B),
+      (NomiColor.track, 0xDCE8F5),
+      (NomiColor.primary, 0x06080F),
+      (NomiColor.error, 0xB42318),
+      (NomiColor.errorTint, 0xFDECEA),
+      (NomiColor.switchOff, 0xC5CEDE),
+      (NomiColor.heroGlassSolid, 0x0E3972),
+    ]
+    for (actual, hex) in tokens {
+      assertResolves(actual, toHex: hex, environment: environment)
+    }
+  }
+
+  func testLegacyNamesFollowTheirReplacements() {
+    let environment = EnvironmentValues()
+    assertSameRGB(NomiColor.accent, NomiColor.navy, environment: environment)
+    assertSameRGB(NomiColor.progressTrackFill, NomiColor.navy, environment: environment)
+    assertSameRGB(NomiColor.overBudget, NomiColor.error, environment: environment)
+    assertSameRGB(NomiColor.textPrimary, NomiColor.ink, environment: environment)
+    assertSameRGB(NomiColor.textSecondary, NomiColor.inkDeep, environment: environment)
+    assertSameRGB(NomiColor.textTertiary, NomiColor.inkSecondary, environment: environment)
+    assertSameRGB(NomiColor.textQuaternary, NomiColor.inkTab, environment: environment)
+    assertSameRGB(NomiColor.debitText, NomiColor.ink, environment: environment)
+    assertSameRGB(NomiColor.creditText, NomiColor.inkDeep, environment: environment)
+  }
+
+  /// PEND B.8 N1: each text-on-surface pair is at or above 4.5:1, and the
+  /// non-text pair at or above 3:1. `LightTokenTests` carries the full list
+  /// and runs in the CLT harness. This is the Xcode copy of the floor.
+  func testTextAndNonTextPairsMeetTheirContrastFloor() {
+    let textPairs: [(UInt32, UInt32)] = [
+      (NomiHex.ink, NomiHex.card),
+      (NomiHex.ink, NomiHex.ground),
+      (NomiHex.inkDeep, NomiHex.card),
+      (NomiHex.inkDeep, NomiHex.ground),
+      (NomiHex.inkSecondary, NomiHex.card),
+      (NomiHex.inkSecondary, NomiHex.ground),
+      (NomiHex.inkTab, NomiHex.card),
+      (NomiHex.dayHeader, NomiHex.ground),
+      (NomiHex.placeholder, NomiHex.card),
+      (NomiHex.navy, NomiHex.card),
+      (NomiHex.error, NomiHex.card),
+      (NomiHex.error, NomiHex.ground),
+      (NomiHex.error, NomiHex.errorTint),
+      (NomiHex.onPrimary, NomiHex.primary),
+      (NomiHex.onPrimary, NomiHex.navy),
+      (NomiHex.onPrimary, NomiHex.error),
+      (NomiHex.onPrimary, NomiHex.heroGlassSolid),
+    ]
+    for (foreground, background) in textPairs {
+      XCTAssertGreaterThanOrEqual(NomiContrast.ratio(foreground, background), 4.5)
+    }
+    XCTAssertGreaterThanOrEqual(NomiContrast.ratio(NomiHex.navy, NomiHex.track), 3)
   }
 
   func testSevenSlotPaletteHasNoRepeatedHueAndNoBlue() {
@@ -61,15 +115,18 @@ final class DesignTokenTests: XCTestCase {
     XCTAssertEqual(NomiSpacing.xxl, 48)
   }
 
+  func testScreenGutterIsTwentyAcrossEveryArtboard() {
+    XCTAssertEqual(NomiSpacing.screenGutter, 20)
+  }
+
   func testRadiusFloorIsRespectedForNamedTokens() {
     XCTAssertGreaterThanOrEqual(NomiRadius.tile, 8)
     XCTAssertGreaterThanOrEqual(NomiRadius.card, 8)
-    XCTAssertGreaterThanOrEqual(NomiRadius.bar, 8)
+    XCTAssertGreaterThanOrEqual(NomiRadius.sheet, 8)
   }
 
   func testCardRadiusIsTwentyFourAndInsetIsSixteen() {
-    // v5: card 16 -> 24, restoring the v4 ruling that never shipped; new
-    // `inset` step for tiles inside a card. Concentric: card 24 -> inset 16 -> tile 8.
+    // Concentric: card 24 -> inset 16 -> tile 8.
     XCTAssertEqual(NomiRadius.card, 24)
     XCTAssertEqual(NomiRadius.inset, 16)
     XCTAssertEqual(NomiRadius.tile, 8)
@@ -83,5 +140,25 @@ final class DesignTokenTests: XCTestCase {
 
   func testWidestRealisticAmountFormat() {
     XCTAssertEqual(NomiFormatters.widestRealisticAmount, "₹99,99,999.00")
+  }
+
+  // MARK: - Helpers
+
+  /// Checks a resolved token against an integer hex value (0xRRGGBB) without
+  /// building a colour from a hex literal, so this file constructs no colours
+  /// from hex of its own.
+  private func assertResolves(_ actual: Color, toHex hex: UInt32, environment: EnvironmentValues, file: StaticString = #filePath, line: UInt = #line) {
+    let resolved = actual.resolve(in: environment)
+    XCTAssertEqual(Double(resolved.red), Double((hex >> 16) & 0xFF) / 255, accuracy: 0.001, file: file, line: line)
+    XCTAssertEqual(Double(resolved.green), Double((hex >> 8) & 0xFF) / 255, accuracy: 0.001, file: file, line: line)
+    XCTAssertEqual(Double(resolved.blue), Double(hex & 0xFF) / 255, accuracy: 0.001, file: file, line: line)
+  }
+
+  private func assertSameRGB(_ actual: Color, _ expected: Color, environment: EnvironmentValues, file: StaticString = #filePath, line: UInt = #line) {
+    let resolvedActual = actual.resolve(in: environment)
+    let resolvedExpected = expected.resolve(in: environment)
+    XCTAssertEqual(resolvedActual.red, resolvedExpected.red, accuracy: 0.001, file: file, line: line)
+    XCTAssertEqual(resolvedActual.green, resolvedExpected.green, accuracy: 0.001, file: file, line: line)
+    XCTAssertEqual(resolvedActual.blue, resolvedExpected.blue, accuracy: 0.001, file: file, line: line)
   }
 }

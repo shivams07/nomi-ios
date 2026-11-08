@@ -1,8 +1,9 @@
+// clt-harness: include
 import SwiftUI
 
-/// The circular counterpart to `NomiProgressBar` — same clamp, same 90%
-/// `overBudget` threshold, same track/fill tokens, so the ring and the bars
-/// can never disagree. `v5` (`nomi-ui-refresh`) Budgets gauge card.
+/// The circular counterpart to `NomiProgressBar`. Same clamp, same 90%
+/// over-budget threshold, same track and fill tokens (`track`, `navy`, `error`),
+/// so the ring and the bars can never disagree.
 /// Stroke-based `Circle().trim(...)`, no Charts framework dependency.
 public struct NomiRingGauge: View {
   public let fraction: Double
@@ -27,11 +28,11 @@ public struct NomiRingGauge: View {
   public var body: some View {
     ZStack {
       Circle()
-        .stroke(NomiColor.surface, lineWidth: lineWidth)
+        .stroke(NomiColor.track, lineWidth: lineWidth)
       Circle()
         .trim(from: 0, to: clamped)
         .stroke(
-          isOverBudget ? NomiColor.overBudget : NomiColor.progressTrackFill,
+          isOverBudget ? NomiColor.error : NomiColor.navy,
           style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
         )
         .rotationEffect(.degrees(-90))
@@ -47,6 +48,6 @@ public struct NomiRingGauge: View {
     }
   }
   .padding()
-  .background(NomiColor.surfaceRaised)
-  .preferredColorScheme(.dark)
+  .background(NomiColor.ground)
+  .preferredColorScheme(.light)
 }

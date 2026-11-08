@@ -1,13 +1,14 @@
+// clt-harness: include
 import SwiftUI
 
 /// The shared budget progress bar. U9's dashboard module and U12's budgets
-/// list both depend on this existing here — if the two built their own they
+/// list both depend on this existing here. If the two built their own they
 /// would diverge, and this file exists to stop that.
 ///
-/// `#2388FF` (DB-24) is the one progress-track fill in the system, used only
-/// here. At or above 90% the fill switches to `NomiColor.overBudget` — the
-/// category-palette red slot at chip scale, distinct from the destructive/
-/// error red Estate-Ease reserves elsewhere.
+/// 6 points high on `NomiColor.track`, filled in `NomiColor.navy`. At or above
+/// 90% the fill switches to `NomiColor.error`, the one error red (SIMP §5).
+/// Over-budget is also signalled in words and by a glyph elsewhere, so colour
+/// is never the only signal.
 public struct NomiProgressBar: View {
   public let fraction: Double
 
@@ -30,13 +31,13 @@ public struct NomiProgressBar: View {
     GeometryReader { proxy in
       ZStack(alignment: .leading) {
         Capsule(style: .continuous)
-          .fill(NomiColor.surface)
+          .fill(NomiColor.track)
         Capsule(style: .continuous)
-          .fill(isOverBudget ? NomiColor.overBudget : NomiColor.progressTrackFill)
+          .fill(isOverBudget ? NomiColor.error : NomiColor.navy)
           .frame(width: proxy.size.width * clamped)
       }
     }
-    .frame(height: NomiSpacing.xs)
+    .frame(height: 6)
     .clipShape(Capsule(style: .continuous))
   }
 }
@@ -48,6 +49,6 @@ public struct NomiProgressBar: View {
     }
   }
   .padding()
-  .background(NomiColor.surfaceRaised)
-  .preferredColorScheme(.dark)
+  .background(NomiColor.ground)
+  .preferredColorScheme(.light)
 }
