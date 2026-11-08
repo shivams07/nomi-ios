@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # ui-gates.sh: grep gates for the blue/light restyle. Prints one line per gate,
-# "G<n> <count>", for G1-G7. Patterns and baselines come from the build plan
-# (nomi-ios-build-plan.md, "Grep gates"), measured on 626debe.
+# "G<n> <count>", for G1-G8. Patterns and baselines come from the build plan
+# (nomi-ios-build-plan.md, "Grep gates"), measured on 626debe. G8 comes from
+# DEC-07 (nomi-ios-decisions.md): a drift guard that fails when networking code
+# appears in a Sources file, so the About privacy sentence gets re-read.
 #
 # Usage: scripts/ui-gates.sh [--require-zero G1,G2,...] [--files path...]
 #   --files         count only in these paths (relative to the repo root)
@@ -100,10 +102,12 @@ gate_hits() {
     G7)
       git grep -n -F -e 'NomiTextStyle.dashboardHeroTotal' -e 'nomiTextStyle(.dashboardHeroTotal)' \
         -- "${sc[@]}" | grep -vE "$DOC_LINE" || true ;;
+    G8)
+      git grep -n -E 'URLSession|URLRequest' -- "${sc[@]}" || true ;;
   esac
 }
 
-GATES="G1 G2 G3 G4 G5 G6 G7"
+GATES="G1 G2 G3 G4 G5 G6 G7 G8"
 COUNTS=""
 for g in $GATES; do
   n="$(gate_hits "$g" | grep -c '' || true)"
