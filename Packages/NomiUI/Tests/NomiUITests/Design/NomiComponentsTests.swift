@@ -89,8 +89,15 @@ struct NomiComponentsTests {
   // MARK: - Hero button contrast (DEC-09, A-09 item 2)
 
   @Test func heroButtonContrast() {
-    // heroGlassFill is navyDeep at 30%, composited over the Backfill gradient.
-    let glassAlpha = 0.30
+    // Read the glass from the token itself, not from a copy of its value. The
+    // DEC-09 glass is navyDeep at 30%. If heroGlassFill changes, this fails.
+    let token = NomiColor.heroGlassFill.resolve(in: EnvironmentValues())
+    #expect(abs(Double(token.opacity) - 0.30) < 1e-4, "heroGlassFill opacity is \(token.opacity), expected 0.30")
+    #expect(abs(Double(token.red) - Double((NomiHex.navyDeep >> 16) & 0xFF) / 255) < 1e-4)
+    #expect(abs(Double(token.green) - Double((NomiHex.navyDeep >> 8) & 0xFF) / 255) < 1e-4)
+    #expect(abs(Double(token.blue) - Double(NomiHex.navyDeep & 0xFF) / 255) < 1e-4)
+    let glassAlpha = Double(token.opacity)
+
     let cases: [(CGFloat, Double)] = [(520, 12.68), (844, 11.37)]
     for (y, expected) in cases {
       let background = NomiHeroGradient.momentHex(atFraction: y / 844)
