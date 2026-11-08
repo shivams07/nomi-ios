@@ -3,9 +3,12 @@ import NomiPreview
 import SwiftData
 import SwiftUI
 
-/// The Rules screen (U6): drag-to-reorder priority, live match count on
-/// create/edit. Pushed into from Settings by U7 — public so that unit can
-/// construct it without reaching into `NomiUI`'s internals.
+/// The Rules screen (U6; OR1). Shape from the approved `Rules` and `RulesEmpty`
+/// artboards: an H0 "Rules" title with "+" in the nav bar, an "Order sets
+/// priority" header that holds the Reorder/Done toggle, then one row per rule
+/// (pattern, "<Category> · System", scope summary, enable switch). Pushed into
+/// from Settings by U7 — public so that unit can construct it without reaching
+/// into `NomiUI`'s internals.
 public struct RulesScreen: View {
   public let ruleStore: RuleStore
   public let categoryStore: CategoryStore
@@ -27,6 +30,11 @@ public struct RulesScreen: View {
   @State private var editingRule: NomiCore.Rule?
   @State private var isCreating = false
   @State private var actionError = false
+  #if os(iOS)
+  /// Drives the list's reorder mode. Handles appear only while this is active
+  /// (SIMP §3 item 18: the always-visible ≡ glyph and the nav-bar Edit are cut).
+  @State private var editMode: EditMode = .inactive
+  #endif
 
   public init(ruleStore: RuleStore, categoryStore: CategoryStore, accounts: [NomiCore.Account] = []) {
     self.ruleStore = ruleStore
@@ -34,31 +42,36 @@ public struct RulesScreen: View {
     self.accounts = accounts
   }
 
+  private var isReordering: Bool {
+    #if os(iOS)
+    editMode.isEditing
+    #else
+    false
+    #endif
+  }
+
   public var body: some View {
-    List {
-      ForEach(rules) { rule in
-        row(for: rule)
-          .deleteDisabled(!RuleRowActions.offered(isSystem: rule.isSystem).contains(.delete))
+    Group {
+      if rules.isEmpty {
+        emptyState
+      } else {
+        rulesList
       }
-      .onDelete(perform: delete)
-      .onMove(perform: move)
     }
-    .scrollContentBackground(.hidden)
-    .background(NomiColor.surfaceCanvas)
+    .background(NomiColor.ground)
     .navigationTitle("Rules")
+    #if os(iOS)
+    .navigationBarTitleDisplayMode(.large)
+    #endif
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         Button {
           isCreating = true
         } label: {
-          Image(systemName: "plus")
+          NomiNavIcon(systemName: "plus")
         }
+        .accessibilityLabel("Add rule")
       }
-      #if os(iOS)
-      ToolbarItem(placement: .navigationBarLeading) {
-        EditButton()
-      }
-      #endif
     }
     .sheet(isPresented: $isCreating) {
       RuleEditorSheet(ruleStore: ruleStore, categories: categories, accounts: accounts, rule: nil)
@@ -71,53 +84,126 @@ public struct RulesScreen: View {
     }
   }
 
+  // MARK: - States
+
+  private var emptyState: some View {
+    ScrollView {
+      NomiEmptyState(
+        systemImage: "line.3.horizontal.decrease",
+        title: "No rules yet",
+        message: "A rule sets a category when a transaction's description matches its pattern.",
+        actionTitle: "Add rule"
+      ) {
+        isCreating = true
+      }
+      .padding(.top, 96)
+      .padding(.horizontal, NomiSpacing.screenGutter)
+    }
+  }
+
+  // MARK: - List
+
+  private var rulesList: some View {
+    List {
+      Section {
+        ForEach(rules) { rule in
+          row(for: rule)
+        }
+        .onMove(perform: move)
+      } header: {
+        listHeader
+      }
+    }
+    .scrollContentBackground(.hidden)
+    #if os(iOS)
+    .listStyle(.insetGrouped)
+    .environment(\.editMode, $editMode)
+    #endif
+  }
+
+  /// 44 high: the caption on the left, the Reorder/Done text button (44 hit) on
+  /// the right. The button is iOS-only because reorder mode is a `List`
+  /// edit mode that AppKit does not have.
+  private var listHeader: some View {
+    HStack(alignment: .center, spacing: NomiSpacing.xs) {
+      Text("Order sets priority")
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.inkSecondary)
+      Spacer(minLength: NomiSpacing.xs)
+      #if os(iOS)
+      Button {
+        editMode = editMode.isEditing ? .inactive : .active
+      } label: {
+        Text(editMode.isEditing ? "Done" : "Reorder")
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(NomiColor.navy)
+          .frame(minHeight: NomiSpacing.minTarget)
+          .padding(.horizontal, NomiSpacing.xxs)
+      }
+      #endif
+    }
+    .frame(height: NomiSpacing.navRowHeight)
+  }
+
+  /// One 72-high row. The label is a `Button` that opens the editor; the
+  /// switch sits to its right in its own hit area, so the two never share a
+  /// tap. Swipe-to-delete is an accelerator and is offered only where
+  /// `RuleRowActions` says so. It is a swipe action, not `onDelete`, because
+  /// `onDelete` draws its delete minus in reorder mode too.
   private func row(for rule: NomiCore.Rule) -> some View {
     let categoryName = categories.first(where: { $0.id == rule.categoryID })?.name ?? "Uncategorized"
-    return HStack(spacing: NomiSpacing.xs) {
-      HStack(spacing: NomiSpacing.xs) {
-        Image(systemName: "line.3.horizontal")
-          .foregroundStyle(NomiColor.textTertiary)
+    let scopeSummary = RuleScopeSummary.text(
+      for: rule.scope,
+      accountName: { id in accounts.first(where: { $0.id == id })?.displayName }
+    )
+    return HStack(spacing: NomiSpacing.sm) {
+      Button {
+        editingRule = rule
+      } label: {
         VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
           Text(rule.pattern)
-            .nomiTextStyle(.body)
-            .foregroundStyle(NomiColor.textPrimary)
-          HStack(spacing: NomiSpacing.xxs) {
-            Text(categoryName)
-              .nomiTextStyle(.caption)
-              .foregroundStyle(NomiColor.textTertiary)
-            if rule.isSystem {
-              Text("System")
-                .nomiTextStyle(.caption)
-                .foregroundStyle(NomiColor.textTertiary)
-            }
-          }
-          if let scopeSummary = RuleScopeSummary.text(
-            for: rule.scope,
-            accountName: { id in accounts.first(where: { $0.id == id })?.displayName }
-          ) {
+            .nomiTextStyle(.rowTitle)
+            .foregroundStyle(NomiColor.ink)
+          Text(RuleRowSubtitle.text(categoryName: categoryName, isSystem: rule.isSystem))
+            .nomiTextStyle(.footnote)
+            .foregroundStyle(NomiColor.inkSecondary)
+          if let scopeSummary {
             Text(scopeSummary)
-              .nomiTextStyle(.caption)
-              .foregroundStyle(NomiColor.textTertiary)
+              .nomiTextStyle(.footnote)
+              .foregroundStyle(NomiColor.inkSecondary)
           }
         }
+        .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+        .contentShape(Rectangle())
       }
-      // Scoped to the label, not the whole row: a `Toggle` sits to its right,
-      // and an `onTapGesture` spanning both would fight the toggle for the
-      // tap that lands on it.
-      .contentShape(Rectangle())
-      .onTapGesture { editingRule = rule }
-      Spacer()
+      .buttonStyle(.plain)
+      .disabled(isReordering)
       Toggle(
-        "",
+        "Enable rule \(rule.pattern)",
         isOn: Binding(
           get: { rule.isEnabled },
           set: { setEnabled(rule, $0) }
         )
       )
       .labelsHidden()
+      .tint(NomiColor.navy)
+      .frame(minHeight: NomiSpacing.minTarget)
     }
-    .listRowBackground(NomiColor.surfaceRaised)
+    .padding(.vertical, NomiSpacing.xs)
+    .frame(minHeight: 72)
+    .listRowBackground(NomiColor.card)
+    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+      if RuleRowActions.offered(isSystem: rule.isSystem).contains(.delete) {
+        Button(role: .destructive) {
+          delete(rule)
+        } label: {
+          Label("Delete", systemImage: "trash")
+        }
+      }
+    }
   }
+
+  // MARK: - Actions
 
   private func setEnabled(_ rule: NomiCore.Rule, _ enabled: Bool) {
     do {
@@ -127,13 +213,11 @@ public struct RulesScreen: View {
     }
   }
 
-  private func delete(at offsets: IndexSet) {
-    for index in offsets {
-      do {
-        try ruleStore.delete(rules[index].id)
-      } catch {
-        actionError = true
-      }
+  private func delete(_ rule: NomiCore.Rule) {
+    do {
+      try ruleStore.delete(rule.id)
+    } catch {
+      actionError = true
     }
   }
 
@@ -147,20 +231,20 @@ public struct RulesScreen: View {
   }
 }
 
-#Preview("Rules — default, dark") {
+#Preview("Rules — default, light") {
   NavigationStack {
     RulesScreen(ruleStore: FakeRuleStore(), categoryStore: FakeCategoryStore())
   }
   .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
-#Preview("Rules — empty, dark") {
+#Preview("Rules — empty, light") {
   NavigationStack {
     RulesScreen(ruleStore: FakeRuleStore(rules: []), categoryStore: FakeCategoryStore())
   }
   .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
 /// A container built locally to this file rather than through
@@ -183,12 +267,12 @@ private func makeSystemRuleDisabledContainer() -> ModelContainer {
   return container
 }
 
-#Preview("Rules — system rule, toggle off, dark") {
+#Preview("Rules — system rule, toggle off, light") {
   NavigationStack {
     RulesScreen(ruleStore: FakeRuleStore(), categoryStore: FakeCategoryStore())
   }
   .modelContainer(makeSystemRuleDisabledContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
 /// Local, `Account`-inclusive container for the one preview below that needs
@@ -216,13 +300,13 @@ private func makeScopedRuleContainer() -> (container: ModelContainer, accounts: 
   return (container, [account])
 }
 
-#Preview("Rules — row with a scope summary, dark") {
+#Preview("Rules — row with a scope summary, light") {
   let fixture = makeScopedRuleContainer()
   NavigationStack {
     RulesScreen(ruleStore: FakeRuleStore(), categoryStore: FakeCategoryStore(), accounts: fixture.accounts)
   }
   .modelContainer(fixture.container)
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }
 
 private struct RulesScreenActionFailure: Error {}
@@ -255,10 +339,10 @@ private final class AlwaysFailingRuleStore: RuleStore {
   func preview(pattern: String, scope: RuleScope) throws -> Int { 0 }
 }
 
-#Preview("Rules — delete or reorder fails, dark") {
+#Preview("Rules — delete or reorder fails, light") {
   NavigationStack {
     RulesScreen(ruleStore: AlwaysFailingRuleStore(), categoryStore: FakeCategoryStore())
   }
   .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
-  .preferredColorScheme(.dark)
+  .preferredColorScheme(.light)
 }

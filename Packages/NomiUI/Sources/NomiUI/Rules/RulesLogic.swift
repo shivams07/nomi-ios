@@ -98,3 +98,12 @@ enum RuleRowActions {
     isSystem ? [.toggle] : [.toggle, .delete]
   }
 }
+
+/// The row's first subtitle line (OR1, approved `Rules` artboard): the category
+/// name, with " · System" after it for a system rule. The "System" tag is the
+/// only thing that tells a seeded rule apart, so it stays on the row.
+enum RuleRowSubtitle {
+  static func text(categoryName: String, isSystem: Bool) -> String {
+    isSystem ? "\(categoryName) · System" : categoryName
+  }
+}
