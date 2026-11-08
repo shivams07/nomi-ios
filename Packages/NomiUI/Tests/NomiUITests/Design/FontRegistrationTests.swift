@@ -3,8 +3,8 @@ import XCTest
 
 final class FontRegistrationTests: XCTestCase {
   /// Every bundled file registers, and its PostScript name (the file name minus
-  /// `.otf`) resolves to a font. Inter Medium and SemiBold are not bundled yet
-  /// (Q2), so they are not in this list.
+  /// `.otf`) resolves to a font. That covers Inter Regular, Medium and SemiBold,
+  /// all three listed in `bundledFileNames`.
   func testEveryBundledFontRegistersAndResolvesByPostScriptName() {
     NomiFont.registerIfNeeded()
 

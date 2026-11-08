@@ -13,7 +13,7 @@ import SwiftUI
 /// circle of at most 56pt carrying a glyph is a *mark*, not a surface. The
 /// palette is still never a card, a button, chrome or text. White glyph on
 /// every slot is ≥ 3.07:1 (yellow is the floor; green 4.95); every slot
-/// against `surfaceRaised` is ≥ 3.10:1 (`other` is the floor) — both clear
+/// against `card` is ≥ 3.10:1 (`other` is the floor) — both clear
 /// the 3:1 graphics threshold; neither is text.
 ///
 /// `.neutral` is the F3 variant for Ledger and Home rows: an `iconTile` circle

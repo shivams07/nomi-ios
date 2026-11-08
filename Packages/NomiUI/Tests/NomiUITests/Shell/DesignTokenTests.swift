@@ -6,11 +6,10 @@ import XCTest
 final class DesignTokenTests: XCTestCase {
   func testSurfaceStepsMatchTheApprovedLightScale() {
     let environment = EnvironmentValues()
-    // Light navy-ocean surfaces (F1 of nomi-ios-build-plan, I-1). Legacy
-    // surfaceRaised resolves to card; secondary fill -> #EDF1F8.
+    // Light navy-ocean surfaces (F1 of nomi-ios-build-plan, I-1). Secondary
+    // fill -> #EDF1F8.
     let steps: [(Color, UInt32)] = [
       (NomiColor.surface, 0xEDF1F8),
-      (NomiColor.surfaceRaised, 0xFFFFFF),
     ]
     for (actual, hex) in steps {
       assertResolves(actual, toHex: hex, environment: environment)

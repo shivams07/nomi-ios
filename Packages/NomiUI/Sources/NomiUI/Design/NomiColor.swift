@@ -7,8 +7,8 @@ import SwiftUI
 ///
 /// Existing names keep compiling so every screen follows the new values
 /// without being rewritten. Deprecated aliases are removed once no caller
-/// remains. Legacy names still in use (`textPrimary`, `textTertiary`,
-/// `surfaceRaised`) equal their replacement's value.
+/// remains. Legacy names still in use (`textPrimary`, `textTertiary`)
+/// equal their replacement's value.
 public enum NomiColor {
   // MARK: - Ground and surfaces
 
@@ -19,8 +19,6 @@ public enum NomiColor {
   /// Secondary fill. Legacy `surface`; no named replacement in I-1.
   public static let secondaryFill = Color(hex: NomiHex.secondaryFill)
 
-  /// Legacy `surfaceRaised`. Equals `card`.
-  public static let surfaceRaised = Color(hex: NomiHex.card)
   /// Legacy `surface`. Equals `secondaryFill`.
   public static let surface = Color(hex: NomiHex.secondaryFill)
 

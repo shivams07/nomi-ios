@@ -2,8 +2,8 @@ import NomiCore
 import NomiPreview
 import SwiftUI
 
-/// A single ledger row. **Never carries `NomiGlow`** — it lives inside a
-/// scrolling list, which is exactly the container that modifier must not enter.
+/// A single ledger row. It lives inside a scrolling list, which is exactly the
+/// container a decorative effect such as a glow must stay out of.
 ///
 /// One VoiceOver element per row. The label carries the direction word
 /// ("debit" or "credit") and the unsigned amount, so the sign glyph is never

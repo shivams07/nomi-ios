@@ -215,13 +215,10 @@ enum MailAttentionLogic {
     }
   }
 
-  /// What follows "Last synced". A `lastSync` less than a second before `now`
-  /// has no age to report, and one after `now` (clock skew, or a sync stamped
-  /// this instant) has a negative one: the formatter would say "in 0 sec." or
-  /// "in 1 hr.". Both read "just now". Anything older keeps the relative form.
+  /// What follows "Last synced". Forwards to `SyncStatusRow.relativeSyncPhrase`,
+  /// the one implementation, so this card and the Home row read the same.
   static func lastSyncedPhrase(_ lastSync: Date, now: Date) -> String {
-    guard now.timeIntervalSince(lastSync) >= 1 else { return "just now" }
-    return NomiFormatters.relativeTime.localizedString(for: lastSync, relativeTo: now)
+    SyncStatusRow.relativeSyncPhrase(lastSync, now: now)
   }
 }
 

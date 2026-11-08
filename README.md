@@ -14,8 +14,8 @@ One app target, five local Swift packages:
   Depends on `NomiCore`.
 - `NomiUI` — every screen. Depends on `NomiCore` and `NomiPreview` only — never
   `NomiIngest`.
-- `NomiApp` — composition root, wires real services to the UI. Depends on all
-  four.
+- `NomiApp` — composition root, wires real services to the UI. Depends on
+  `NomiCore`, `NomiIngest` and `NomiUI`, not `NomiPreview`.
 
 `project.yml` (XcodeGen) generates the Xcode project; `.xcodeproj` is never
 committed.
@@ -36,4 +36,7 @@ for pkg in NomiCore NomiPreview NomiIngest NomiUI NomiApp; do
 done
 ```
 
-CI (`.github/workflows/ci.yml`) runs both on every push, on `macos-14`.
+CI (`.github/workflows/ci.yml`) runs on `macos-14` for every pull request and
+for each push to `main`. It runs the Xcode build for the iOS Simulator, then
+`swift test` in all five packages. A branch pushed with no open pull request
+does not run CI; open the PR (a draft is enough).

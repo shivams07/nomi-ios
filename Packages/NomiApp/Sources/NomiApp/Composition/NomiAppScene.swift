@@ -49,10 +49,9 @@ public struct NomiAppScene: Scene {
   public init() {
     // Before the app finishes launching, as `BGTaskScheduler` requires.
     _ = AppServices.registerBackgroundTasks
-    // U5 ships Montserrat and Inter as package resources and `Info.plist`
-    // declares them under `UIAppFonts` — but `UIAppFonts` only covers fonts in
-    // the *app* bundle, and these live in `NomiUI`'s. `registerIfNeeded` is
-    // U5's own answer to that; nothing had ever called it.
+    // Inter ships as package resources in `NomiUI`'s bundle. `UIAppFonts` covers
+    // only the *app* bundle, and App/Info.plist does not declare it (U18), so
+    // `registerIfNeeded` is what puts these faces on the process font table.
     NomiFont.registerIfNeeded()
     // DEC-08 (L1). Installs the navigation bar appearance (F3, I-4). It names
     // the Inter faces, so it runs after registration.

@@ -5,3 +5,5 @@ DerivedData/
 .swiftpm/
 xcuserdata/
 .DS_Store
+# `swift build` and `swift test` write one per package; the repo commits none.
+Packages/*/Package.resolved

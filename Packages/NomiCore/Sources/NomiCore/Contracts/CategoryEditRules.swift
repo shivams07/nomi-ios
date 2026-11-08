@@ -3,9 +3,11 @@ import Foundation
 /// Why a category edit was refused. The editor shows the reason; nothing
 /// branches on the case beyond that.
 public enum CategoryUpdateError: Error, Equatable, Sendable {
-  /// The conformer does not edit categories. `CategoryStore`'s default throws
-  /// this, so a conformer that never implemented `update` fails loudly rather
-  /// than dropping the edit.
+  /// The conformer does not edit categories. Nothing in the tree throws this
+  /// today: `CategoryStore.update` is a strict requirement with no default, and
+  /// `SwiftDataCategoryStore` throws the other cases. `CategoryEditorLogic` still
+  /// maps this case to the generic save line, so a conformer that refuses with
+  /// it gets that line.
   case notSupported
   /// No category row has this id. `Category.uncategorizedID` lands here too:
   /// it is a display sentinel with no row, and it must not be editable.
