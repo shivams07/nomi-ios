@@ -25,6 +25,9 @@ import NomiCore
 public actor IngestPipeline {
   private let store: any PipelineStore
   private let calendar: Calendar
+  /// DEC-05's device calendar. The detector and its read window use this and
+  /// nothing else; `calendar` stays `NomiCalendar.india` for dedupe.
+  private let transferCalendar: Calendar
   private let now: @Sendable () -> Date
   private var observer: (any PostCommitObserver)?
   private var isBusy = false
@@ -33,10 +36,12 @@ public actor IngestPipeline {
   public init(
     store: any PipelineStore,
     calendar: Calendar = NomiCalendar.india,
+    transferCalendar: Calendar = .current,
     now: @escaping @Sendable () -> Date = { Date() }
   ) {
     self.store = store
     self.calendar = calendar
+    self.transferCalendar = transferCalendar
     self.now = now
   }
 
@@ -141,9 +146,78 @@ public actor IngestPipeline {
       updates: updatedIDs.compactMap { working[$0] },
       affectedCategoryIDs: affected
     )
-    try await commit(plan)
+    if !plan.isEmpty {
+      try await store.apply(plan)
+      // Transfer marks are a second write, made only through
+      // `applyTransferMarks` (TR4). Their categories join the one observer call
+      // for the batch; with no marks the call is what it was before.
+      let marked = await markTransfers(touching: plan.inserts + plan.updates, at: timestamp)
+      await observer?.didCommit(affectedCategoryIDs: plan.affectedCategoryIDs.union(marked))
+    }
 
     return IngestBatchResult(created: created, merged: merged, flagged: flagged)
+  }
+
+  // MARK: - Transfer detection (DEC-05, TR1 to TR5)
+
+  /// Marks the pairs this batch touched. Never throws: the ingest is already
+  /// committed, so a failure here leaves the rows counted as spend, which is
+  /// the visible failure DEC-05 prefers. Returns the categories of the legs it
+  /// wrote.
+  private func markTransfers(touching rows: [TransactionSnapshot], at timestamp: Date) async -> Set<UUID> {
+    do {
+      return try await performMarkTransfers(touching: rows, at: timestamp)
+    } catch {
+      return []
+    }
+  }
+
+  private func performMarkTransfers(touching rows: [TransactionSnapshot], at timestamp: Date) async throws -> Set<UUID> {
+    let seeds = rows.filter {
+      $0.currencyCode == "INR" && $0.accountID != nil
+        && TransferRules.state($0.transferPair) == .unmarked
+    }
+    guard !seeds.isEmpty else { return [] }
+
+    // One read per amount, over the seeds' dates widened by the window. Two
+    // rules set the width: a partner lies within `windowDays` of its seed, and
+    // the partner's own competitors lie within `windowDays` of the partner, so
+    // six days each way is the most a decision can need. Reading more is safe:
+    // eligibility is exact, and an extra row can only add a true competitor.
+    let window = TransferRules.windowDays
+    var candidates: [TransactionSnapshot] = []
+    for (amount, group) in Dictionary(grouping: seeds, by: \.amountMinor).sorted(by: { $0.key < $1.key }) {
+      guard
+        let minDate = group.map(\.date).min(),
+        let maxDate = group.map(\.date).max(),
+        let lower = transferCalendar.date(
+          byAdding: .day, value: -(2 * window + 1),
+          to: transferCalendar.startOfDay(for: minDate)),
+        let upper = transferCalendar.date(
+          byAdding: .day, value: 2 * window + 2,
+          to: transferCalendar.startOfDay(for: maxDate))
+      else { continue }
+      candidates.append(contentsOf: try await store.transferCandidates(amountMinor: amount, dateRange: lower...upper))
+    }
+
+    var byID: [UUID: TransactionSnapshot] = [:]
+    for row in candidates { byID[row.id] = row }
+    guard byID.count >= 2 else { return [] }
+    let accounts = try await store.accountFacts()
+
+    let marks = TransferDetector.detect(
+      rows: Array(byID.values), accounts: accounts, calendar: transferCalendar
+    )
+    let readStates = Dictionary(uniqueKeysWithValues: byID.values.map {
+      ($0.id, TransferLegState(id: $0.id, accountID: $0.accountID, pair: $0.transferPairAtRead))
+    })
+    let writes = TransferPairWrite.writes(
+      from: marks, readStates: readStates, touching: Set(seeds.map(\.id))
+    )
+    guard !writes.isEmpty else { return [] }
+
+    let landed = try await store.applyTransferMarks(writes, updatedAt: timestamp)
+    return Set(landed.flatMap { [$0.first.id, $0.second.id] }.compactMap { byID[$0]?.categoryID })
   }
 
   // MARK: - R5 reconcile

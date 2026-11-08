@@ -28,4 +28,22 @@ public protocol PipelineStore: Sendable {
 
   /// Insert, update and delete in one transaction.
   func apply(_ plan: CommitPlan) async throws
+
+  /// Every account, archived included, by id (DEC-05 detector input). No default:
+  /// a conformer must say what its accounts are (TR1).
+  func accountFacts() async throws -> [UUID: TransferAccount]
+
+  /// Rows of this amount, both directions, dated inside `dateRange`. Snapshots
+  /// carry `transferPairAtRead` (TR1).
+  func transferCandidates(
+    amountMinor: Int,
+    dateRange: ClosedRange<Date>
+  ) async throws -> [TransactionSnapshot]
+
+  /// Writes whole transfer pairs or none of each (TR4). Returns the writes that
+  /// landed. Touches only the transfer pair and `updatedAt` on each leg.
+  func applyTransferMarks(
+    _ writes: [TransferPairWrite],
+    updatedAt: Date
+  ) async throws -> [TransferPairWrite]
 }

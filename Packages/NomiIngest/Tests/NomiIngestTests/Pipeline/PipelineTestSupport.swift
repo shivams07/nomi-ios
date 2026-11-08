@@ -105,7 +105,8 @@ enum Fixture {
     store: FakePipelineStore,
     observer: RecordingObserver? = nil
   ) async -> IngestPipeline {
-    let pipeline = IngestPipeline(store: store, calendar: calendar, now: clock)
+    let pipeline = IngestPipeline(
+      store: store, calendar: calendar, transferCalendar: calendar, now: clock)
     if let observer { await pipeline.setObserver(observer) }
     return pipeline
   }
@@ -114,21 +115,35 @@ enum Fixture {
 // MARK: - Fakes
 
 /// In-memory `PipelineStore`. Records every `apply` so a test can assert on
-/// batching, not just on final state.
+/// batching, not just on final state. Transfer writes follow the real store's
+/// rules: a whole pair or nothing (TR4), and only the pair and `updatedAt`.
 actor FakePipelineStore: PipelineStore {
   private var rowsByID: [UUID: TransactionSnapshot] = [:]
   private var ruleSnapshots: [RuleSnapshot] = []
+  private var accountsByID: [UUID: TransferAccount]
   private(set) var appliedPlans: [CommitPlan] = []
+  /// One entry per `applyTransferMarks` call that landed at least one pair.
+  private(set) var appliedTransferWrites: [[TransferPairWrite]] = []
+  /// Makes `accountFacts()` throw, to test that a detection failure does not
+  /// fail the ingest.
+  private var failAccountFacts = false
 
-  init(rows: [TransactionSnapshot] = [], rules: [RuleSnapshot] = []) {
+  init(
+    rows: [TransactionSnapshot] = [],
+    rules: [RuleSnapshot] = [],
+    accounts: [UUID: TransferAccount] = [:]
+  ) {
     for row in rows { rowsByID[row.id] = row }
     ruleSnapshots = rules
+    accountsByID = accounts
   }
 
   // Test accessors
 
   var rowCount: Int { rowsByID.count }
   var applyCount: Int { appliedPlans.count }
+
+  func setFailAccountFacts(_ fail: Bool) { failAccountFacts = fail }
 
   var allRows: [TransactionSnapshot] {
     rowsByID.values.sorted { lhs, rhs in
@@ -177,6 +192,55 @@ actor FakePipelineStore: PipelineStore {
     for row in plan.updates { rowsByID[row.id] = row }
     for id in plan.deletes { rowsByID.removeValue(forKey: id) }
   }
+
+  func accountFacts() async throws -> [UUID: TransferAccount] {
+    if failAccountFacts { throw FakeStoreFailure.accountFacts }
+    return accountsByID
+  }
+
+  func transferCandidates(
+    amountMinor: Int,
+    dateRange: ClosedRange<Date>
+  ) async throws -> [TransactionSnapshot] {
+    rowsByID.values.filter {
+      $0.amountMinor == amountMinor && dateRange.contains($0.date)
+    }.map { row in
+      // As the real store does: the read pair is the pair the row has now.
+      var copy = row
+      copy.transferPairAtRead = row.transferPair
+      return copy
+    }
+  }
+
+  /// The same decision the real store takes, on the fake's rows: `accepted`
+  /// against the current state, then the pair and `updatedAt` on both legs.
+  func applyTransferMarks(
+    _ writes: [TransferPairWrite],
+    updatedAt: Date
+  ) async throws -> [TransferPairWrite] {
+    var now: [UUID: TransferLegState] = [:]
+    for write in writes {
+      for id in [write.first.id, write.second.id] {
+        if let row = rowsByID[id] {
+          now[id] = TransferLegState(id: row.id, accountID: row.accountID, pair: row.transferPair)
+        }
+      }
+    }
+    let landed = TransferPairWrite.accepted(writes, now: now)
+    for write in landed {
+      for id in [write.first.id, write.second.id] {
+        rowsByID[id]?.transferGroupID = write.pair.groupID
+        rowsByID[id]?.transferSourceRaw = write.pair.sourceRaw
+        rowsByID[id]?.updatedAt = updatedAt
+      }
+    }
+    if !landed.isEmpty { appliedTransferWrites.append(landed) }
+    return landed
+  }
+}
+
+enum FakeStoreFailure: Error {
+  case accountFacts
 }
 
 /// `PostCommitObserver` that records every call. `@unchecked Sendable` with an
