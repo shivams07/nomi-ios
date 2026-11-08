@@ -24,6 +24,23 @@ public final class FakeCategoryStore: CategoryStore {
     category.name = name
   }
 
+  /// The same rules as `SwiftDataCategoryStore.update`, so a preview refuses
+  /// what the app refuses.
+  public func update(_ id: UUID, name: String, symbolName: String, paletteSlot: Int) throws {
+    guard let category = categories.first(where: { $0.id == id }) else {
+      throw CategoryUpdateError.notFound(id)
+    }
+    let stored = try CategoryEditRules.validate(
+      name: name,
+      symbolName: symbolName,
+      paletteSlot: paletteSlot,
+      otherNames: categories.filter { $0.id != id }.map(\.name)
+    )
+    category.name = stored
+    category.symbolName = symbolName
+    category.paletteSlot = paletteSlot
+  }
+
   public func delete(_ id: UUID) throws {
     guard let category = categories.first(where: { $0.id == id }) else { return }
     if category.isSystem { throw CategoryStoreError.systemCategory }
