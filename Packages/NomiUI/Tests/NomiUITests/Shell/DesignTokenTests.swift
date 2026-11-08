@@ -6,15 +6,11 @@ import XCTest
 final class DesignTokenTests: XCTestCase {
   func testSurfaceStepsMatchTheApprovedLightScale() {
     let environment = EnvironmentValues()
-    // Light navy-ocean surfaces (F1 of nomi-ios-build-plan, I-1). Legacy names
-    // resolve to their replacement's value: canvas -> ground, the three card
-    // steps -> card, secondary fill -> #EDF1F8.
+    // Light navy-ocean surfaces (F1 of nomi-ios-build-plan, I-1). Legacy
+    // surfaceRaised resolves to card; secondary fill -> #EDF1F8.
     let steps: [(Color, UInt32)] = [
-      (NomiColor.surfaceCanvas, 0xF3F6FB),
       (NomiColor.surface, 0xEDF1F8),
       (NomiColor.surfaceRaised, 0xFFFFFF),
-      (NomiColor.surfaceRow, 0xFFFFFF),
-      (NomiColor.surfaceInput, 0xFFFFFF),
     ]
     for (actual, hex) in steps {
       assertResolves(actual, toHex: hex, environment: environment)
@@ -46,15 +42,8 @@ final class DesignTokenTests: XCTestCase {
 
   func testLegacyNamesFollowTheirReplacements() {
     let environment = EnvironmentValues()
-    assertSameRGB(NomiColor.accent, NomiColor.navy, environment: environment)
-    assertSameRGB(NomiColor.progressTrackFill, NomiColor.navy, environment: environment)
-    assertSameRGB(NomiColor.overBudget, NomiColor.error, environment: environment)
     assertSameRGB(NomiColor.textPrimary, NomiColor.ink, environment: environment)
-    assertSameRGB(NomiColor.textSecondary, NomiColor.inkDeep, environment: environment)
     assertSameRGB(NomiColor.textTertiary, NomiColor.inkSecondary, environment: environment)
-    assertSameRGB(NomiColor.textQuaternary, NomiColor.inkTab, environment: environment)
-    assertSameRGB(NomiColor.debitText, NomiColor.ink, environment: environment)
-    assertSameRGB(NomiColor.creditText, NomiColor.inkDeep, environment: environment)
   }
 
   /// PEND B.8 N1: each text-on-surface pair is at or above 4.5:1, and the

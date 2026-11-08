@@ -6,37 +6,29 @@ import SwiftUI
 /// from `NomiHex`.
 ///
 /// Existing names keep compiling so every screen follows the new values
-/// without being rewritten. Legacy names that have a named replacement are
-/// deprecated and carry the replacement's value; `textPrimary`, `textSecondary`,
-/// `textTertiary`, `surfaceCanvas`, `surfaceRaised` and `surface` are not
-/// deprecated in F1 (too many callers). X1 deletes the deprecated names once a
-/// grep finds no callers.
+/// without being rewritten. Deprecated aliases are removed once no caller
+/// remains. Legacy names still in use (`textPrimary`, `textTertiary`,
+/// `surfaceRaised`) equal their replacement's value.
 public enum NomiColor {
   // MARK: - Ground and surfaces
 
-  /// Screen and sheet ground. Legacy `surfaceCanvas`.
+  /// Screen and sheet ground.
   public static let ground = Color(hex: NomiHex.ground)
   /// Cards, rows and inputs. Flat white, no glass.
   public static let card = Color(hex: NomiHex.card)
   /// Secondary fill. Legacy `surface`; no named replacement in I-1.
   public static let secondaryFill = Color(hex: NomiHex.secondaryFill)
 
-  /// Legacy `surfaceCanvas`. Kept undeprecated; equals `ground`.
-  public static let surfaceCanvas = Color(hex: NomiHex.ground)
-  /// Legacy `surfaceRaised`. Kept undeprecated; equals `card`.
+  /// Legacy `surfaceRaised`. Equals `card`.
   public static let surfaceRaised = Color(hex: NomiHex.card)
-  /// Legacy `surface`. Kept undeprecated; equals `secondaryFill`.
+  /// Legacy `surface`. Equals `secondaryFill`.
   public static let surface = Color(hex: NomiHex.secondaryFill)
-  @available(*, deprecated, message: "Use NomiColor.card")
-  public static let surfaceRow = Color(hex: NomiHex.card)
-  @available(*, deprecated, message: "Use NomiColor.card")
-  public static let surfaceInput = Color(hex: NomiHex.card)
 
   // MARK: - Text
 
-  /// Primary text. Legacy `textPrimary`, not deprecated in F1.
+  /// Primary text.
   public static let ink = Color(hex: NomiHex.ink)
-  /// Section labels, credit amounts, day ticks. Legacy `textSecondary`.
+  /// Section labels, credit amounts, day ticks.
   public static let inkDeep = Color(hex: NomiHex.inkDeep)
   /// Captions, subtitles, values. Legacy `textTertiary`.
   public static let inkSecondary = Color(hex: NomiHex.inkSecondary)
@@ -47,14 +39,10 @@ public enum NomiColor {
   /// Text-field placeholder.
   public static let placeholder = Color(hex: NomiHex.placeholder)
 
-  /// Legacy `textPrimary`. Kept undeprecated; equals `ink`.
+  /// Legacy `textPrimary`. Equals `ink`.
   public static let textPrimary = Color(hex: NomiHex.ink)
-  /// Legacy `textSecondary`. Kept undeprecated; equals `inkDeep`.
-  public static let textSecondary = Color(hex: NomiHex.inkDeep)
-  /// Legacy `textTertiary`. Kept undeprecated; equals `inkSecondary`.
+  /// Legacy `textTertiary`. Equals `inkSecondary`.
   public static let textTertiary = Color(hex: NomiHex.inkSecondary)
-  @available(*, deprecated, message: "Use NomiColor.inkTab")
-  public static let textQuaternary = Color(hex: NomiHex.inkTab)
 
   // MARK: - Blue
 
@@ -76,11 +64,6 @@ public enum NomiColor {
   /// Insights donut slice 4 (artboard #BBD3EE). Chart fill only.
   public static let chartTintLight = Color(hex: NomiHex.chartTintLight)
 
-  @available(*, deprecated, message: "Use NomiColor.navy")
-  public static let accent = Color(hex: NomiHex.navy)
-  @available(*, deprecated, message: "Use NomiColor.navy")
-  public static let progressTrackFill = Color(hex: NomiHex.navy)
-
   // MARK: - Controls
 
   /// The one black primary control and the selected tab capsule.
@@ -97,20 +80,6 @@ public enum NomiColor {
   public static let error = Color(hex: NomiHex.error)
   /// Error card and icon tile fill.
   public static let errorTint = Color(hex: NomiHex.errorTint)
-
-  /// Retired. Was the category-palette red slot borrowed for over-budget.
-  /// Now `error`. Category colours never carry error meaning.
-  @available(*, deprecated, message: "Use NomiColor.error")
-  public static let overBudget = Color(hex: NomiHex.error)
-
-  // MARK: - Direction
-
-  /// Debits. Legacy `debitText`: ink with a minus sign, not red.
-  @available(*, deprecated, message: "Use NomiColor.ink (debits carry the minus sign)")
-  public static let debitText = Color(hex: NomiHex.ink)
-  /// Credits. Legacy `creditText`: deep navy, semibold, with a plus sign.
-  @available(*, deprecated, message: "Use NomiColor.inkDeep (credits carry the plus sign)")
-  public static let creditText = Color(hex: NomiHex.inkDeep)
 
   // MARK: - Separators and scrim
 
@@ -143,20 +112,9 @@ public enum NomiColor {
   public static let tabGlassBottom = Color(hex: NomiHex.white, opacity: 0.42)
   public static let tabGlassBorder = Color(hex: NomiHex.white, opacity: 0.90)
 
-  // MARK: - Legacy glass names
+  // MARK: - Glass blur
 
-  @available(*, deprecated, message: "Use NomiColor.card")
-  public static let glassFill = Color(hex: NomiHex.card)
-  @available(*, deprecated, message: "Use NomiColor.separator")
-  public static let glassHairline = Color(hex: NomiHex.inkDeep, opacity: 0.08)
-  @available(*, deprecated, message: "Use NomiColor.separator")
-  public static let glassHairlineStrong = Color(hex: NomiHex.inkDeep, opacity: 0.08)
   public static let glassBlurRadius: CGFloat = 3
-
-  @available(*, deprecated, message: "Use NomiColor.tabGlassTop")
-  public static let floatingGlassFill = Color(hex: NomiHex.white, opacity: 0.72)
-  @available(*, deprecated, message: "Use NomiColor.tabGlassBorder")
-  public static let floatingGlassHairline = Color(hex: NomiHex.white, opacity: 0.90)
   public static let floatingGlassBlurRadius: CGFloat = 12
 }
 
@@ -207,10 +165,6 @@ public struct NomiShadow {
 extension NomiColor {
   /// Legacy name for `NomiShadow`.
   public typealias ShadowToken = NomiShadow
-
-  /// Legacy name for `NomiShadow.card`.
-  @available(*, deprecated, message: "Use NomiShadow.card")
-  public static let sanctionedShadow = NomiShadow.card
 }
 
 extension Color {
