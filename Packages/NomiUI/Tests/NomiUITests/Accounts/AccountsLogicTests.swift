@@ -215,3 +215,33 @@ final class AccountSectioningTests: XCTestCase {
     }
   }
 }
+
+// MARK: - F1 / F2 follow-up (PR #123 review)
+
+final class AccountDeleteRoutingTests: XCTestCase {
+  /// "Archive instead" must reach the archive alert, never an archive made
+  /// straight from the dialog. The alert is where the DEC-06 sentence shows.
+  func testArchiveInsteadPresentsTheArchiveAlert() {
+    XCTAssertEqual(AccountDeleteRouting.outcome(for: .archiveInstead), .presentArchiveAlert)
+  }
+
+  func testDeleteDeletes() {
+    XCTAssertEqual(AccountDeleteRouting.outcome(for: .delete), .deleteAccount)
+  }
+
+  /// The alert the route leads to carries the DEC-06 disclosure.
+  func testTheArchiveAlertCarriesTheDisclosure() {
+    XCTAssertTrue(AccountBalanceDisplay.archiveMessage.contains(
+      "Archived accounts are left out of your Tracked balance."
+    ))
+  }
+}
+
+final class AccountKindControlTests: XCTestCase {
+  /// Each segment's tap target is at least the 44 pt minimum. The control was
+  /// 40 pt per segment before this fix.
+  func testEachSegmentIsAtLeastTheMinimumTapHeight() {
+    XCTAssertGreaterThanOrEqual(AccountKindControl.segmentHeight, NomiSpacing.minTarget)
+    XCTAssertEqual(NomiSpacing.minTarget, 44)
+  }
+}

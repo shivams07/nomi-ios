@@ -107,8 +107,8 @@ public struct AccountsScreen: View {
       titleVisibility: .visible,
       presenting: deletingAccount,
       actions: { account in
-        Button("Archive instead") { archiveAccount(account) }
-        Button("Delete", role: .destructive) { deleteAccount(account) }
+        Button("Archive instead") { routeDeleteChoice(.archiveInstead, for: account) }
+        Button("Delete", role: .destructive) { routeDeleteChoice(.delete, for: account) }
         Button("Cancel", role: .cancel) {}
       },
       message: { account in
@@ -296,6 +296,19 @@ public struct AccountsScreen: View {
       archivingAccount = account
     case .delete(let account):
       deletingAccount = account
+    }
+  }
+
+  /// Carries out a delete-dialog choice. "Archive instead" hands the account to
+  /// the archive alert and does not archive here, so the DEC-06 sentence is
+  /// always shown before the Tracked balance moves.
+  private func routeDeleteChoice(_ choice: AccountDeleteChoice, for account: AccountSummary) {
+    switch AccountDeleteRouting.outcome(for: choice) {
+    case .presentArchiveAlert:
+      deletingAccount = nil
+      archivingAccount = account
+    case .deleteAccount:
+      deleteAccount(account)
     }
   }
 

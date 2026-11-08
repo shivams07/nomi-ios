@@ -57,6 +57,32 @@ enum AccountKindOptions {
   }
 }
 
+/// The choices in the delete confirmation dialog.
+enum AccountDeleteChoice: Equatable {
+  case archiveInstead
+  case delete
+}
+
+/// What the screen does with a delete-dialog choice.
+enum AccountDeleteOutcome: Equatable {
+  /// Present the archive alert, which carries the DEC-06 sentence. Never archive
+  /// directly from the dialog: that moves the Tracked balance with no disclosure.
+  case presentArchiveAlert
+  case deleteAccount
+}
+
+/// Routes the delete dialog's choices (AC follow-up F1). "Archive instead" goes
+/// to the same archive alert as the row's Archive and the edit sheet's Archive,
+/// so every path to an archive shows the same disclosure.
+enum AccountDeleteRouting {
+  static func outcome(for choice: AccountDeleteChoice) -> AccountDeleteOutcome {
+    switch choice {
+    case .archiveInstead: return .presentArchiveAlert
+    case .delete: return .deleteAccount
+    }
+  }
+}
+
 /// The SF Symbol on an account's row tile. Bank and card share the card
 /// glyph, as the approved Accounts artboards draw them.
 enum AccountTileSymbol {
