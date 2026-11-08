@@ -203,6 +203,7 @@ public struct LedgerScreen: View {
           since: since,
           now: now,
           windowDays: LedgerWindow.days(for: stepsBack),
+          wholeLedgerSearch: transactionSearch != nil,
           isFiltered: isFiltered,
           transactionStore: transactionStore,
           categoryNamesByID: categoryNamesByID,
@@ -236,7 +237,13 @@ public struct LedgerScreen: View {
       }
     }
     .background(NomiColor.ground)
-    .modifier(LedgerSearchModifier(text: $searchText, isEnabled: emptyKind != .empty))
+    .modifier(
+      LedgerSearchModifier(
+        text: $searchText,
+        isEnabled: emptyKind != .empty,
+        prompt: LedgerCopy.searchPrompt(wholeLedger: transactionSearch != nil)
+      )
+    )
     .navigationTitle("Ledger")
     #if os(iOS)
       .navigationBarTitleDisplayMode(.large)
@@ -359,10 +366,11 @@ public struct LedgerScreen: View {
 private struct LedgerSearchModifier: ViewModifier {
   @Binding var text: String
   let isEnabled: Bool
+  let prompt: String
 
   func body(content: Content) -> some View {
     if isEnabled {
-      content.searchable(text: $text, prompt: "Search all transactions")
+      content.searchable(text: $text, prompt: prompt)
     } else {
       content
     }
@@ -398,6 +406,9 @@ private struct LedgerTransactionList: View {
   let now: Date
   /// How far back the window reaches, for the "Nothing in the last N days" copy.
   let windowDays: Int
+  /// Whether a whole-ledger search service is wired. Without one, the search
+  /// box only filters the window, and the copy must not say otherwise.
+  let wholeLedgerSearch: Bool
   /// A chip other than All is selected, or the search box holds a query.
   let isFiltered: Bool
   let transactionStore: TransactionStore
@@ -429,6 +440,7 @@ private struct LedgerTransactionList: View {
     since: Date,
     now: Date,
     windowDays: Int,
+    wholeLedgerSearch: Bool,
     isFiltered: Bool,
     transactionStore: TransactionStore,
     categoryNamesByID: [UUID: String],
@@ -444,6 +456,7 @@ private struct LedgerTransactionList: View {
     self.filter = filter
     self.now = now
     self.windowDays = windowDays
+    self.wholeLedgerSearch = wholeLedgerSearch
     self.isFiltered = isFiltered
     self.transactionStore = transactionStore
     self.categoryNamesByID = categoryNamesByID
@@ -640,7 +653,7 @@ private struct LedgerTransactionList: View {
       NomiEmptyState(
         systemImage: "clock",
         title: LedgerCopy.nothingRecentTitle(days: windowDays),
-        message: "Older transactions aren’t shown here. Show older to widen the list, or search the whole ledger."
+        message: LedgerCopy.nothingRecentMessage(wholeLedger: wholeLedgerSearch)
       )
       .padding(.horizontal, NomiSpacing.md)
       .padding(.top, NomiSpacing.lg)

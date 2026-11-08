@@ -239,6 +239,22 @@ final class LedgerCopyTests: XCTestCase {
     XCTAssertEqual(LedgerCopy.nothingRecentTitle(days: 180), "Nothing in the last 180 days")
   }
 
+  /// With a whole-ledger search wired, the prompt and message say so.
+  func testWholeLedgerSearchKeepsTheWholeLedgerCopy() {
+    XCTAssertEqual(LedgerCopy.searchPrompt(wholeLedger: true), "Search all transactions")
+    XCTAssertTrue(LedgerCopy.nothingRecentMessage(wholeLedger: true).contains("search the whole ledger"))
+  }
+
+  /// Without one (RootView passes no `transactionSearch` until S1), search
+  /// filters only the window, so the copy must not promise the whole ledger.
+  func testWithoutWholeLedgerSearchTheCopyPromisesOnlyTheWindow() {
+    XCTAssertEqual(LedgerCopy.searchPrompt(wholeLedger: false), "Search")
+    let message = LedgerCopy.nothingRecentMessage(wholeLedger: false)
+    XCTAssertFalse(message.contains("whole ledger"))
+    XCTAssertFalse(message.contains("search"))
+    XCTAssertTrue(message.contains("Show older"))
+  }
+
   func testNoQueryReadsNoMatches() {
     XCTAssertEqual(LedgerCopy.noResultsTitle(query: ""), "No matches")
   }

@@ -70,21 +70,31 @@ public struct TransactionRow: View {
     return segments.joined(separator: " · ")
   }
 
-  /// Pure — see `subtitle(categoryName:accountName:vpa:)`. U18: the amount
-  /// goes through `NomiFormatters.amountString(minor:currencyCode:)`, whose
-  /// currency symbol already carries the code — a USD row reads "$12.99",
-  /// never "₹12.99 USD".
-  ///
-  /// Used by `TransactionDetailScreen`'s header, which has not yet moved to
-  /// `amountParts`. Its output (no sign on a debit) is unchanged on purpose.
-  static func amountText(minor: Int, direction: Direction, currencyCode: String = "INR") -> String {
-    let sign = direction == .credit ? "+" : ""
-    return sign + NomiFormatters.amountString(minor: minor, currencyCode: currencyCode)
+  /// The amount's ink token for a direction (DEC-03): a debit is `ink`, a
+  /// credit is `inkDeep`. Pure, so a test pins the mapping, and a swapped
+  /// mutant fails it.
+  static func amountInk(for direction: Direction) -> AmountInk {
+    direction == .credit ? .inkDeep : .ink
+  }
+
+  /// The two amount inks, kept apart from `Color` so the mapping can be tested.
+  enum AmountInk: Equatable {
+    case ink
+    case inkDeep
+
+    var color: Color {
+      switch self {
+      case .ink: return NomiColor.ink
+      case .inkDeep: return NomiColor.inkDeep
+      }
+    }
   }
 
   /// Pure. The row's amount, split for typesetting (DEC-03). A debit is
   /// negated before formatting, so "−" always prints. A credit is positive
-  /// and carries "+". Zero carries neither.
+  /// and carries "+". Zero carries neither. Currency comes through
+  /// `NomiFormatters.amountString`, so a USD row reads "$12.99", never
+  /// "₹12.99 USD".
   static func amountParts(minor: Int, direction: Direction, currencyCode: String = "INR") -> NomiAmountParts {
     let magnitude = abs(minor)
     return NomiAmountFormat.parts(
@@ -217,7 +227,7 @@ public struct TransactionRow: View {
     let parts = Self.amountParts(
       minor: transaction.amountMinor, direction: transaction.direction, currencyCode: transaction.currencyCode)
     let style: NomiTextStyle = isCredit ? .amountStrong : .amount
-    let color = isCredit ? NomiColor.inkDeep : NomiColor.ink
+    let color = Self.amountInk(for: transaction.direction).color
     return (Text(parts.sign + parts.integer)
       .font(style.font)
       .tracking(style.tracking)

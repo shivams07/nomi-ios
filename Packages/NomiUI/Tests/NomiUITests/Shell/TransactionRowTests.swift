@@ -18,16 +18,6 @@ final class TransactionRowTests: XCTestCase {
     XCTAssertTrue(subtitle.contains("Uncategorized"))
   }
 
-  func testCreditGetsPlusPrefix() {
-    let text = TransactionRow.amountText(minor: 100, direction: .credit)
-    XCTAssertTrue(text.hasPrefix("+"))
-  }
-
-  func testDebitHasNoSignPrefix() {
-    let text = TransactionRow.amountText(minor: 100, direction: .debit)
-    XCTAssertFalse(text.hasPrefix("+"))
-  }
-
   // MARK: - M6: UPI surfacing
 
   func testSubtitleAppendsVPAAsThirdSegmentWhenPresent() {
@@ -42,22 +32,44 @@ final class TransactionRowTests: XCTestCase {
 
   // MARK: - U18: currency symbol carries the code, not a trailing suffix
 
-  func testAmountTextForAUSDRowCarriesNoRupeeSymbolAndNoTrailingCode() {
-    let text = TransactionRow.amountText(minor: 1299, direction: .debit, currencyCode: "USD")
+  /// The amount without its sign: integer and decimals joined.
+  private func digits(_ parts: NomiAmountParts) -> String {
+    parts.integer + parts.decimals
+  }
+
+  func testAmountPartsForAUSDRowCarryNoRupeeSymbolAndNoTrailingCode() {
+    let text = digits(TransactionRow.amountParts(minor: 1299, direction: .debit, currencyCode: "USD"))
     XCTAssertFalse(text.contains("₹"))
     XCTAssertFalse(text.hasSuffix(" USD"))
     XCTAssertEqual(text, NomiFormatters.amountString(minor: 1299, currencyCode: "USD"))
   }
 
-  func testAmountTextOmitsSuffixForINR() {
-    let text = TransactionRow.amountText(minor: 1299, direction: .debit, currencyCode: "INR")
+  func testAmountPartsOmitTheSuffixForINR() {
+    let text = digits(TransactionRow.amountParts(minor: 1299, direction: .debit, currencyCode: "INR"))
     XCTAssertEqual(text, NomiFormatters.amountString(minor: 1299))
   }
 
-  func testAmountTextDefaultsToINRWhenCurrencyCodeOmitted() {
-    let withDefault = TransactionRow.amountText(minor: 1299, direction: .debit)
-    let withExplicitINR = TransactionRow.amountText(minor: 1299, direction: .debit, currencyCode: "INR")
+  func testAmountPartsDefaultToINRWhenCurrencyCodeOmitted() {
+    let withDefault = TransactionRow.amountParts(minor: 1299, direction: .debit)
+    let withExplicitINR = TransactionRow.amountParts(minor: 1299, direction: .debit, currencyCode: "INR")
     XCTAssertEqual(withDefault, withExplicitINR)
+  }
+
+  // MARK: - LG: debit ink and credit ink (DEC-03)
+
+  /// Lim's mutant M3 swapped these two and survived. Pinning the mapping
+  /// directly fails on any swap.
+  func testDebitAmountIsInk() {
+    XCTAssertEqual(TransactionRow.amountInk(for: .debit), .ink)
+  }
+
+  func testCreditAmountIsInkDeep() {
+    XCTAssertEqual(TransactionRow.amountInk(for: .credit), .inkDeep)
+  }
+
+  func testEachInkResolvesToItsToken() {
+    XCTAssertEqual(TransactionRow.AmountInk.ink.color, NomiColor.ink)
+    XCTAssertEqual(TransactionRow.AmountInk.inkDeep.color, NomiColor.inkDeep)
   }
 
   func testUPIKindCapsuleTextForP2P() {

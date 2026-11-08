@@ -157,6 +157,20 @@ enum LedgerCopy {
   static func nothingRecentTitle(days: Int) -> String {
     "Nothing in the last \(days) days"
   }
+
+  /// The search box's prompt. "Search all transactions" only when a whole-ledger
+  /// search service is wired; otherwise the box only filters the 90-day window.
+  static func searchPrompt(wholeLedger: Bool) -> String {
+    wholeLedger ? "Search all transactions" : "Search"
+  }
+
+  /// The nothing-recent message. The whole-ledger clause appears only when
+  /// search can actually reach older rows.
+  static func nothingRecentMessage(wholeLedger: Bool) -> String {
+    wholeLedger
+      ? "Older transactions aren’t shown here. Show older to widen the list, or search the whole ledger."
+      : "Older transactions aren’t shown here. Show older to widen the list."
+  }
 }
 
 /// The 90-day paging window (F1) — the ledger used to load the entire
