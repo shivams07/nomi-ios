@@ -10,9 +10,8 @@ import AppKit
 public typealias NomiPlatformFont = NSFont
 #endif
 
-/// Inter only (F1 of nomi-ios-build-plan, I-3). Montserrat is retired: its
-/// names remain as deprecated aliases that point at Inter, and X1 removes the
-/// font files once nothing references them.
+/// Inter only (nomi-ios-build-plan, I-3). Montserrat is gone: no files, names
+/// or aliases.
 ///
 /// Font files ship in `Resources/Fonts/**` as package resources, not app
 /// resources. `UIAppFonts` only covers fonts in the *app* bundle, so
@@ -30,19 +29,8 @@ public enum NomiFont {
   public static let interMedium = "Inter-Medium"
   public static let interSemiBold = "Inter-SemiBold"
 
-  @available(*, deprecated, message: "Use NomiFont.interMedium")
-  public static let montserratMedium = interMedium
-  @available(*, deprecated, message: "Use NomiFont.interSemiBold")
-  public static let montserratSemiBold = interSemiBold
-  @available(*, deprecated, message: "Use NomiFont.interSemiBold")
-  public static let montserratBold = interSemiBold
-
-  /// Font files present in `Resources/Fonts`. Inter Regular, Medium and SemiBold
-  /// (F2F), plus three Montserrat files, which X1 removes.
+  /// Font files present in `Resources/Fonts`: Inter Regular, Medium and SemiBold (F2F).
   public static let bundledFileNames: [String] = [
-    "Montserrat-Medium.otf",
-    "Montserrat-SemiBold.otf",
-    "Montserrat-Bold.otf",
     "Inter-Regular.otf",
     "Inter-Medium.otf",
     "Inter-SemiBold.otf",
@@ -118,9 +106,6 @@ public enum NomiTextStyle {
   case micro
   /// Tab bar labels: Medium 10.5.
   case tabLabel
-  /// Retired. Use `heroAmount`.
-  @available(*, deprecated, message: "Use NomiTextStyle.heroAmount")
-  case dashboardHeroTotal
 
   public var font: Font {
     switch self {
@@ -148,7 +133,6 @@ public enum NomiTextStyle {
     case .footnote: return .custom(NomiFont.interRegular, size: 12, relativeTo: .caption)
     case .micro: return .custom(NomiFont.interMedium, size: 11, relativeTo: .caption2)
     case .tabLabel: return .custom(NomiFont.interMedium, size: 10.5, relativeTo: .caption2)
-    case .dashboardHeroTotal: return NomiTextStyle.heroAmount.font
     }
   }
 
@@ -158,7 +142,6 @@ public enum NomiTextStyle {
     case .heroAmount: return -1.4
     case .displayValue: return -0.6
     case .summaryValue: return -0.4
-    case .dashboardHeroTotal: return NomiTextStyle.heroAmount.tracking
     default: return 0
     }
   }
@@ -170,9 +153,8 @@ public extension View {
   }
 }
 
-/// Montserrat is wider than Inter at the same size, and `.monospacedDigit()`
-/// is a system-font modifier that does not apply to a custom face. Reaching
-/// Montserrat's `tnum` needs an explicit font descriptor with
+/// `.monospacedDigit()` is a system-font modifier and does not apply to a custom
+/// face. Inter's tabular figures need an explicit font descriptor with
 /// `kNumberSpacingType`/`kMonospacedNumbersSelector`, written once, here.
 public enum TabularFigures {
   public static func platformFont(name: String, size: CGFloat) -> NomiPlatformFont {

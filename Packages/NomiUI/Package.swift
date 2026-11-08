@@ -16,9 +16,6 @@ let package = Package(
       name: "NomiUI",
       dependencies: ["NomiCore", "NomiPreview"],
       resources: [
-        .copy("Resources/Fonts/Montserrat-Medium.otf"),
-        .copy("Resources/Fonts/Montserrat-SemiBold.otf"),
-        .copy("Resources/Fonts/Montserrat-Bold.otf"),
         .copy("Resources/Fonts/Inter-Regular.otf"),
         .copy("Resources/Fonts/Inter-Medium.otf"),
         .copy("Resources/Fonts/Inter-SemiBold.otf"),
