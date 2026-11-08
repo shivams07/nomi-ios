@@ -136,28 +136,6 @@ final class LedgerFilteringTests: XCTestCase {
   }
 }
 
-final class LedgerMagnitudeTests: XCTestCase {
-  func testFractionIsRatioToMax() {
-    XCTAssertEqual(LedgerMagnitude.fraction(amountMinor: 50, maxAmountMinor: 100), 0.5)
-  }
-
-  func testFractionAtMaxIsOne() {
-    XCTAssertEqual(LedgerMagnitude.fraction(amountMinor: 100, maxAmountMinor: 100), 1)
-  }
-
-  func testFractionClampsAboveOne() {
-    XCTAssertEqual(LedgerMagnitude.fraction(amountMinor: 150, maxAmountMinor: 100), 1)
-  }
-
-  func testZeroMaxReturnsZeroRatherThanDividingByZero() {
-    XCTAssertEqual(LedgerMagnitude.fraction(amountMinor: 50, maxAmountMinor: 0), 0)
-  }
-
-  func testUsesAbsoluteValue() {
-    XCTAssertEqual(LedgerMagnitude.fraction(amountMinor: -50, maxAmountMinor: 100), 0.5)
-  }
-}
-
 /// `LedgerScreen.dayHeader` renders `LedgerDayHeaderText.string(for:relativeTo:)`
 /// — a pure wrapper defined in `LedgerScreen.swift` itself, not the general
 /// `NomiFormatters.dayMonthAdaptive` it wraps, so this exercises this unit's
@@ -179,20 +157,67 @@ final class LedgerDayHeaderTests: XCTestCase {
   }
 }
 
+/// A-03.4: the day total carries U+2212 for a negative net and "+" for a
+/// positive one, zero carries neither. The sign is always printed, never
+/// colour alone.
 final class LedgerDayTotalTextTests: XCTestCase {
   func testPositiveTotalGetsPlusSign() {
     XCTAssertEqual(LedgerDayTotalText.string(minor: 500), "+" + NomiFormatters.amountString(minor: 500))
   }
 
-  func testNegativeTotalGetsMinusSign() {
-    XCTAssertEqual(LedgerDayTotalText.string(minor: -500), "-" + NomiFormatters.amountString(minor: 500))
+  func testNegativeTotalGetsMinusSignNotHyphen() {
+    XCTAssertEqual(LedgerDayTotalText.string(minor: -500), "\u{2212}" + NomiFormatters.amountString(minor: 500))
   }
 
   func testZeroTotalHasNoSign() {
     XCTAssertEqual(LedgerDayTotalText.string(minor: 0), NomiFormatters.amountString(minor: 0))
   }
+
+  func testLakhScaleNegativeTotalKeepsItsSign() {
+    XCTAssertEqual(LedgerDayTotalText.string(minor: -1_148_00), "\u{2212}" + NomiFormatters.amountString(minor: 1_148_00))
+  }
 }
 
+/// The empty treatment is one pure decision, so every combination is pinned
+/// here rather than inferred from the view.
+final class LedgerEmptyKindTests: XCTestCase {
+  func testNoRowsAndNoFilterIsEmpty() {
+    XCTAssertEqual(LedgerEmptyKind.of(hasRows: false, isFiltered: false), .empty)
+  }
+
+  func testRowsAndAFilterThatEmptiesThemIsNoResults() {
+    XCTAssertEqual(LedgerEmptyKind.of(hasRows: true, isFiltered: true), .noResults)
+  }
+
+  func testRowsWithNoFilterShowNoEmptyState() {
+    XCTAssertEqual(LedgerEmptyKind.of(hasRows: true, isFiltered: false), .none)
+  }
+
+  /// An active filter over an empty window still says "no results" and offers
+  /// "Clear filters". It must not fall through to the "no transactions" copy,
+  /// which would hide the chips the user needs to get back out.
+  func testFilterOverAnEmptyWindowIsNoResults() {
+    XCTAssertEqual(LedgerEmptyKind.of(hasRows: false, isFiltered: true), .noResults)
+  }
+}
+
+final class LedgerCopyTests: XCTestCase {
+  func testNoQueryReadsNoMatches() {
+    XCTAssertEqual(LedgerCopy.noResultsTitle(query: ""), "No matches")
+  }
+
+  func testBlankQueryReadsNoMatches() {
+    XCTAssertEqual(LedgerCopy.noResultsTitle(query: "   \n\t"), "No matches")
+  }
+
+  func testQueryIsShownTrimmedInCurlyQuotes() {
+    XCTAssertEqual(LedgerCopy.noResultsTitle(query: "  Swig "), "No matches for “Swig”")
+  }
+
+  func testInnerSpacesAreKept() {
+    XCTAssertEqual(LedgerCopy.noResultsTitle(query: "acme payroll"), "No matches for “acme payroll”")
+  }
+}
 /// F1: the ledger no longer loads the whole transaction table. Fixed `now`
 /// and an explicit IST `calendar` throughout — same reasoning as every other
 /// date-bearing test in this file: CI runs UTC and Shivam does not.

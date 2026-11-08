@@ -64,11 +64,13 @@ enum LedgerGrouping {
 /// received), so — like `TrackedBalanceText` in `Accounts/AccountsLogic.swift`
 /// — this formats a raw signed total rather than a per-transaction
 /// debit/credit, and needs its own sign prefix since
-/// `NomiFormatters.amountString` always strips it.
+/// `NomiFormatters.amountString` always strips it. DEC-03 / A-03.4: the sign
+/// is U+2212 for a negative total and "+" for a positive one, and zero carries
+/// neither.
 enum LedgerDayTotalText {
   static func string(minor: Int) -> String {
-    let sign = minor < 0 ? "-" : (minor > 0 ? "+" : "")
-    return sign + NomiFormatters.amountString(minor: minor)
+    let sign = minor < 0 ? "\u{2212}" : (minor > 0 ? "+" : "")
+    return sign + NomiFormatters.amountString(minor: abs(minor))
   }
 }
 
@@ -103,16 +105,42 @@ enum LedgerFiltering {
   }
 }
 
-/// The magnitude bar's fill fraction — a row's amount relative to the
-/// largest amount in whatever set it's drawn against (design: "a data
-/// mark," not a fixed scale). A single outsized transaction pins at 1.0
-/// rather than the bar overflowing; a zero/empty max floors everyone at 0
-/// rather than dividing by zero.
-enum LedgerMagnitude {
-  static func fraction(amountMinor: Int, maxAmountMinor: Int) -> Double {
-    guard maxAmountMinor > 0 else { return 0 }
-    let ratio = Double(abs(amountMinor)) / Double(maxAmountMinor)
-    return min(max(ratio, 0), 1)
+/// What the windowed list reports up to `LedgerScreen`, which owns the chip row
+/// (its counts) and the search bar (whether either is shown at all).
+/// `hasRows` is the 90-day window alone, not the search results: a window with
+/// no rows is "no transactions yet" even while a whole-ledger search runs.
+struct LedgerWindowSummary: Equatable {
+  var hasRows: Bool
+  var needsReviewCount: Int
+
+  /// Before the list has reported: chips shown, counts zero.
+  static let unreported = LedgerWindowSummary(hasRows: true, needsReviewCount: 0)
+}
+
+/// Which empty treatment the list shows when it has no rows to draw. `.none`
+/// means rows are drawn and no empty state applies. The enum name `none` is
+/// fine here because the type is not optional.
+enum LedgerEmptyKind: Equatable {
+  /// No rows in the window and no filter: icon, "No transactions yet", and
+  /// "Add transaction". The chip row and search bar are hidden.
+  case empty
+  /// A chip or search is active and empties the list, or there is nothing in
+  /// the window to filter. Shows the query and "Clear filters".
+  case noResults
+  case none
+
+  static func of(hasRows: Bool, isFiltered: Bool) -> LedgerEmptyKind {
+    if isFiltered { return .noResults }
+    return hasRows ? .none : .empty
+  }
+}
+
+/// Copy for the no-results state. The query is shown only when there is one,
+/// trimmed the same way the search runs (`LedgerSearch.normalized`).
+enum LedgerCopy {
+  static func noResultsTitle(query: String) -> String {
+    guard let text = LedgerSearch.normalized(query) else { return "No matches" }
+    return "No matches for “\(text)”"
   }
 }
 

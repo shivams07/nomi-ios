@@ -93,4 +93,82 @@ final class TransactionRowTests: XCTestCase {
     let title = TransactionRow.title(merchantName: nil, descriptionText: "", categoryName: nil)
     XCTAssertEqual(title, "Manual entry")
   }
+
+  // MARK: - LG: signed amounts (DEC-03 / A-03.2)
+
+  func testDebitPartsCarryAUnicodeMinusSign() {
+    let parts = TransactionRow.amountParts(minor: 648_00, direction: .debit)
+    XCTAssertEqual(parts.sign, "\u{2212}")
+    XCTAssertEqual(parts.integer + parts.decimals, NomiFormatters.amountString(minor: 648_00))
+  }
+
+  func testCreditPartsCarryAPlusSign() {
+    let parts = TransactionRow.amountParts(minor: 38_500_00, direction: .credit)
+    XCTAssertEqual(parts.sign, "+")
+  }
+
+  func testZeroCarriesNoSignInEitherDirection() {
+    XCTAssertEqual(TransactionRow.amountParts(minor: 0, direction: .debit).sign, "")
+    XCTAssertEqual(TransactionRow.amountParts(minor: 0, direction: .credit).sign, "")
+  }
+
+  func testNegativeStoredMinorStillPrintsOneMinusForADebit() {
+    let parts = TransactionRow.amountParts(minor: -1_299, direction: .debit)
+    XCTAssertEqual(parts.sign, "\u{2212}")
+    XCTAssertFalse(parts.integer.contains("\u{2212}"))
+  }
+
+  func testLakhValueDebitSplitsIntegerAndDecimals() {
+    let parts = TransactionRow.amountParts(minor: 1_148_00, direction: .debit)
+    XCTAssertEqual(parts.sign, "\u{2212}")
+    XCTAssertTrue(parts.decimals.hasSuffix("00"))
+  }
+
+  // MARK: - LG: one accessibility element with a direction word
+
+  func testDebitLabelSaysDebitAndNeverMinus() {
+    let label = TransactionRow.accessibilityLabel(
+      title: "Swiggy", subtitle: "Food · HDFC", direction: .debit, minor: 648_00,
+      upiKind: nil, needsReview: false, mergedSourceCount: nil
+    )
+    XCTAssertTrue(label.contains("debit"))
+    XCTAssertFalse(label.contains("credit"))
+    XCTAssertFalse(label.contains("\u{2212}"))
+    XCTAssertTrue(label.hasPrefix("Swiggy, Food · HDFC, debit, "))
+  }
+
+  func testCreditLabelSaysCredit() {
+    let label = TransactionRow.accessibilityLabel(
+      title: "Acme Payroll", subtitle: "Salary", direction: .credit, minor: 38_500_00,
+      upiKind: nil, needsReview: false, mergedSourceCount: nil
+    )
+    XCTAssertTrue(label.contains("credit"))
+    XCTAssertFalse(label.contains("debit"))
+  }
+
+  func testLabelAddsReviewAndMergeFactsWhenPresent() {
+    let label = TransactionRow.accessibilityLabel(
+      title: "Amazon", subtitle: "Uncategorized", direction: .debit, minor: 1_299_00,
+      upiKind: "Merchant", needsReview: true, mergedSourceCount: 2
+    )
+    XCTAssertTrue(label.hasSuffix("Merchant, Merged from 2 sources, Needs review"))
+  }
+
+  // MARK: - LG: uncategorized initials
+
+  func testInitialsTakeFirstLetterOfTwoWords() {
+    XCTAssertEqual(TransactionRow.initials(for: "Acme Payroll"), "AP")
+  }
+
+  func testInitialsTakeTwoLettersOfOneWord() {
+    XCTAssertEqual(TransactionRow.initials(for: "Amazon"), "AM")
+  }
+
+  func testInitialsAreUppercased() {
+    XCTAssertEqual(TransactionRow.initials(for: "swiggy"), "SW")
+  }
+
+  func testInitialsIgnoreExtraWhitespace() {
+    XCTAssertEqual(TransactionRow.initials(for: "  Manual   entry "), "ME")
+  }
 }
