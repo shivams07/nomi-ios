@@ -154,4 +154,40 @@ final class ImportLogicTests: XCTestCase {
     let summary = ImportSummary(created: 24, merged: 0, skipped: 2)
     XCTAssertNil(ImportDoneCopy.detail(summary, accountName: ""))
   }
+
+  // MARK: - UF1: column-mapping sheet close (Cancel discards, Save writes back)
+
+  private let closeHeaders = 4
+
+  private var validDraft: ColumnMapping {
+    mapping(date: 0, description: 1, amount: 2, reference: nil)
+  }
+
+  /// A draft that differs from the original in one column, so a write-back
+  /// is visible by value.
+  private var editedDraft: ColumnMapping {
+    mapping(date: 0, description: 1, amount: 3, reference: nil)
+  }
+
+  func testCancelWritesNothingBackEvenWithAnEditedDraft() {
+    XCTAssertNil(
+      ColumnMappingSheetOutcome.writeBack(.cancel, draft: editedDraft, headerCount: closeHeaders),
+      "Cancel discards the draft: the binding keeps its original value")
+  }
+
+  func testCancelWritesNothingBackEvenWithAValidDraft() {
+    XCTAssertNil(ColumnMappingSheetOutcome.writeBack(.cancel, draft: validDraft, headerCount: closeHeaders))
+  }
+
+  func testSaveWritesTheValidDraftBack() {
+    XCTAssertEqual(
+      ColumnMappingSheetOutcome.writeBack(.save, draft: editedDraft, headerCount: closeHeaders), editedDraft)
+  }
+
+  /// The Save button is disabled on this gate, so an invalid draft is never
+  /// written. The pure type refuses it too, rather than trusting the button.
+  func testSaveWritesNothingBackForAnInvalidDraft() {
+    let outOfBounds = mapping(date: 0, description: 1, amount: 9, reference: nil)
+    XCTAssertNil(ColumnMappingSheetOutcome.writeBack(.save, draft: outOfBounds, headerCount: closeHeaders))
+  }
 }

@@ -11,7 +11,9 @@ import Testing
 /// the machine runs in. The range is `NomiCore.dateRange`, so these check the
 /// wiring and the edges, not a second calendar implementation.
 struct LedgerPeriodTests {
-  private static let zones = ["Asia/Kolkata", "America/Los_Angeles"]
+  /// Auckland is ahead of UTC and Los Angeles behind, so a month boundary
+  /// falls on a different wall-clock day in each: no zone is the test's own.
+  private static let zones = ["Asia/Kolkata", "America/Los_Angeles", "Pacific/Auckland"]
 
   private func calendar(_ identifier: String) -> Calendar {
     var calendar = Calendar(identifier: .gregorian)

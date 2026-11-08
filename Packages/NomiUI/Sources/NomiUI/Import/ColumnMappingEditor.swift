@@ -76,13 +76,10 @@ struct ColumnMappingEditor: View {
       .navigationTitle("Column Mapping")
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }
+          Button("Cancel") { close(.cancel) }
         }
         ToolbarItem(placement: .confirmationAction) {
-          Button("Save") {
-            mapping = draft
-            dismiss()
-          }
+          Button("Save") { close(.save) }
           .disabled(!canSave)
         }
       }
@@ -91,6 +88,15 @@ struct ColumnMappingEditor: View {
   }
 
   // MARK: - Pieces
+
+  /// Cancel and Save both close through `ColumnMappingSheetOutcome`, which
+  /// decides whether the draft is written back.
+  private func close(_ outcome: ColumnMappingSheetOutcome.Close) {
+    if let value = ColumnMappingSheetOutcome.writeBack(outcome, draft: draft, headerCount: headers.count) {
+      mapping = value
+    }
+    dismiss()
+  }
 
   private func sectionLabel(_ title: String, first: Bool = false) -> some View {
     Text(title)
