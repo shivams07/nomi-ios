@@ -120,9 +120,11 @@ public struct ReportsScreen: View {
     }
     .background(NomiColor.ground)
     .navigationTitle("Insights")
+    #if os(iOS)
     .navigationBarTitleDisplayMode(.large)
+    #endif
     .toolbar {
-      ToolbarItem(placement: .topBarTrailing) {
+      ToolbarItem(placement: .primaryAction) {
         periodPill
       }
     }
