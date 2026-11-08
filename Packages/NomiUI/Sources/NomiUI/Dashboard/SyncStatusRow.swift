@@ -91,10 +91,12 @@ public struct SyncStatusRow: View {
     }
   }
 
-  /// What follows "Synced". A `lastSync` less than a second before `now` has no
-  /// age to report, and one after `now` (clock skew, or a sync stamped this
-  /// instant) has a negative one, which the formatter reads as "in 1 hr.". Both
-  /// read "just now", the same rule as `MailAttentionLogic.lastSyncedPhrase`.
+  /// What follows "Synced", and the one implementation of the relative sync
+  /// phrase. `MailAttentionLogic.lastSyncedPhrase` forwards here, so the Home
+  /// row and the Connect mail card cannot drift apart. A `lastSync` less than a
+  /// second before `now` has no age to report, and one after `now` (clock skew,
+  /// or a sync stamped this instant) has a negative one, which the formatter
+  /// reads as "in 1 hr.". Both read "just now".
   static func relativeSyncPhrase(_ lastSync: Date, now: Date) -> String {
     guard now.timeIntervalSince(lastSync) >= 1 else { return "just now" }
     return NomiFormatters.relativeTime.localizedString(for: lastSync, relativeTo: now)

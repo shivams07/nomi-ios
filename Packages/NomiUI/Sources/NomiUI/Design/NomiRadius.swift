@@ -18,10 +18,6 @@ public enum NomiRadius {
   /// A 44-high pill control.
   public static let control: CGFloat = 22
 
-  /// Legacy name for sheets and bars. Keeps its value of 24 so the tab shell
-  /// draws unchanged until its own unit; new sheets use `sheet`.
-  @available(*, deprecated, message: "Use NomiRadius.sheet")
-  public static let bar: CGFloat = 24
   public static let pill: CGFloat = .infinity
 
   /// Cards and sheets round `.continuous`, per the design doc.
