@@ -159,7 +159,9 @@ extension TransactionSnapshot {
       updatedAt: transaction.updatedAt,
       senderDomain: transaction.senderDomain,
       cardFragment: transaction.cardFragment,
-      needsReviewReason: transaction.needsReviewReason
+      needsReviewReason: transaction.needsReviewReason,
+      transferGroupID: transaction.transferGroupID,
+      transferSourceRaw: transaction.transferSourceRaw
     )
   }
 }
@@ -192,7 +194,9 @@ extension Transaction {
       updatedAt: snapshot.updatedAt,
       senderDomain: snapshot.senderDomain,
       cardFragment: snapshot.cardFragment,
-      needsReviewReasonRaw: snapshot.needsReviewReason?.rawValue
+      needsReviewReasonRaw: snapshot.needsReviewReason?.rawValue,
+      transferGroupID: snapshot.transferGroupID,
+      transferSourceRaw: snapshot.transferSourceRaw
     )
   }
 
@@ -201,6 +205,13 @@ extension Transaction {
   /// here on purpose. So are `senderDomain`, `cardFragment` and
   /// `needsReviewReasonRaw` (C4): they record what the *ingester* saw when the
   /// row was created, and a later merge does not change that.
+  ///
+  /// The transfer pair (DEC-05) is written only when
+  /// `TransferRules.pipelineMayWrite` allows it for the row's current value, and
+  /// then both fields together (A-05 item 16). A stale snapshot therefore cannot
+  /// clear or change a user's mark. Residual window, accepted and in the PR: the
+  /// guard reads this context's copy of the row, which can predate a save made
+  /// in another context.
   func apply(_ snapshot: TransactionSnapshot) {
     merchantName = snapshot.merchantName
     upiKindRaw = snapshot.upiKindRaw
@@ -213,5 +224,12 @@ extension Transaction {
     mergedCount = snapshot.mergedCount
     needsReview = snapshot.needsReview
     updatedAt = snapshot.updatedAt
+    if TransferRules.pipelineMayWrite(
+      currentRaw: transferSourceRaw,
+      incomingRaw: snapshot.transferSourceRaw
+    ) {
+      transferGroupID = snapshot.transferGroupID
+      transferSourceRaw = snapshot.transferSourceRaw
+    }
   }
 }

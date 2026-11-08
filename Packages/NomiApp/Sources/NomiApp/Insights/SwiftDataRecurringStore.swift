@@ -65,9 +65,12 @@ public final class SwiftDataRecurringStore: RecurringInsightsStore {
       let rupees = "INR"
 
       var descriptor = FetchDescriptor<Transaction>(
+        // DEC-05. A transfer leg is never a subscription. The detector skips
+        // it too (`RecurrenceRow.isTransfer`); filtering here as well keeps
+        // the transfer rows out of the fetch.
         predicate: #Predicate<Transaction> {
           $0.date >= lower && $0.date < upper && $0.directionRaw == debit
-            && $0.currencyCode == rupees
+            && $0.currencyCode == rupees && $0.transferGroupID == nil
         },
         // Oldest first, which is the order the detector walks gaps in. Sorting
         // in SQLite rather than in Swift for the same reason the ledger does:
@@ -121,6 +124,7 @@ extension RecurrenceRow {
       normalizedDescription: transaction.normalizedDescription,
       merchantName: transaction.merchantName,
       descriptionText: transaction.descriptionText,
+      isTransfer: transaction.isTransfer,
       categoryID: transaction.categoryID
     )
   }

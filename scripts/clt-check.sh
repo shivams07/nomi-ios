@@ -9,8 +9,10 @@
 #
 # What gets compiled:
 #   NomiCore       the SwiftData-free NomiCore files listed below, plus the
-#                  value types above the first @Model line of each Model file
-#   NomiCoreTests  the six NomiCore test files listed below
+#                  value types above the first @Model line of each Model file,
+#                  plus a stub of Category.uncategorizedID (T1, DEC-05): the
+#                  marked InsightsAggregator needs that one constant
+#   NomiCoreTests  the NomiCore test files listed below
 #   NomiUI         Design/NomiFormatters and Design/CategoryPalette, plus every
 #                  file under Packages/NomiUI/Sources carrying the line
 #                  "// clt-harness: include"
@@ -56,14 +58,18 @@ Support/Dedupe.swift
 Support/NomiCalendar.swift
 Support/PeriodRange.swift
 Support/RecurrenceDetector.swift
-Support/UPINarration.swift"
+Support/UPINarration.swift
+Support/TransferGroupID.swift
+Support/TransferRules.swift"
 
 CORE_TEST_FILES="Support/RecurrenceDetectorTests.swift
 Contracts/TypesTests.swift
 Support/PeriodRangeTests.swift
 Support/DedupeTests.swift
 Support/UPINarrationTests.swift
-Budget/BudgetAlertEvaluatorTests.swift"
+Budget/BudgetAlertEvaluatorTests.swift
+Support/TransferGroupIDTests.swift
+Support/TransferRulesTests.swift"
 
 MODEL_HEADS="Transaction Account Category Budget Rule"
 
@@ -145,6 +151,15 @@ copy_list "$CORE_SRC" "$HARNESS/Sources/NomiCore" "$CORE_FILES"
 for model in $MODEL_HEADS; do
   write_head "$CORE_SRC/Model/$model.swift" "$HARNESS/Sources/NomiCore/_head_$model.swift"
 done
+
+# Category is an @Model; InsightsAggregator needs only its uncategorizedID
+# constant (InsightsAggregator.swift, one reference). T1, DEC-05.
+UNCAT="$(grep -E '^[[:space:]]*public static let uncategorizedID' "$CORE_SRC/Model/Category.swift" || true)"
+if [ -z "$UNCAT" ]; then
+  echo "no uncategorizedID in Model/Category.swift" >&2
+  exit 1
+fi
+printf 'import Foundation\npublic enum Category {\n%s\n}\n' "$UNCAT" > "$HARNESS/Sources/NomiCore/_stub_Category.swift"
 
 # ---- NomiCoreTests --------------------------------------------------------
 copy_list "$CORE_TESTS" "$HARNESS/Tests/NomiCoreTests" "$CORE_TEST_FILES"

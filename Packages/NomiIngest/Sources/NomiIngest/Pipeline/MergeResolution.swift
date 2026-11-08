@@ -28,6 +28,8 @@ enum MergeResolution {
     now: Date
   ) -> TransactionSnapshot? {
     let draft = derived.draft
+    // DEC-05. `merged` starts as `existing`, so the transfer pair is the row's
+    // own. A draft carries no transfer state, and nothing here changes it.
     var merged = existing
 
     let ref = draft.sourceRef
@@ -127,6 +129,18 @@ enum MergeResolution {
       survivor.upiKindRaw = survivor.upiKindRaw ?? row.upiKindRaw
       survivor.counterpartyVPA = survivor.counterpartyVPA ?? row.counterpartyVPA
     }
+
+    // DEC-05, A-05 item 17. A user's decision on any duplicate survives the
+    // fold: the survivor's pair follows `collapsedTransferFields`, which keeps
+    // its own `manual` or `rejected`, takes another's, and never drops a mark.
+    // The survivor's own fields are untouched by the loop above, so they are
+    // read here as they were on entry.
+    let transfer = TransferRules.collapsedTransferFields(
+      survivor: (survivor.transferGroupID, survivor.transferSourceRaw),
+      others: others.map { ($0.transferGroupID, $0.transferSourceRaw) }
+    )
+    survivor.transferGroupID = transfer.0
+    survivor.transferSourceRaw = transfer.1
 
     survivor.mergedCount = ordered.reduce(0) { $0 + max(1, $1.mergedCount) }
     survivor.updatedAt = now

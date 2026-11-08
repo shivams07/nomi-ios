@@ -130,4 +130,20 @@ final class DedupeKeyIndependenceTests: XCTestCase {
     let upi = UPINarration.parse(draft.descriptionText)
     XCTAssertNil(upi, "the parser, not the draft, decides")
   }
+
+  /// DEC-05 A-05 item 13. A transfer mark is a user decision made after the row
+  /// was keyed. It must not re-key the row, or two devices that disagree about
+  /// a mark would split one transaction in two.
+  func testTheTransferPairIsNotAKeyInput() {
+    let draft = Fixture.draft(description: upiNarration)
+    let derived = DraftDerivation.derive(draft, calendar: Fixture.calendar)
+    let plain = TransactionSnapshot.creating(from: derived, now: Date(timeIntervalSince1970: 0))
+
+    var marked = plain
+    marked.transferGroupID = UUID()
+    marked.transferSourceRaw = TransferSource.manual.rawValue
+
+    XCTAssertEqual(marked.dedupeKey, plain.dedupeKey)
+    XCTAssertEqual(marked.dedupeKey, derived.dedupeKey)
+  }
 }

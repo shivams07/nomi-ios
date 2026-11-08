@@ -74,7 +74,13 @@ public final class SwiftDataTransactionStore: TransactionStore {
         calendar: calendar
       ),
       createdAt: timestamp,
-      updatedAt: timestamp
+      updatedAt: timestamp,
+      // A new manual row is never a transfer and has no ingest facts (DEC-05, R1).
+      senderDomain: nil,
+      cardFragment: nil,
+      needsReviewReason: nil,
+      transferGroupID: nil,
+      transferSourceRaw: nil
     )
 
     // A category the user picked is `.manual` and `RuleEngine.apply` leaves it

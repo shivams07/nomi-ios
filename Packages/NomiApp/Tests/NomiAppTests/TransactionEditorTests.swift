@@ -135,6 +135,159 @@ final class TransactionEditorTests: XCTestCase {
     XCTAssertNil(refetched.note)
   }
 
+  // MARK: - setTransfer (DEC-05)
+
+  private func insertRow(
+    _ context: ModelContext,
+    amount: Int,
+    direction: Direction,
+    account: UUID?,
+    dayOffset: Int = 0,
+    key: String
+  ) throws -> Transaction {
+    let base = Date(timeIntervalSince1970: 1_700_000_000)
+    let row = Transaction(
+      date: base.addingTimeInterval(Double(dayOffset) * 86_400),
+      descriptionText: "X",
+      normalizedDescription: "X",
+      amountMinor: amount,
+      directionRaw: direction.rawValue,
+      accountID: account,
+      dedupeKey: key
+    )
+    context.insert(row)
+    try context.save()
+    return row
+  }
+
+  private func fetchRow(_ context: ModelContext, _ id: UUID) throws -> Transaction {
+    try XCTUnwrap(
+      context.fetch(FetchDescriptor<Transaction>(predicate: #Predicate<Transaction> { $0.id == id })).first
+    )
+  }
+
+  /// A-05 fixture F's pair: savings debit, card credit, two days apart.
+  func testMarkingOneLegMarksTheMatchingPairAsOneGroup() throws {
+    let (editor, context, _) = try makeEditor()
+    let savings = UUID()
+    let card = UUID()
+    let debit = try insertRow(context, amount: 2_000_000, direction: .debit, account: savings, key: "a")
+    let credit = try insertRow(context, amount: 2_000_000, direction: .credit, account: card, dayOffset: 1, key: "b")
+
+    try editor.setTransfer(debit.id, isTransfer: true)
+
+    let d = try fetchRow(context, debit.id)
+    let c = try fetchRow(context, credit.id)
+    XCTAssertEqual(d.transferGroupID, TransferGroupID.make(debit.id, credit.id))
+    XCTAssertEqual(c.transferGroupID, d.transferGroupID, "both legs share one group")
+    XCTAssertEqual(d.transferSource, .manual)
+    XCTAssertEqual(c.transferSource, .manual)
+  }
+
+  func testMarkingWithNoPartnerMarksTheRowAlone() throws {
+    let (editor, context, _) = try makeEditor()
+    let row = try insertRow(context, amount: 500_00, direction: .debit, account: UUID(), key: "solo")
+
+    try editor.setTransfer(row.id, isTransfer: true)
+
+    let refetched = try fetchRow(context, row.id)
+    XCTAssertEqual(refetched.transferGroupID, TransferGroupID.make(single: row.id))
+    XCTAssertEqual(refetched.transferSource, .manual)
+  }
+
+  func testUnmarkingClearsBothLegsAndRejectsOnlyTheTouchedRow() throws {
+    let (editor, context, _) = try makeEditor()
+    let debit = try insertRow(context, amount: 2_000_000, direction: .debit, account: UUID(), key: "a")
+    let credit = try insertRow(context, amount: 2_000_000, direction: .credit, account: UUID(), dayOffset: 1, key: "b")
+    try editor.setTransfer(debit.id, isTransfer: true)
+
+    try editor.setTransfer(credit.id, isTransfer: false)
+
+    let d = try fetchRow(context, debit.id)
+    let c = try fetchRow(context, credit.id)
+    XCTAssertNil(d.transferGroupID, "the partner's leg is cleared with the touched row's group")
+    XCTAssertNil(d.transferSource)
+    XCTAssertNil(c.transferGroupID)
+    XCTAssertEqual(c.transferSource, .rejected)
+  }
+
+  /// A rejected row is the user's choice, and the user can change it: marking
+  /// it again pairs it with its free partner.
+  func testARejectedRowCanBeMarkedAgain() throws {
+    let (editor, context, _) = try makeEditor()
+    let debit = try insertRow(context, amount: 2_000_000, direction: .debit, account: UUID(), key: "a")
+    let credit = try insertRow(context, amount: 2_000_000, direction: .credit, account: UUID(), dayOffset: 1, key: "b")
+    try editor.setTransfer(debit.id, isTransfer: false)
+    XCTAssertEqual(try fetchRow(context, debit.id).transferSource, .rejected)
+
+    try editor.setTransfer(debit.id, isTransfer: true)
+
+    XCTAssertEqual(try fetchRow(context, debit.id).transferGroupID, TransferGroupID.make(debit.id, credit.id))
+    XCTAssertEqual(try fetchRow(context, debit.id).transferSource, .manual)
+  }
+
+  func testMarkingARowThatIsAlreadyALegChangesNothing() throws {
+    let (editor, context, _) = try makeEditor()
+    let debit = try insertRow(context, amount: 2_000_000, direction: .debit, account: UUID(), key: "a")
+    _ = try insertRow(context, amount: 2_000_000, direction: .credit, account: UUID(), dayOffset: 1, key: "b")
+    try editor.setTransfer(debit.id, isTransfer: true)
+    let before = try fetchRow(context, debit.id).transferGroupID
+
+    try editor.setTransfer(debit.id, isTransfer: true)
+
+    XCTAssertEqual(try fetchRow(context, debit.id).transferGroupID, before)
+  }
+
+  /// A-05 item 12. A mark changes the next read of the insights with no manual
+  /// refresh: the write went through `WriteCoordinator`, which drops the cache.
+  func testSetTransferInvalidatesTheInsightsCache() throws {
+    let schema = Schema([
+      Transaction.self, NomiCore.Category.self, Budget.self, BudgetAlertLog.self,
+      Rule.self, Account.self, AccountBinding.self, ColumnMappingRecord.self,
+    ])
+    let container = try ModelContainer(
+      for: schema,
+      configurations: [
+        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+      ])
+    let context = container.mainContext
+    let calendar = NomiCalendar.india
+    let fixed = calendar.date(from: DateComponents(year: 2026, month: 11, day: 15, hour: 12))!
+    let cache = InsightsCache()
+    let coordinator = WriteCoordinator(cache: cache)
+    let editor = SwiftDataTransactionEditor(context: context, coordinator: coordinator)
+    let insights = SwiftDataInsightsStore(context: context, cache: cache, calendar: calendar, now: { fixed })
+
+    let november10 = calendar.date(from: DateComponents(year: 2026, month: 11, day: 10, hour: 12))!
+    let debit = Transaction(
+      date: november10,
+      descriptionText: "X",
+      normalizedDescription: "X",
+      amountMinor: 2_000_000,
+      directionRaw: Direction.debit.rawValue,
+      accountID: UUID(),
+      dedupeKey: "a"
+    )
+    let credit = Transaction(
+      date: november10.addingTimeInterval(86_400),
+      descriptionText: "Y",
+      normalizedDescription: "Y",
+      amountMinor: 2_000_000,
+      directionRaw: Direction.credit.rawValue,
+      accountID: UUID(),
+      dedupeKey: "b"
+    )
+    context.insert(debit)
+    context.insert(credit)
+    try context.save()
+    let period = InsightPeriod.month(year: 2026, month: 11)
+    XCTAssertEqual(try insights.insights(for: period).debitMinor, 2_000_000, "warms the cache")
+
+    try editor.setTransfer(debit.id, isTransfer: true)
+
+    XCTAssertEqual(try insights.insights(for: period).debitMinor, 0, "the mark is visible on the next read")
+  }
+
   // MARK: -
 
   private func makeEditor() throws -> (SwiftDataTransactionEditor, ModelContext, WriteCoordinator) {

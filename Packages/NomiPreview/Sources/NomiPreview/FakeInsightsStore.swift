@@ -23,7 +23,11 @@ public final class FakeInsightsStore: InsightsStore {
 
   public func insights(for period: InsightPeriod) throws -> PeriodInsights {
     let range = dateRange(for: period, calendar: calendar)
-    let rows = transactions.filter { range.contains($0.date) }
+    let allRows = transactions.filter { range.contains($0.date) }
+    // DEC-05, mirrored from InsightsAggregator: a transfer is in no spend,
+    // income, category, merchant or uncategorised figure. It stays in the
+    // review count.
+    let rows = allRows.filter { !$0.isTransfer }
 
     let debit = rows.filter { $0.directionRaw == Direction.debit.rawValue }.reduce(0) { $0 + $1.amountMinor }
     let credit = rows.filter { $0.directionRaw == Direction.credit.rawValue }.reduce(0) { $0 + $1.amountMinor }
@@ -83,7 +87,7 @@ public final class FakeInsightsStore: InsightsStore {
       byDay: dayBuckets,
       byCategory: categorySlices,
       topMerchants: Array(topMerchants),
-      needsReviewCount: rows.filter { $0.needsReview }.count,
+      needsReviewCount: allRows.filter { $0.needsReview }.count,
       uncategorizedCount: rows.filter { $0.categoryID == nil }.count,
       categories: badges
     )
@@ -91,7 +95,8 @@ public final class FakeInsightsStore: InsightsStore {
 
   public func trend(months: Int) throws -> [MonthBucket] {
     let range = dateRange(for: .trailingMonths(months), calendar: calendar)
-    let rows = transactions.filter { range.contains($0.date) }
+    // DEC-05: a transfer is neither side of the trend.
+    let rows = transactions.filter { range.contains($0.date) && !$0.isTransfer }
     var byMonth: [Date: (Int, Int)] = [:]
     for row in rows {
       guard let monthStart = calendar.date(
@@ -142,7 +147,10 @@ public final class FakeInsightsStore: InsightsStore {
     return budgets.map { budget in
       let category = categories.first { $0.id == budget.categoryID }
       let spent = transactions
-        .filter { range.contains($0.date) && $0.categoryID == budget.categoryID && $0.directionRaw == Direction.debit.rawValue }
+        .filter {
+          range.contains($0.date) && !$0.isTransfer && $0.categoryID == budget.categoryID
+            && $0.directionRaw == Direction.debit.rawValue
+        }
         .reduce(0) { $0 + $1.amountMinor }
       return BudgetProgress(
         id: budget.categoryID,

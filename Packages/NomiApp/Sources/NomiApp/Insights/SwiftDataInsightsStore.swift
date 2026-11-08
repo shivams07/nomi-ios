@@ -201,7 +201,8 @@ extension LedgerRow {
       merchantName: transaction.merchantName,
       descriptionText: transaction.descriptionText,
       needsReview: transaction.needsReview,
-      currencyCode: transaction.currencyCode
+      currencyCode: transaction.currencyCode,
+      isTransfer: transaction.isTransfer
     )
   }
 }

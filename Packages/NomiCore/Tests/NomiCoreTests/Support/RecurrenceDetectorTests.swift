@@ -133,6 +133,33 @@ struct RecurrenceDetectorTests {
     #expect(RecurrenceDetector.series(in: rows, now: date(daysAfterAnchor: 61), calendar: calendar).isEmpty)
   }
 
+  /// DEC-05. A card payment repeats monthly and looks exactly like a
+  /// subscription. Marked as a transfer, it must not become one.
+  @Test func transferLegsAreNotASeries() {
+    let rows = (0...2).map {
+      row(daysAfterAnchor: $0 * 30, description: "HDFC CREDIT CARD PAYMENT", merchant: nil, transfer: true)
+    }
+
+    #expect(RecurrenceDetector.series(in: rows, now: date(daysAfterAnchor: 61), calendar: calendar).isEmpty)
+  }
+
+  /// DEC-05. A transfer leg in the middle of a real run is skipped, not allowed
+  /// to break its gap chain: the subscription still comes back, with its own
+  /// three occurrences.
+  @Test func aTransferLegBetweenChargesDoesNotBreakASeries() throws {
+    let rows = [
+      row(daysAfterAnchor: 0),
+      row(daysAfterAnchor: 15, transfer: true),
+      row(daysAfterAnchor: 30),
+      row(daysAfterAnchor: 60),
+    ]
+
+    let found = try #require(
+      RecurrenceDetector.series(in: rows, now: date(daysAfterAnchor: 61), calendar: calendar).first)
+
+    #expect(found.occurrences == 3)
+  }
+
   /// The stronger form of the same rule: a credit sitting between two debits
   /// must not enter the run at all. If it were grouped in, its date would break
   /// the gap chain and the real series would disappear with it.
@@ -255,7 +282,8 @@ struct RecurrenceDetectorTests {
     merchant: String? = "Netflix",
     hour: Int = 10,
     minute: Int = 0,
-    category: UUID? = nil
+    category: UUID? = nil,
+    transfer: Bool = false
   ) -> RecurrenceRow {
     RecurrenceRow(
       date: date(daysAfterAnchor: days, hour: hour, minute: minute),
@@ -264,6 +292,7 @@ struct RecurrenceDetectorTests {
       normalizedDescription: description,
       merchantName: merchant,
       descriptionText: description,
+      isTransfer: transfer,
       categoryID: category
     )
   }

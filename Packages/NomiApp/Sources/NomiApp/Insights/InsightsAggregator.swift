@@ -1,6 +1,8 @@
 import Foundation
 import NomiCore
 
+// clt-harness: include
+
 /// A value-typed view of the fields the aggregates read.
 ///
 /// Same device as `TransactionSnapshot` in the pipeline. The reason first
@@ -25,6 +27,12 @@ public struct LedgerRow: Sendable, Equatable, Identifiable {
   /// unit, so adding it to a rupee total is a category error, not a rounding
   /// one. Defaulted so every existing construction compiles unchanged.
   public let currencyCode: String
+  /// DEC-05. A transfer leg moves money between the user's own accounts, so it
+  /// is excluded from every spend, income, budget, trend and recurring figure
+  /// (the table in `InsightsAggregator`), and included in `accountSummaries`.
+  /// **No default, deliberately**: a default is how a construction site silently
+  /// drops the field, which is the failure this flag exists to prevent.
+  public let isTransfer: Bool
 
   public init(
     id: UUID,
@@ -37,7 +45,8 @@ public struct LedgerRow: Sendable, Equatable, Identifiable {
     merchantName: String?,
     descriptionText: String,
     needsReview: Bool,
-    currencyCode: String = "INR"
+    currencyCode: String = "INR",
+    isTransfer: Bool
   ) {
     self.id = id
     self.date = date
@@ -50,10 +59,15 @@ public struct LedgerRow: Sendable, Equatable, Identifiable {
     self.descriptionText = descriptionText
     self.needsReview = needsReview
     self.currencyCode = currencyCode
+    self.isTransfer = isTransfer
   }
 
   /// The only rows that may enter a rupee total.
   public var isINR: Bool { currencyCode == "INR" }
+
+  /// Counted in spend and income: INR and not a transfer. Every total in
+  /// `insights`, `budgetProgress` and `trend` reads this, never `isINR` alone.
+  var isCountedSpend: Bool { isINR && !isTransfer }
 
   public var isDebit: Bool { directionRaw == Direction.debit.rawValue }
   public var isCredit: Bool { directionRaw == Direction.credit.rawValue }
@@ -204,7 +218,11 @@ public enum InsightsAggregator {
     // is wrong in a way no one can see. `transactionCount` goes with the money:
     // it labels the totals, and counting a row the totals exclude makes the
     // average per transaction wrong too.
-    let counted = rows.filter(\.isINR)
+    // DEC-05. A transfer is never spend and never income, so it is out of every
+    // figure here, including the prior-period comparison. It stays in the
+    // queue counts below: a transfer still needs its review, and it still
+    // exists.
+    let counted = rows.filter(\.isCountedSpend)
     let debit = sum(counted.filter(\.isDebit))
     let credit = sum(counted.filter(\.isCredit))
     let debits = counted.filter(\.isDebit)
@@ -214,8 +232,8 @@ public enum InsightsAggregator {
       debitMinor: debit,
       creditMinor: credit,
       netMinor: credit - debit,
-      priorDebitMinor: priorRows.map { sum($0.filter { $0.isINR && $0.isDebit }) },
-      priorCreditMinor: priorRows.map { sum($0.filter { $0.isINR && $0.isCredit }) },
+      priorDebitMinor: priorRows.map { sum($0.filter { $0.isCountedSpend && $0.isDebit }) },
+      priorCreditMinor: priorRows.map { sum($0.filter { $0.isCountedSpend && $0.isCredit }) },
       transactionCount: counted.count,
       byDay: byDay(debits, calendar: calendar),
       byCategory: byCategory(debits, categories: categories, debitTotal: debit),
@@ -225,7 +243,8 @@ public enum InsightsAggregator {
       // and a row that vanished from both the totals and the review count would
       // be invisible in the app entirely.
       needsReviewCount: rows.filter(\.needsReview).count,
-      uncategorizedCount: rows.filter { $0.categoryID == nil }.count,
+      // A transfer never needs a category (DEC-05).
+      uncategorizedCount: rows.filter { $0.categoryID == nil && !$0.isTransfer }.count,
       categories: categoryBadges(categories)
     )
   }
@@ -347,7 +366,8 @@ public enum InsightsAggregator {
   /// has no bucket, the same as a month with no rows.
   public static func trend(rows: [LedgerRow], calendar: Calendar = .current) -> [MonthBucket] {
     var totals: [Date: (debit: Int, credit: Int)] = [:]
-    for row in rows where row.isINR {
+    // DEC-05: a transfer is neither side of the chart.
+    for row in rows where row.isCountedSpend {
       guard let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: row.date)) else {
         continue
       }
@@ -442,7 +462,8 @@ public enum InsightsAggregator {
     periodKey: String
   ) -> [BudgetProgress] {
     var spendByCategory: [UUID: Int] = [:]
-    for row in rows where row.isDebit && row.isINR {
+    // DEC-05: a transfer is not spend, so it cannot move a budget or fire its alert.
+    for row in rows where row.isDebit && row.isCountedSpend {
       guard let categoryID = row.categoryID else { continue }
       spendByCategory[categoryID, default: 0] += row.amountMinor
     }
