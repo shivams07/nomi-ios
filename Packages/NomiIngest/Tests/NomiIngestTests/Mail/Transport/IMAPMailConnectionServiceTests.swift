@@ -102,6 +102,11 @@ private final class FlakyFetcher: MailFetching, @unchecked Sendable {
   }
 }
 
+/// An error that is not an `IMAPTransportError`, standing in for what an
+/// offline channel open throws. The point is only that it is not a verdict on
+/// the password.
+private struct OfflineStandIn: Error {}
+
 final class IMAPMailConnectionServiceTests: XCTestCase {
 
   private let credentials = IMAPCredentials(
@@ -161,6 +166,86 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
     XCTAssertEqual(store.saveCount, 1)
     XCTAssertEqual(store.deleteCount, 1)
     XCTAssertTrue(store.isEmpty)
+  }
+
+  /// The data-loss case. `reconnectFromKeychain` calls `connect` with the stored
+  /// credential at every launch, so a failure that is not about the password
+  /// must leave it in the Keychain. Before this fix every failure removed it,
+  /// and an offline launch erased the saved password.
+  ///
+  /// Fails on the old behaviour: `deleteCount` was 1 and the store was empty.
+  func testAConnectionFailureKeepsTheStoredCredential() async throws {
+    let transportFailures: [Error] = [
+      IMAPTransportError.connectionClosed,
+      IMAPTransportError.serverClosedMidCommand(tag: "A1", text: "BYE"),
+      IMAPTransportError.notConnected,
+      IMAPTransportError.malformedResponse("unparseable greeting"),
+      // Not an IMAP error at all: what an offline channel open looks like to
+      // this layer. Still not a judgement on the password.
+      OfflineStandIn(),
+    ]
+
+    for failure in transportFailures {
+      let fetcher = FlakyFetcher()
+      fetcher.connectError = failure
+      let store = MemoryCredentialStore()
+      let (service, _, _, _) = makeService(fetcher: fetcher, store: store)
+
+      do {
+        try await service.connect(credentials)
+        XCTFail("connect should have thrown for \(failure)")
+      } catch {
+        // expected
+      }
+
+      XCTAssertEqual(store.deleteCount, 0, "\(failure) must not remove the password")
+      XCTAssertEqual(try store.load()?.password, "app-password", "\(failure)")
+
+      var seen: [MailConnectionState] = []
+      for await state in service.state.prefix(3) { seen.append(state) }
+      if case .failed = seen.last {
+        // expected: the failure is reported, and the credential is kept
+      } else {
+        XCTFail("expected .failed for \(failure), got \(seen)")
+      }
+    }
+  }
+
+  /// The case in the acceptance criteria by name: a connection failure, which
+  /// `MailError.connectionFailed` is the user-facing word for, keeps the password.
+  func testAConnectionFailedStateKeepsTheStoredCredential() async throws {
+    let fetcher = FlakyFetcher()
+    fetcher.connectError = IMAPTransportError.connectionClosed
+    let store = MemoryCredentialStore()
+    let (service, _, _, _) = makeService(fetcher: fetcher, store: store)
+
+    do {
+      try await service.connect(credentials)
+      XCTFail("connect should have thrown")
+    } catch {
+      // expected
+    }
+
+    XCTAssertFalse(store.isEmpty)
+    var seen: [MailConnectionState] = []
+    for await state in service.state.prefix(3) { seen.append(state) }
+    XCTAssertEqual(seen, [.disconnected, .connecting, .failed(.connectionFailed)])
+  }
+
+  /// The launch-time shape in one test: a stored credential, a server that is
+  /// down, and the connect that runs at launch. The stored password is still
+  /// there afterwards, so the next launch can try again.
+  func testAConnectionFailureDuringAStoredCredentialReconnectKeepsIt() async throws {
+    let store = MemoryCredentialStore()
+    try store.save(credentials)
+    let fetcher = FlakyFetcher()
+    fetcher.connectError = IMAPTransportError.connectionClosed
+    let (service, _, _, _) = makeService(fetcher: fetcher, store: store)
+
+    try? await service.connect(credentials)
+
+    XCTAssertEqual(store.deleteCount, 0)
+    XCTAssertEqual(try store.load()?.password, "app-password")
   }
 
   /// B6. The transport guard rejects the credential before any byte is sent;

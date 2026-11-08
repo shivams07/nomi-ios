@@ -7,8 +7,10 @@ public actor FakeMailConnectionService: MailConnectionService {
 
   public nonisolated let state: AsyncStream<MailConnectionState>
   public nonisolated let backfillProgress: AsyncStream<BackfillProgress>
+  public nonisolated let history: MailConnectionHistory
 
-  public init() {
+  public init(history: MailConnectionHistory = .never) {
+    self.history = history
     var stateContinuation: AsyncStream<MailConnectionState>.Continuation!
     self.state = AsyncStream { stateContinuation = $0 }
     var backfillContinuation: AsyncStream<BackfillProgress>.Continuation!

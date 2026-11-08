@@ -39,12 +39,17 @@ public actor MailStack {
   /// taught the app one lands already assigned and unflagged. It defaults to
   /// `NoAccountBindings` - the pre-C4 behaviour - so a test that does not care
   /// need not supply one.
+  ///
+  /// `now` stamps `MailConnectionHistory.lastSync`. It is the same clock the
+  /// connection service uses for its in-memory `lastSync`, so the two cannot
+  /// disagree about when a sync happened. Tests inject a fixed one.
   public init(
     fetcher: any MailFetching,
     pipeline: any DraftIngesting,
     credentials: any MailCredentialStoring,
     preferences: any KeyValueStoring,
-    bindings: any AccountBindingResolving = NoAccountBindings()
+    bindings: any AccountBindingResolving = NoAccountBindings(),
+    now: @escaping @Sendable () -> Date = { Date() }
   ) {
     let engine = MailSyncEngine(
       fetcher: fetcher,
@@ -56,13 +61,15 @@ public actor MailStack {
     let connectionService = IMAPMailConnectionService(
       fetcher: fetcher,
       engine: engine,
-      credentials: credentials
+      credentials: credentials,
+      now: now
     )
 
     let persisting = CursorPersistingMailConnectionService(
       upstream: connectionService,
       engine: engine,
-      preferences: preferences
+      preferences: preferences,
+      now: now
     )
     self.persisting = persisting
     self.service = BroadcastingMailConnectionService(upstream: persisting)
@@ -126,15 +133,18 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   private let upstream: any MailConnectionService
   private let engine: MailSyncEngine
   private let preferences: any KeyValueStoring
+  private let now: @Sendable () -> Date
 
   init(
     upstream: any MailConnectionService,
     engine: MailSyncEngine,
-    preferences: any KeyValueStoring
+    preferences: any KeyValueStoring,
+    now: @escaping @Sendable () -> Date = { Date() }
   ) {
     self.upstream = upstream
     self.engine = engine
     self.preferences = preferences
+    self.now = now
   }
 
   var state: AsyncStream<MailConnectionState> { upstream.state }
@@ -144,8 +154,20 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
     preferences.bool(forKey: PreferenceKey.mailBackfillUnfinished)
   }
 
+  /// Read from the store on every access, so a relaunch sees what the last
+  /// launch wrote without anything having to replay it.
+  var history: MailConnectionHistory {
+    MailConnectionHistory(
+      hasEverConnected: preferences.bool(forKey: PreferenceKey.mailHasConnected),
+      lastSync: storedLastSync()
+    )
+  }
+
+  /// Written only after the upstream connect has returned. A connect that threw
+  /// has not connected, so it does not count toward "ever connected".
   func connect(_ credentials: IMAPCredentials) async throws {
     try await upstream.connect(credentials)
+    preferences.set(true, forKey: PreferenceKey.mailHasConnected)
   }
 
   /// Clears the unfinished-backfill marker, because there is no longer anything
@@ -153,7 +175,8 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   /// went on asking to finish a scan of a mailbox they disconnected would be
   /// asking for the one thing they just said no to. It deletes no transactions
   /// — that is `IMAPMailConnectionService.disconnect`'s acceptance criterion and
-  /// is unaffected.
+  /// is unaffected. It leaves `history` alone too: the mailbox was connected,
+  /// and turning collection off does not make that untrue.
   func disconnect() async throws {
     try await upstream.disconnect()
     setUnfinishedBackfill(false)
@@ -175,6 +198,7 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
     do {
       let summary = try await upstream.syncNow()
       await persistCursor()
+      recordLastSync()
       return summary
     } catch {
       await persistCursor()
@@ -208,6 +232,7 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
       let summary = try await upstream.startBackfill(months: months)
       await persistCursor()
       setUnfinishedBackfill(false)
+      recordLastSync()
       return summary
     } catch IMAPTransportError.notConnected {
       // Nothing started, so nothing new to resume — the marker goes back to
@@ -236,5 +261,20 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
 
   private func setUnfinishedBackfill(_ value: Bool) {
     preferences.set(value, forKey: PreferenceKey.mailBackfillUnfinished)
+  }
+
+  /// Called only on success. A failed sync leaves the earlier value standing,
+  /// because "last synced" means the last time a sync worked.
+  ///
+  /// The guard is there so that an encode failure skips the write rather than
+  /// clearing the stored date. A `Date` cannot fail to encode in practice.
+  private func recordLastSync() {
+    guard let data = try? JSONEncoder().encode(now()) else { return }
+    preferences.set(data, forKey: PreferenceKey.mailLastSyncAt)
+  }
+
+  private func storedLastSync() -> Date? {
+    guard let data = preferences.data(forKey: PreferenceKey.mailLastSyncAt) else { return nil }
+    return try? JSONDecoder().decode(Date.self, from: data)
   }
 }
