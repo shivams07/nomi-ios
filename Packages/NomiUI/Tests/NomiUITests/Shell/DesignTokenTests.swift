@@ -145,8 +145,8 @@ final class DesignTokenTests: XCTestCase {
   // MARK: - Helpers
 
   /// Checks a resolved token against an integer hex value (0xRRGGBB) without
-  /// building a `Color` from a hex literal, so the test file carries no
-  /// `Color(hex:)` construction of its own.
+  /// building a colour from a hex literal, so this file constructs no colours
+  /// from hex of its own.
   private func assertResolves(_ actual: Color, toHex hex: UInt32, environment: EnvironmentValues, file: StaticString = #filePath, line: UInt = #line) {
     let resolved = actual.resolve(in: environment)
     XCTAssertEqual(Double(resolved.red), Double((hex >> 16) & 0xFF) / 255, accuracy: 0.001, file: file, line: line)
