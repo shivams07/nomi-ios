@@ -23,12 +23,11 @@ public enum NomiHeroGradient {
     (356, NomiHex.track),
   ]
 
-  /// Backfill's moment gradient: 0 navyDeep, 0.40 navy, 1.0 #134883.
-  /// `NomiHex` has no entry for the end stop, so it lives here.
+  /// Backfill's moment gradient: 0 navyDeep, 0.40 navy, 1.0 `backfillEnd`.
   static let momentStops: [NomiHeroStop] = [
     NomiHeroStop(location: 0, hex: NomiHex.navyDeep),
     NomiHeroStop(location: 0.40, hex: NomiHex.navy),
-    NomiHeroStop(location: 1.0, hex: 0x134883),
+    NomiHeroStop(location: 1.0, hex: NomiHex.backfillEnd),
   ]
 
   /// Stops for a hero `height` points tall, measured from the top of the screen.

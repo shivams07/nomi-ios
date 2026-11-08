@@ -50,6 +50,10 @@ public enum NomiHex {
 
   public static let heroGlassSolid: UInt32 = 0x0E3972
 
+  /// End stop of the Backfill moment gradient (F3, DEC-09): navyDeep at 0,
+  /// navy at 0.40, this at 1.0.
+  public static let backfillEnd: UInt32 = 0x134883
+
   // MARK: Shadow colours (value and alpha live in `NomiShadow`)
 
   public static let shadowCard: UInt32 = 0x1E46AA

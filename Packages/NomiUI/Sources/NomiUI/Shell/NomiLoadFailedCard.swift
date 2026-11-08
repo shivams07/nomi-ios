@@ -2,9 +2,11 @@ import SwiftUI
 
 // clt-harness: include
 
-/// The load-failed card (F3, I-4): a card with a 40 pt `errorTint` tile holding
-/// an `error` warning symbol, the title "Couldn’t load", the message, and a
-/// Retry button. The button uses `NomiSecondaryButtonStyle` and is 44 pt high.
+/// The load-failed card (F3, I-4), drawn from the approved `LoadFailed.dc.html`
+/// artboard, which governs over the plan where they differ (coordinator ruling).
+/// A card with a 40 pt `errorTint` circle holding an `error` circle-with-! symbol,
+/// the title "Couldn’t load" (`headline`), the message (`caption`, `inkSecondary`),
+/// and the card's single primary: a 44 pt black Retry (`NomiPrimaryButtonStyle`).
 public struct NomiLoadFailedCard: View {
   public let message: String
   public let onRetry: () -> Void
@@ -17,7 +19,7 @@ public struct NomiLoadFailedCard: View {
   public var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       HStack(alignment: .center, spacing: 12) {
-        Image(systemName: "exclamationmark.triangle")
+        Image(systemName: "exclamationmark.circle")
           .resizable()
           .scaledToFit()
           .frame(width: 20, height: 20)
@@ -28,10 +30,10 @@ public struct NomiLoadFailedCard: View {
 
         VStack(alignment: .leading, spacing: 2) {
           Text("Couldn’t load")
-            .nomiTextStyle(.rowTitle)
+            .nomiTextStyle(.headline)
             .foregroundStyle(NomiColor.ink)
           Text(message)
-            .nomiTextStyle(.footnote)
+            .nomiTextStyle(.caption)
             .foregroundStyle(NomiColor.inkSecondary)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -39,7 +41,7 @@ public struct NomiLoadFailedCard: View {
       }
 
       Button("Retry", action: onRetry)
-        .buttonStyle(NomiSecondaryButtonStyle())
+        .buttonStyle(NomiPrimaryButtonStyle(height: 44))
         .frame(maxWidth: .infinity)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
