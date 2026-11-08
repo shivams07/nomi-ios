@@ -112,4 +112,48 @@ final class BudgetsLogicTests: XCTestCase {
     XCTAssertTrue(BudgetTileCaption.text(-600_00).text.contains("over"))
     XCTAssertTrue(BudgetTileCaption.text(-600_00).isOver)
   }
+
+  // MARK: - BS (Budgets screen)
+
+  func testAddButtonShowsOnlyWhileACategoryIsUnbudgeted() {
+    XCTAssertTrue(BudgetsLogic.showsAddButton(unbudgetedCount: 1))
+    XCTAssertTrue(BudgetsLogic.showsAddButton(unbudgetedCount: 3))
+    XCTAssertFalse(BudgetsLogic.showsAddButton(unbudgetedCount: 0))
+  }
+
+  func testEveryCategoryBudgetedCaptionIsTheArtboardLine() {
+    XCTAssertEqual(BudgetsLogic.everyCategoryBudgetedCaption, "Every category has a budget.")
+  }
+
+  func testOverBudgetTileCaptionAndSpeechSayOverInWords() {
+    let speech = BudgetTileSpeech.label(name: "Transport", spentMinor: 2600_00, remainingMinor: -600_00, fraction: 1.3)
+    XCTAssertTrue(speech.contains("600.00 over"))
+    XCTAssertTrue(speech.contains("130 percent of budget used"))
+  }
+
+  func testUnderBudgetTileSpeechSaysLeftNotOver() {
+    let speech = BudgetTileSpeech.label(name: "Food & Dining", spentMinor: 2000_00, remainingMinor: 3000_00, fraction: 0.4)
+    XCTAssertTrue(speech.contains("3,000.00 left"))
+    XCTAssertFalse(speech.contains("over"))
+    XCTAssertTrue(speech.contains("40 percent of budget used"))
+  }
+
+  func testGaugeCentreReadsOverBudgetInsteadOfAbsoluteLeftover() {
+    XCTAssertEqual(BudgetGaugeText.centreCaption(remainingMinor: 11800_00), "Left to spend")
+    XCTAssertEqual(BudgetGaugeText.centreCaption(remainingMinor: 0), "Left to spend")
+    XCTAssertEqual(BudgetGaugeText.centreCaption(remainingMinor: -600_00), "Over budget")
+  }
+
+  func testPercentUsedRoundsToWholePercent() {
+    XCTAssertEqual(BudgetGaugeText.percentUsed(fraction: 0.6556), 66)
+    XCTAssertEqual(BudgetGaugeText.percentUsed(fraction: 1.3), 130)
+    XCTAssertEqual(BudgetGaugeText.spokenPercent(fraction: 0.4), "40 percent of budget used")
+  }
+
+  func testRemoveConfirmationNamesTheCategoryAndSaysTransactionsAreUnchanged() {
+    XCTAssertEqual(
+      BudgetRemoveConfirmation.message(categoryName: "Food & Dining"),
+      "Food & Dining stops tracking against a monthly limit. Your transactions are not changed."
+    )
+  }
 }
