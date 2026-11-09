@@ -80,6 +80,78 @@ final class TransactionDetailLogicTests: XCTestCase {
       ["No account assigned", "Needs review", "Merged from 2 sources", "Transfer"])
   }
 
+  // MARK: - WR-2 (G2): stored review reason
+
+  /// Each stored reason has exactly its audit wording on the Detail chip.
+  func testReviewReasonTextCoversEveryCase() {
+    XCTAssertEqual(TransactionDetailLogic.reviewReasonText(.unauthenticatedSender), "Sender not verified")
+    XCTAssertEqual(TransactionDetailLogic.reviewReasonText(.foreignCurrency), "Not in rupees, not counted")
+    XCTAssertEqual(TransactionDetailLogic.reviewReasonText(.unreadableDate), "Date couldn't be read")
+    XCTAssertEqual(TransactionDetailLogic.reviewReasonText(.unparseable), "Amount couldn't be read")
+    XCTAssertEqual(TransactionDetailLogic.reviewReasonText(.heuristic), "Read from an unfamiliar email")
+    XCTAssertEqual(TransactionDetailLogic.reviewReasonText(.unidentifiedAccount), "Needs review")
+  }
+
+  /// A row with no stored reason keeps the bare symptom the screen always showed.
+  func testReviewReasonTextForNilKeepsNeedsReview() {
+    XCTAssertEqual(TransactionDetailLogic.reviewReasonText(nil), "Needs review")
+  }
+
+  /// A raw value this build does not know reads as nil through the model's
+  /// accessor, so it must fall back to the same bare text.
+  func testReviewReasonTextForAnUnknownRawValueKeepsNeedsReview() {
+    let reason = NeedsReviewReason(rawValue: "someFutureCase")
+    XCTAssertNil(reason)
+    XCTAssertEqual(TransactionDetailLogic.reviewReasonText(reason), "Needs review")
+  }
+
+  /// The wording is for a person: no chip shows a Swift case name or a raw value.
+  func testReviewReasonTextNeverShowsARawCaseName() {
+    let rawValues = [
+      NeedsReviewReason.unauthenticatedSender, .foreignCurrency, .unreadableDate,
+      .unparseable, .heuristic, .unidentifiedAccount,
+    ].map(\.rawValue)
+    for reason in [NeedsReviewReason.unauthenticatedSender, .foreignCurrency, .unreadableDate, .unparseable, .heuristic] {
+      let text = TransactionDetailLogic.reviewReasonText(reason)
+      for raw in rawValues {
+        XCTAssertFalse(text.contains(raw), "\(text) shows \(raw)")
+      }
+    }
+  }
+
+  func testFlagReasonsUsesStoredReasonWhenFlagged() {
+    XCTAssertEqual(
+      TransactionDetailLogic.flagReasons(
+        accountID: UUID(), needsReview: true, mergedCount: 1, isTransfer: false,
+        needsReviewReason: .unauthenticatedSender),
+      ["Sender not verified"])
+  }
+
+  /// Dismissing a row leaves the stored reason in place, and it must not come back.
+  func testFlagReasonsIgnoresReasonWhenNotFlagged() {
+    XCTAssertEqual(
+      TransactionDetailLogic.flagReasons(
+        accountID: UUID(), needsReview: false, mergedCount: 1, isTransfer: false,
+        needsReviewReason: .foreignCurrency),
+      [])
+  }
+
+  func testFlagReasonsWithoutAStoredReasonKeepsNeedsReview() {
+    XCTAssertEqual(
+      TransactionDetailLogic.flagReasons(
+        accountID: UUID(), needsReview: true, mergedCount: 1, isTransfer: false),
+      ["Needs review"])
+  }
+
+  /// The stored reason takes the "Needs review" slot, so the fixed order holds.
+  func testFlagReasonsStoredReasonKeepsFixedOrder() {
+    XCTAssertEqual(
+      TransactionDetailLogic.flagReasons(
+        accountID: nil, needsReview: true, mergedCount: 2, isTransfer: true,
+        needsReviewReason: .foreignCurrency),
+      ["No account assigned", "Not in rupees, not counted", "Merged from 2 sources", "Transfer"])
+  }
+
   // MARK: - DEC-05 T3: transfer copy
 
   /// The two sentences are fixed copy from the plan, pinned word for word.
