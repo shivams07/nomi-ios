@@ -13,8 +13,17 @@ public final class FakeCategoryStore: CategoryStore {
     self.categories = categories
   }
 
+  /// The same rules as `SwiftDataCategoryStore.create`, so a preview refuses
+  /// what the app refuses and stores the same normalised name. Nothing is
+  /// appended on refusal.
   public func create(name: String, symbolName: String, paletteSlot: Int) throws -> NomiCore.Category {
-    let category = NomiCore.Category(name: name, symbolName: symbolName, paletteSlot: paletteSlot, sortIndex: categories.count)
+    let stored = try CategoryEditRules.validate(
+      name: name,
+      symbolName: symbolName,
+      paletteSlot: paletteSlot,
+      otherNames: categories.map(\.name)
+    )
+    let category = NomiCore.Category(name: stored, symbolName: symbolName, paletteSlot: paletteSlot, sortIndex: categories.count)
     categories.append(category)
     return category
   }
