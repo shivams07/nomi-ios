@@ -90,18 +90,19 @@ struct NomiComponentsTests {
 
   @Test func heroButtonContrast() {
     // Read the glass from the token itself, not from a copy of its value. The
-    // DEC-09 glass is navyDeep at 30%. If heroGlassFill changes, this fails.
+    // The glass is heroGlassTint at 52% (fitted to the artboard, fidelity D3).
+    // If heroGlassFill changes, this fails.
     let token = NomiColor.heroGlassFill.resolve(in: EnvironmentValues())
-    #expect(abs(Double(token.opacity) - 0.30) < 1e-4, "heroGlassFill opacity is \(token.opacity), expected 0.30")
-    #expect(abs(Double(token.red) - Double((NomiHex.navyDeep >> 16) & 0xFF) / 255) < 1e-4)
-    #expect(abs(Double(token.green) - Double((NomiHex.navyDeep >> 8) & 0xFF) / 255) < 1e-4)
-    #expect(abs(Double(token.blue) - Double(NomiHex.navyDeep & 0xFF) / 255) < 1e-4)
+    #expect(abs(Double(token.opacity) - 0.52) < 1e-4, "heroGlassFill opacity is \(token.opacity), expected 0.52")
+    #expect(abs(Double(token.red) - Double((NomiHex.heroGlassTint >> 16) & 0xFF) / 255) < 1e-4)
+    #expect(abs(Double(token.green) - Double((NomiHex.heroGlassTint >> 8) & 0xFF) / 255) < 1e-4)
+    #expect(abs(Double(token.blue) - Double(NomiHex.heroGlassTint & 0xFF) / 255) < 1e-4)
     let glassAlpha = Double(token.opacity)
 
-    let cases: [(CGFloat, Double)] = [(520, 12.68), (844, 11.37)]
+    let cases: [(CGFloat, Double)] = [(520, 10.98), (844, 10.11)]
     for (y, expected) in cases {
       let background = NomiHeroGradient.momentHex(atFraction: y / 844)
-      let glass = NomiContrast.blend(NomiHex.navyDeep, over: background, alpha: glassAlpha)
+      let glass = NomiContrast.blend(NomiHex.heroGlassTint, over: background, alpha: glassAlpha)
       let ratio = NomiContrast.ratio(NomiHex.white, glass)
       #expect(ratio >= 4.5, "white on glass at y \(y) is \(ratio)")
       #expect(abs(ratio - expected) <= 0.01, "white on glass at y \(y) is \(ratio), expected \(expected)")

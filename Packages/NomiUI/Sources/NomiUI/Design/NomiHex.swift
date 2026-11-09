@@ -55,6 +55,12 @@ public enum NomiHex {
 
   public static let heroGlassSolid: UInt32 = 0x0E3972
 
+  /// The tint under the hero glass, at 52% (`NomiColor.heroGlassFill`). It was
+  /// navyDeep at 30%. The artboard's pill and gear carry a backdrop
+  /// `saturate(170%)` that SwiftUI cannot reproduce, so the tint is fitted to
+  /// the artboard's rendered pixels at the pill and the chip (fidelity D3).
+  public static let heroGlassTint: UInt32 = 0x08368B
+
   /// End stop of the Backfill moment gradient (F3, DEC-09): navyDeep at 0,
   /// navy at 0.40, this at 1.0.
   public static let backfillEnd: UInt32 = 0x134883

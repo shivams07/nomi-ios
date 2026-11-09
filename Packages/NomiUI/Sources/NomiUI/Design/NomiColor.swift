@@ -97,8 +97,9 @@ public enum NomiColor {
 
   public static let heroText = Color(hex: NomiHex.white)
   public static let heroTextSecondary = Color(hex: NomiHex.white, opacity: 0.80)
-  /// Dark glass on the hero.
-  public static let heroGlassFill = Color(hex: NomiHex.navyDeep, opacity: 0.30)
+  /// Dark glass on the hero: `heroGlassTint` at 52%, fitted to the artboard
+  /// (see `NomiHex.heroGlassTint`).
+  public static let heroGlassFill = Color(hex: NomiHex.heroGlassTint, opacity: 0.52)
   public static let heroGlassBorder = Color(hex: NomiHex.white, opacity: 0.40)
   public static let heroGlassHighlight = Color(hex: NomiHex.white, opacity: 0.22)
   /// Reduce Transparency fallback for the hero glass.

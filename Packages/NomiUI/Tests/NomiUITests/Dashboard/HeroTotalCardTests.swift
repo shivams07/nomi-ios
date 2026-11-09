@@ -20,6 +20,12 @@ final class HeroTotalCardTests: XCTestCase {
     XCTAssertEqual(HeroDelta.chipCopy(result), "down ₹14,855.50 vs last period")
   }
 
+  /// Indian grouping: ₹1,48,200 groups by the lakh, as the rest of the app does.
+  func testChipCopyUsesLakhGrouping() {
+    let result = HeroDelta.Result(deltaMinor: 14_820_000, isIncrease: true)
+    XCTAssertEqual(HeroDelta.chipCopy(result), "up ₹1,48,200 vs last period")
+  }
+
   /// v5: a zero prior is a real prior — the delta is the whole current
   /// figure, not `nil`.
   func testZeroPriorIsARealPriorNotNil() {

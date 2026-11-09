@@ -63,9 +63,9 @@ private struct NomiGlassModifier<S: InsettableShape>: ViewModifier {
     )
   }
 
-  /// `heroGlassFill` (navyDeep at 30%) alone, a 1 pt `heroGlassBorder` stroke
-  /// and a 1 pt `heroGlassHighlight` line along the top edge. No material: the
-  /// light `.ultraThinMaterial` washed the navy to grey (D3, fidelity sweep).
+  /// `heroGlassFill` (`heroGlassTint` at 52%) alone, a 1 pt `heroGlassBorder`
+  /// stroke and a 1 pt `heroGlassHighlight` line along the top edge. No
+  /// material: the light `.ultraThinMaterial` washed the navy to grey (D3).
   private var heroGlass: some View {
     ZStack {
       if reduceTransparency {
