@@ -19,10 +19,9 @@ public struct RulesScreen: View {
   /// (`EntryRulesPreviewSupport.makeRulesContainer()` and this file's own
   /// `makeSystemRuleDisabledContainer()`) whose schema doesn't include
   /// `NomiCore.Account` — an `@Query` here would crash every one of them,
-  /// not just the ones that care about scope. Defaulted to `[]` so
-  /// `RootView`'s existing call site keeps compiling unchanged; wiring the
-  /// real account list through from there is follow-up, not this unit's file
-  /// to touch.
+  /// not just the ones that care about scope. Defaulted to `[]` for previews
+  /// and tests. Production passes the live list from RootView through
+  /// SettingsScreen (D1, #111).
   public let accounts: [NomiCore.Account]
 
   @Query(sort: \NomiCore.Rule.priority) private var rules: [NomiCore.Rule]

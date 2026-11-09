@@ -89,15 +89,12 @@ public protocol RuleStore: AnyObject {
 /// cannot override `create(pattern:categoryID:)` alone and have it called
 /// through the protocol. That is the intent — there is one implementation of
 /// each behaviour, and it is the scoped one.
+///
+/// There is no scope-less `update`: it would reset a scoped rule to `.any`.
 extension RuleStore {
   @discardableResult
   public func create(pattern: String, categoryID: UUID) throws -> RuleApplyResult {
     try create(pattern: pattern, categoryID: categoryID, scope: .any)
-  }
-
-  @discardableResult
-  public func update(_ id: UUID, pattern: String, categoryID: UUID) throws -> RuleApplyResult {
-    try update(id, pattern: pattern, categoryID: categoryID, scope: .any)
   }
 
   public func preview(pattern: String) throws -> Int {
@@ -180,10 +177,8 @@ public protocol AccountStore: AnyObject {
   /// Edits every field of an existing account, under exactly the rules
   /// `create` enforces and throwing the same `AccountStoreError` cases.
   ///
-  /// Not a superset of `rename`, and it does not replace it: `rename` is the
-  /// one-field write the detail and picker sheets already do, and widening it
-  /// would make every caller pass four values it has no opinion about. This is
-  /// the edit sheet's write.
+  /// Not a superset of `rename`, and it does not replace it: rename is kept for
+  /// API stability; no screen calls it. The edit sheet writes through this.
   ///
   /// `openingBalanceMinor: nil` clears the opening balance rather than leaving
   /// the stored one alone. There is no "unchanged" sentinel here because the
