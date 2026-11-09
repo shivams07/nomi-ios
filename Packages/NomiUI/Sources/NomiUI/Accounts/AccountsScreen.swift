@@ -16,6 +16,12 @@ public struct AccountsScreen: View {
   public let accountStore: AccountStore
   public let insightsStore: InsightsStore
 
+  /// G4. The composition root's `InsightsCache` generation. Stored and never
+  /// read: a new value from the parent re-renders this screen, which re-reads
+  /// the summaries. Same contract as `DashboardView.refreshToken`. This screen's
+  /// own writes bump `writeToken` instead.
+  public let refreshToken: Int
+
   @State private var editingAccount: AccountSummary?
   @State private var archivingAccount: AccountSummary?
   @State private var deletingAccount: AccountSummary?
@@ -25,7 +31,9 @@ public struct AccountsScreen: View {
   @State private var pendingEditAction: PendingEditAction?
   @State private var isArchivedExpanded = false
   @State private var isCreatingAccount = false
-  @State private var refreshToken = 0
+  /// Bumped by this screen's own writes, so the summaries re-read after a
+  /// rename, archive, delete or create.
+  @State private var writeToken = 0
   @State private var writeError = false
 
   private enum PendingEditAction {
@@ -33,15 +41,16 @@ public struct AccountsScreen: View {
     case delete(AccountSummary)
   }
 
-  public init(accountStore: AccountStore, insightsStore: InsightsStore) {
+  public init(accountStore: AccountStore, insightsStore: InsightsStore, refreshToken: Int = 0) {
     self.accountStore = accountStore
     self.insightsStore = insightsStore
+    self.refreshToken = refreshToken
   }
 
   /// `nil` means the fetch threw, distinct from a legitimate empty account
   /// list, which is `[]` and renders the "No accounts yet" empty state.
   private var summaries: [AccountSummary]? {
-    _ = refreshToken
+    _ = writeToken
     do {
       return try insightsStore.accountSummaries(includeArchived: true)
     } catch {
@@ -73,14 +82,14 @@ public struct AccountsScreen: View {
       AccountRenameSheet(
         accountStore: accountStore,
         account: account,
-        onSaved: { refreshToken += 1 },
+        onSaved: { writeToken += 1 },
         onArchive: { pendingEditAction = .archive(account) },
         onDelete: { pendingEditAction = .delete(account) }
       )
     }
     .sheet(isPresented: $isCreatingAccount) {
       AccountCreateSheet(accountStore: accountStore) { _ in
-        refreshToken += 1
+        writeToken += 1
       }
     }
     .alert(
@@ -151,7 +160,7 @@ public struct AccountsScreen: View {
     let archived = AccountSectioning.archived(loaded ?? [])
     if loaded == nil {
       NomiLoadFailedCard(message: "Accounts and balances aren’t available right now.") {
-        refreshToken += 1
+        writeToken += 1
       }
       addAccountRow
     } else if active.isEmpty && archived.isEmpty {
@@ -315,7 +324,7 @@ public struct AccountsScreen: View {
   private func archiveAccount(_ account: AccountSummary) {
     do {
       try accountStore.setArchived(account.id, true)
-      refreshToken += 1
+      writeToken += 1
     } catch {
       writeError = true
     }
@@ -324,7 +333,7 @@ public struct AccountsScreen: View {
   private func unarchiveAccount(_ account: AccountSummary) {
     do {
       try accountStore.setArchived(account.id, false)
-      refreshToken += 1
+      writeToken += 1
     } catch {
       writeError = true
     }
@@ -333,10 +342,21 @@ public struct AccountsScreen: View {
   private func deleteAccount(_ account: AccountSummary) {
     do {
       try accountStore.delete(account.id)
-      refreshToken += 1
+      writeToken += 1
     } catch {
       writeError = true
     }
+  }
+}
+
+/// Manual conformance, as on `DashboardView`: the stores are `AnyObject`
+/// protocols, so identity stands in for equality, and `refreshToken` is compared
+/// so a test can assert that a new generation makes a different view value.
+extension AccountsScreen: Equatable {
+  public static func == (lhs: AccountsScreen, rhs: AccountsScreen) -> Bool {
+    lhs.accountStore === rhs.accountStore
+      && lhs.insightsStore === rhs.insightsStore
+      && lhs.refreshToken == rhs.refreshToken
   }
 }
 

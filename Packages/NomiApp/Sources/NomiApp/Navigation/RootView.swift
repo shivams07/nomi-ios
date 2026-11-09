@@ -227,6 +227,12 @@ struct RootView: View {
             ledgerInitialChip = .needsReview
             selection = .ledger
           },
+          // G1. The Needs-you card calls this when its only count is
+          // uncategorized rows: the Needs review chip is empty in that state.
+          onOpenUncategorized: {
+            ledgerInitialChip = .uncategorized
+            selection = .ledger
+          },
           onSelectTransaction: { id in presentedTransaction = PresentedTransaction(id: id) }
         )
         // The back button on a pushed screen reads this title, so Home keeps it
@@ -234,10 +240,16 @@ struct RootView: View {
         .navigationTitle("Home")
         .navigationDestination(for: DashboardRoute.self) { route in
           switch route {
+          // G4. Both routes take the cache generation, so a pushed screen
+          // re-reads after a sync or a Siri write.
           case .budgets:
-            BudgetsScreen(budgetStore: environment.budgetStore, insightsStore: environment.insightsStore)
+            BudgetsScreen(
+              budgetStore: environment.budgetStore,
+              insightsStore: environment.insightsStore,
+              refreshToken: environment.insightsGeneration
+            )
           case .subscriptions:
-            SubscriptionsScreen(recurringStore: recurringStore)
+            SubscriptionsScreen(recurringStore: recurringStore, refreshToken: environment.insightsGeneration)
           }
         }
         // The gear (Settings) and the mail banner or Connect mail button.
@@ -255,7 +267,8 @@ struct RootView: View {
               // The Budgets row under Organize needs both stores; without them
               // SettingsScreen shows no row.
               budgetStore: environment.budgetStore,
-              insightsStore: environment.insightsStore
+              insightsStore: environment.insightsStore,
+              refreshToken: environment.insightsGeneration
             )
           case .connectMail:
             ConnectMailScreen(mailConnectionService: environment.mailConnectionService)
@@ -292,7 +305,8 @@ struct RootView: View {
       NavigationStack(path: $accountsPath) {
         AccountsScreen(
           accountStore: environment.accountStore,
-          insightsStore: environment.insightsStore
+          insightsStore: environment.insightsStore,
+          refreshToken: environment.insightsGeneration
         )
       }
     }

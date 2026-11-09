@@ -15,11 +15,17 @@ import SwiftUI
 public struct SubscriptionsScreen: View {
   public let recurringStore: any RecurringInsightsStore
 
+  /// G4. The composition root's `InsightsCache` generation. Stored and never
+  /// read: a new value from the parent re-renders this screen, which re-reads
+  /// the series. Same contract as `DashboardView.refreshToken`.
+  public let refreshToken: Int
+
   @State private var now = Date()
   @State private var retryToken = 0
 
-  public init(recurringStore: any RecurringInsightsStore) {
+  public init(recurringStore: any RecurringInsightsStore, refreshToken: Int = 0) {
     self.recurringStore = recurringStore
+    self.refreshToken = refreshToken
   }
 
   private var series: DashboardWiring.Load<[RecurringSeries]> {
@@ -164,6 +170,15 @@ public struct SubscriptionsScreen: View {
             .foregroundStyle(NomiColor.inkDeep)
         )
     }
+  }
+}
+
+/// Manual conformance, as on `DashboardView`: identity for the store, and
+/// `refreshToken` compared so a test can assert that a new generation makes a
+/// different view value.
+extension SubscriptionsScreen: Equatable {
+  public static func == (lhs: SubscriptionsScreen, rhs: SubscriptionsScreen) -> Bool {
+    lhs.recurringStore === rhs.recurringStore && lhs.refreshToken == rhs.refreshToken
   }
 }
 
