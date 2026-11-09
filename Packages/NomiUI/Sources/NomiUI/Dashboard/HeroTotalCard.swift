@@ -20,9 +20,16 @@ enum HeroDelta {
 
   /// The chip's copy (HM1, the artboard): "up ₹6,420 vs last period". The
   /// direction is a word, so it reads without colour.
+  ///
+  /// Whole-rupee deltas drop the ".00", as `ReportsPeriod.changeCopy` does, so
+  /// Home and Insights state the same change the same way (D27).
   static func chipCopy(_ result: Result) -> String {
     let direction = result.isIncrease ? "up" : "down"
-    return "\(direction) \(NomiFormatters.amountString(minor: abs(result.deltaMinor))) vs last period"
+    var amount = NomiFormatters.amountString(minor: abs(result.deltaMinor))
+    if abs(result.deltaMinor) % 100 == 0, amount.hasSuffix(".00") {
+      amount.removeLast(3)
+    }
+    return "\(direction) \(amount) vs last period"
   }
 
   /// The delta the chip may state, or `nil` when it has nothing to say.
@@ -182,8 +189,12 @@ private struct HeroLabelRow: View {
   var body: some View {
     HStack(alignment: .firstTextBaseline, spacing: 8) {
       Text("Spent")
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
       Spacer(minLength: 8)
       Text("Income \(income)")
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
     }
     .nomiTextStyle(.subhead)
     .foregroundStyle(NomiColor.heroTextSecondary)
@@ -201,10 +212,10 @@ private struct HeroDeltaChip: View {
       .nomiTextStyle(.heroChip)
       .foregroundStyle(NomiColor.heroText)
       .lineLimit(1)
+      .minimumScaleFactor(0.75)
       .padding(.horizontal, 10)
       .frame(minHeight: 26)
       .nomiGlass(.heroControl, in: Capsule())
-      .fixedSize(horizontal: true, vertical: false)
   }
 }
 
