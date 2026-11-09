@@ -278,11 +278,17 @@ public struct TransactionDetailScreen: View {
     let showsSuggestion = isSuggestionShown(for: transaction)
     let primary = TransactionDetailLogic.primaryAction(
       hasSuggestion: showsSuggestion, needsReview: transaction.needsReview)
+    let reviewed = TransactionDetailLogic.markReviewedPlacement(primary: primary, needsReview: transaction.needsReview)
     header(transaction)
     if showsSuggestion, let suggestion {
       suggestionCard(transaction: transaction, suggestion: suggestion, primary: primary)
     } else {
       categoryRow(transaction)
+      // D7: the no-suggestion primary is drawn here at both detents, not in
+      // `largeDetails`, so the medium sheet shows it and large draws it once.
+      if reviewed == .primaryUnderCategory {
+        markReviewedButton(isPrimary: true)
+      }
     }
     if detent == .large {
       largeDetails(transaction, primary: primary)
@@ -484,8 +490,12 @@ public struct TransactionDetailScreen: View {
         isDatePickerPresented = true
       }
       transferSection(transaction)
-      if TransactionDetailLogic.availableActions(needsReview: transaction.needsReview).contains(.markReviewed) {
-        markReviewedButton(isPrimary: primary == .markReviewed)
+      // Only the suggestion case reaches here: the no-suggestion primary sits
+      // under the category row (see `readContent`), so it is not drawn twice.
+      if TransactionDetailLogic.markReviewedPlacement(primary: primary, needsReview: transaction.needsReview)
+        == .secondaryInLargeDetails
+      {
+        markReviewedButton(isPrimary: false)
           .padding(.top, NomiSpacing.xxs)
       }
       sourceDetails(transaction)

@@ -91,6 +91,24 @@ public enum TransactionDetailLogic {
     return .none
   }
 
+  /// Where "Mark reviewed" is drawn (D7). A flagged row with no suggestion makes
+  /// it the sheet's primary, directly under the category row at both detents, so
+  /// the medium sheet shows its one primary without a drag. A flagged row with a
+  /// suggestion keeps it as the pale secondary in the large details, below Apply.
+  /// An unflagged row never shows it.
+  public enum MarkReviewedPlacement: Hashable, Sendable {
+    case primaryUnderCategory, secondaryInLargeDetails, hidden
+  }
+
+  public static func markReviewedPlacement(primary: PrimaryAction, needsReview: Bool) -> MarkReviewedPlacement {
+    guard needsReview else { return .hidden }
+    switch primary {
+    case .markReviewed: return .primaryUnderCategory
+    case .apply: return .secondaryInLargeDetails
+    case .none: return .hidden
+    }
+  }
+
   /// DEC-03 / A-03: a debit is stored and shown negative so its "−" always
   /// prints; a credit is positive so its "+" prints. Works whether the stored
   /// `amountMinor` is the magnitude or already signed, so the sign follows

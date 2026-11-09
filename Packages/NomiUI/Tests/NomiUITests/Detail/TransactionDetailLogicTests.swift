@@ -305,6 +305,45 @@ final class TransactionDetailLogicTests: XCTestCase {
     XCTAssertEqual(TransactionDetailLogic.primaryAction(hasSuggestion: false, needsReview: false), .none)
   }
 
+  // MARK: - D7: where Mark reviewed is drawn
+
+  func testFlaggedRowWithoutSuggestionPutsMarkReviewedPrimaryUnderCategory() {
+    let primary = TransactionDetailLogic.primaryAction(hasSuggestion: false, needsReview: true)
+    XCTAssertEqual(
+      TransactionDetailLogic.markReviewedPlacement(primary: primary, needsReview: true), .primaryUnderCategory)
+  }
+
+  func testFlaggedRowWithSuggestionKeepsMarkReviewedSecondaryInLargeDetails() {
+    let primary = TransactionDetailLogic.primaryAction(hasSuggestion: true, needsReview: true)
+    XCTAssertEqual(
+      TransactionDetailLogic.markReviewedPlacement(primary: primary, needsReview: true), .secondaryInLargeDetails)
+  }
+
+  func testUnflaggedRowNeverShowsMarkReviewed() {
+    for hasSuggestion in [false, true] {
+      let primary = TransactionDetailLogic.primaryAction(hasSuggestion: hasSuggestion, needsReview: false)
+      XCTAssertEqual(
+        TransactionDetailLogic.markReviewedPlacement(primary: primary, needsReview: false), .hidden,
+        "hasSuggestion \(hasSuggestion)")
+    }
+  }
+
+  func testMarkReviewedIsDrawnAtExactlyOneSpotForEveryFlagCombination() {
+    for hasSuggestion in [false, true] {
+      for needsReview in [false, true] {
+        let primary = TransactionDetailLogic.primaryAction(hasSuggestion: hasSuggestion, needsReview: needsReview)
+        let placement = TransactionDetailLogic.markReviewedPlacement(primary: primary, needsReview: needsReview)
+        // Flagged rows always get exactly one spot; the no-suggestion primary is never also in large details.
+        if needsReview {
+          XCTAssertNotEqual(placement, .hidden, "hasSuggestion \(hasSuggestion)")
+        } else {
+          XCTAssertEqual(placement, .hidden, "hasSuggestion \(hasSuggestion)")
+        }
+        XCTAssertEqual(placement == .primaryUnderCategory, primary == .markReviewed)
+      }
+    }
+  }
+
   // MARK: - DT: signedMinor (DEC-03 / A-03 sign rule)
 
   func testDebitIsNegativeAndCreditPositive() {
