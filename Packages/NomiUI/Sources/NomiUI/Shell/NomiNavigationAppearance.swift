@@ -7,11 +7,12 @@ import UIKit
 
 /// The navigation-bar appearance for H0 screens (F3, I-4; SIMP §1).
 ///
-/// The bar is opaque on `ground`. At the scroll edge it has no shadow. When
-/// collapsed it draws a `separator` line. The large title is Inter SemiBold 34
-/// with -0.4 tracking, in `ink`. The inline title is SemiBold 17. Bar button
-/// items are Medium 17 in `navy`. The back button has no visible title, and
-/// the tint is `navy`.
+/// The bar is opaque on `ground` when collapsed, and draws a `separator` line.
+/// At the scroll edge the bar is transparent over the ground, with no shadow.
+/// An opaque scroll-edge background covers the large title on iOS 26. The
+/// large title is Inter SemiBold 34 with -0.4 tracking, in `ink`. The inline
+/// title is SemiBold 17. Bar button items are Medium 17 in `navy`. The back
+/// button has no visible title, and the tint is `navy`.
 ///
 /// Call `configure()` once, after `NomiFont.registerIfNeeded()`. If the Inter
 /// faces are not registered, the system font stands in.
@@ -28,8 +29,7 @@ public enum NomiNavigationAppearance {
     standard.shadowColor = UIColor(NomiColor.separator)
 
     let scrollEdge = UINavigationBarAppearance()
-    scrollEdge.configureWithOpaqueBackground()
-    scrollEdge.backgroundColor = ground
+    scrollEdge.configureWithTransparentBackground()
     scrollEdge.shadowColor = nil
 
     let buttonFont = font(named: NomiFont.interMedium, size: 17, weight: .medium)

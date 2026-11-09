@@ -23,11 +23,14 @@ public extension View {
 }
 
 private extension View {
-  /// Drag indicator, 32 corner radius and the ground background shared by every sheet.
+  /// Drag indicator, 32 corner radius, the ground background and the navy tint
+  /// shared by every sheet. The tint keeps sheet bar buttons (Cancel, Save) navy
+  /// inside the iOS 26 glass; without it they draw ink.
   func nomiSheetChrome() -> some View {
     self
       .presentationDragIndicator(.visible)
       .presentationCornerRadius(NomiRadius.sheet)
       .presentationBackground(NomiColor.ground)
+      .tint(NomiColor.navy)
   }
 }
