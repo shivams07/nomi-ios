@@ -44,7 +44,11 @@ struct CategoryPickerSheet: View {
         }
       }
       .sheet(isPresented: $isCreating) {
-        CategoryEditorSheet(categoryStore: categoryStore, category: nil) { newID in
+        CategoryEditorSheet(
+          categoryStore: categoryStore,
+          category: nil,
+          existingNames: CategoryPickerLogic.createNames(from: categories.map(\.name))
+        ) { newID in
           selection = newID
           dismiss()
         }
