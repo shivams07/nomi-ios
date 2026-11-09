@@ -143,9 +143,11 @@ struct RootContainerView: View {
   /// never a replacement for them. If it never fires, nothing is lost.
   ///
   /// Each notification only *reports* a change; the coordinator coalesces a
-  /// burst into one reconcile (M10). No cache invalidation here: a reconcile
-  /// that changed something drops the cache through its own write path, and
-  /// one that changed nothing has nothing to invalidate.
+  /// burst into one reconcile (M10). The cache is dropped by
+  /// `AppSyncCoordinator` once the debounced reconcile has run
+  /// (`onRemoteChangeSettled`, set in `AppEnvironment`): the import changed
+  /// rows the cache had already answered for, whether or not the reconcile then
+  /// collapsed anything.
   private func observeRemoteChanges() async {
     let notifications = NotificationCenter.default.notifications(
       named: .NSPersistentStoreRemoteChange

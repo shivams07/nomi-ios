@@ -10,7 +10,10 @@ import XCTest
 ///
 /// Time is a `FakeClock`: `now` for the ten-minute foreground gate, and `sleep`
 /// for the two-second debounce, which only returns when the test advances past
-/// it. No test here waits on a real clock.
+/// it. Two tests here wait on a real clock, because they go through
+/// `AppEnvironment`'s production sleep:
+/// `testASettledRemoteChangeIncrementsTheInsightsGeneration` and
+/// `testASettledRemoteChangeDoesNotNotifyThePostCommitObserver`.
 ///
 /// Reconciles are counted at the reference-data seam, which
 /// `AppSyncCoordinator.reconcile()` calls exactly once per reconcile. The mail
@@ -80,6 +83,134 @@ final class ReconcileSchedulingTests: XCTestCase {
     XCTAssertEqual(harness.fetcher.calls.incrementalSearches, 2)
   }
 
+  // MARK: - Remote change settled (WR-1, G3)
+
+  /// Two notifications inside the debounce window: one settled reconcile, one
+  /// hook call. Not settled one second before the last notification's deadline.
+  func testRemoteChangeSettledHookRunsOnceAfterDebouncedReconcile() async throws {
+    let clock = FakeClock()
+    let settled = SettledCounter()
+    let harness = try makeHarness(clock: clock, hook: { settled.record() })
+    settled.referenceData = harness.referenceData
+
+    await harness.coordinator.remoteChangeObserved()
+    await clock.waitForSleeps(1)
+    clock.advance(by: 0.1)
+    await harness.coordinator.remoteChangeObserved()
+    await clock.waitForSleeps(2)
+
+    clock.advance(by: 1.95)
+    await Task.yield()
+    XCTAssertEqual(settled.count, 0, "nothing has settled before two seconds after the last notification")
+
+    clock.advance(by: 0.1)
+    let pending = await harness.coordinator.remoteChangeTask
+    await pending?.value
+
+    XCTAssertEqual(harness.referenceData.runs, 1)
+    XCTAssertEqual(settled.count, 1, "two notifications, one settled reconcile, one hook call")
+    XCTAssertEqual(settled.reconcileCountsAtCall, [1], "the hook runs after the reconcile, not before it")
+  }
+
+  /// The import changed rows whether or not the reconcile then removed a
+  /// duplicate, so the hook runs when the reconcile removes nothing. The
+  /// reference-data seam here returns zero removals and the pipeline store is
+  /// empty, so this reconcile collapses nothing.
+  func testRemoteChangeSettledHookRunsWhenTheReconcileRemovesNothing() async throws {
+    let clock = FakeClock()
+    let settled = SettledCounter()
+    let harness = try makeHarness(clock: clock, hook: { settled.record() })
+    settled.referenceData = harness.referenceData
+
+    await harness.coordinator.remoteChangeObserved()
+    await clock.waitForSleeps(1)
+    clock.advance(by: 2)
+    let pending = await harness.coordinator.remoteChangeTask
+    await pending?.value
+
+    XCTAssertEqual(harness.referenceData.runs, 1, "the reconcile ran")
+    XCTAssertEqual(settled.count, 1, "and the hook ran after it, though it removed nothing")
+    XCTAssertEqual(
+      settled.reconcileCountsAtCall, [1],
+      "the reconcile had already run when the hook fired: a hook moved ahead of it would see 0")
+  }
+
+  /// No remote change, no hook. The foreground reconcile does run here, so the
+  /// zero is not a reconcile that never happened.
+  func testForegroundReconcileDoesNotRunTheRemoteChangeHook() async throws {
+    let clock = FakeClock()
+    let settled = SettledCounter()
+    let harness = try makeHarness(clock: clock, hook: { settled.record() })
+    try await harness.stack.service.connect(.test)
+
+    await harness.coordinator.didBecomeActive()
+    await foregroundWork(of: harness.coordinator)
+
+    XCTAssertEqual(harness.referenceData.runs, 1, "the foreground reconciled")
+    XCTAssertEqual(settled.count, 0, "with no remote change there is nothing to invalidate")
+  }
+
+  /// The wiring, not the coordinator: `AppEnvironment` hands the coordinator
+  /// `cache.invalidate()`, and the generation is what `RootView` republishes to
+  /// the screens that read through the cache.
+  ///
+  /// This one goes through the production two-second sleep, because the
+  /// environment does not take an injected one. It is the only test in this
+  /// file that waits on a real clock, and it is here for that reason.
+  func testASettledRemoteChangeIncrementsTheInsightsGeneration() async throws {
+    let stack = try InMemoryStack()
+    stacks.append(stack)
+    let environment = AppEnvironment(
+      container: stack.container,
+      preferences: InMemoryKeyValueStore(),
+      credentials: MemoryCredentialStore(),
+      mailFetcher: OrderRecordingMailFetcher(),
+      scheduler: NoopNotificationScheduler()
+    )
+    let before = environment.cache.generation
+
+    await environment.sync.remoteChangeObserved()
+    let pending = await environment.sync.remoteChangeTask
+    await pending?.value
+
+    // Exactly one, on an empty store: the reconcile collapses nothing, so the
+    // only invalidation is the hook's.
+    XCTAssertEqual(environment.cache.generation, before + 1)
+  }
+
+  /// Pins the audit's "budget alerts do not fire on a remote import". The
+  /// environment's budget observer is replaced on its own coordinator by a
+  /// counter, so any post-commit call a settled remote change makes is seen.
+  ///
+  /// This does not kill the M2 mutant (wiring `coordinator.didWrite()` in place
+  /// of `cache.invalidate()`). A no-argument `didWrite()` never reaches the
+  /// observer, so M2 passes here. The test catches the change that would make
+  /// M2 dangerous: a non-empty category set passed to `didWrite` on this path.
+  ///
+  /// Like the test above, this goes through the production two-second sleep.
+  func testASettledRemoteChangeDoesNotNotifyThePostCommitObserver() async throws {
+    let stack = try InMemoryStack()
+    stacks.append(stack)
+    let environment = AppEnvironment(
+      container: stack.container,
+      preferences: InMemoryKeyValueStore(),
+      credentials: MemoryCredentialStore(),
+      mailFetcher: OrderRecordingMailFetcher(),
+      scheduler: NoopNotificationScheduler()
+    )
+    let observer = CountingPostCommitObserver()
+    environment.coordinator.setObserver(observer)
+    let before = environment.cache.generation
+
+    await environment.sync.remoteChangeObserved()
+    let pending = await environment.sync.remoteChangeTask
+    await pending?.value
+
+    // The settled path really ran, so zero observer calls is not a no-op.
+    XCTAssertEqual(environment.cache.generation, before + 1)
+    XCTAssertEqual(observer.count, 0, "a remote import must not run the budget observer")
+  }
+
   // MARK: -
 
   private struct Harness {
@@ -89,6 +220,10 @@ final class ReconcileSchedulingTests: XCTestCase {
     let referenceData: CountingReferenceData
   }
 
+  /// Keeps each `InMemoryStack` alive for the test. A `ModelContext` does not
+  /// keep its container alive, and a dropped container traps SwiftData mid-test.
+  private var stacks: [InMemoryStack] = []
+
   private func foregroundWork(of coordinator: AppSyncCoordinator) async {
     let task = await coordinator.foregroundTask
     await task?.value
@@ -96,7 +231,10 @@ final class ReconcileSchedulingTests: XCTestCase {
 
   /// A stored cursor matching the fetcher, so every sync is an incremental
   /// `uids(after:)` and counts as exactly one search.
-  private func makeHarness(clock: FakeClock) throws -> Harness {
+  private func makeHarness(
+    clock: FakeClock,
+    hook: (@MainActor @Sendable () -> Void)? = nil
+  ) throws -> Harness {
     let preferences = InMemoryKeyValueStore()
     let cursor = MailSyncCursor(
       mailbox: "INBOX",
@@ -117,7 +255,8 @@ final class ReconcileSchedulingTests: XCTestCase {
         referenceData: referenceData,
         submitter: RecordingSubmitter(),
         now: { clock.now },
-        sleep: { try await clock.sleep($0) }
+        sleep: { try await clock.sleep($0) },
+        onRemoteChangeSettled: hook
       ),
       fetcher: fetcher,
       referenceData: referenceData
@@ -136,6 +275,47 @@ final class CountingReferenceData: ReferenceDataReconciling {
   func run() throws -> Int {
     runs += 1
     return 0
+  }
+}
+
+/// Counts calls to the remote-change settled hook, and what the reconcile
+/// counter read when each call happened. A reference type, because a
+/// `@Sendable` closure cannot mutate a captured `var`.
+///
+/// `referenceData` is set by the test after the harness exists, because the
+/// hook has to be handed to the coordinator before the harness can be built.
+@MainActor
+final class SettledCounter {
+  private(set) var count = 0
+  private(set) var reconcileCountsAtCall: [Int] = []
+  var referenceData: CountingReferenceData?
+
+  func record() {
+    count += 1
+    reconcileCountsAtCall.append(referenceData?.runs ?? -1)
+  }
+}
+
+/// Counts post-commit observer calls. `didCommit` is async, so the count sits
+/// behind a lock taken in a synchronous helper.
+final class CountingPostCommitObserver: PostCommitObserver, @unchecked Sendable {
+  private let lock = NSLock()
+  private var calls = 0
+
+  var count: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return calls
+  }
+
+  func didCommit(affectedCategoryIDs: Set<UUID>) async {
+    record()
+  }
+
+  private func record() {
+    lock.lock()
+    calls += 1
+    lock.unlock()
   }
 }
 
