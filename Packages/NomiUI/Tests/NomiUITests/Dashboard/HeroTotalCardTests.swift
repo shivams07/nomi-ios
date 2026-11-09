@@ -8,6 +8,18 @@ final class HeroTotalCardTests: XCTestCase {
     XCTAssertNil(HeroDelta.compute(current: 1000, prior: nil))
   }
 
+  /// D27: a whole-rupee delta drops ".00", as the Insights chip does.
+  func testChipCopyDropsWholeRupeeDecimals() {
+    let result = HeroDelta.Result(deltaMinor: 1_485_500, isIncrease: false)
+    XCTAssertEqual(HeroDelta.chipCopy(result), "down ₹14,855 vs last period")
+  }
+
+  /// D27: a delta with paise keeps its decimals.
+  func testChipCopyKeepsPaise() {
+    let result = HeroDelta.Result(deltaMinor: 1_485_550, isIncrease: false)
+    XCTAssertEqual(HeroDelta.chipCopy(result), "down ₹14,855.50 vs last period")
+  }
+
   /// v5: a zero prior is a real prior — the delta is the whole current
   /// figure, not `nil`.
   func testZeroPriorIsARealPriorNotNil() {
@@ -172,21 +184,21 @@ final class HeroTotalCardTests: XCTestCase {
     let delta = HeroDelta.visibleDelta(current: 500_00, prior: 0)
     XCTAssertEqual(delta?.isIncrease, true)
     XCTAssertEqual(delta?.deltaMinor, 500_00)
-    XCTAssertEqual(HeroDelta.chipCopy(delta!), "up ₹500.00 vs last period")
+    XCTAssertEqual(HeroDelta.chipCopy(delta!), "up ₹500 vs last period")
   }
 
   func testChipShownAsDownWhenCurrentIsZeroAndPriorIsNonZero() {
     let delta = HeroDelta.visibleDelta(current: 0, prior: 500_00)
     XCTAssertEqual(delta?.isIncrease, false)
     XCTAssertEqual(delta?.deltaMinor, -500_00)
-    XCTAssertEqual(HeroDelta.chipCopy(delta!), "down ₹500.00 vs last period")
+    XCTAssertEqual(HeroDelta.chipCopy(delta!), "down ₹500 vs last period")
   }
 
   func testChipShownForNonZeroAgainstNonZeroDifferentFigures() {
     let up = HeroDelta.visibleDelta(current: 1_200_00, prior: 1_000_00)
-    XCTAssertEqual(HeroDelta.chipCopy(up!), "up ₹200.00 vs last period")
+    XCTAssertEqual(HeroDelta.chipCopy(up!), "up ₹200 vs last period")
     let down = HeroDelta.visibleDelta(current: 800_00, prior: 1_000_00)
-    XCTAssertEqual(HeroDelta.chipCopy(down!), "down ₹200.00 vs last period")
+    XCTAssertEqual(HeroDelta.chipCopy(down!), "down ₹200 vs last period")
   }
 
   func testChipHiddenWhenDeltaIsExactlyZeroWithData() {
@@ -209,6 +221,6 @@ final class HeroTotalCardTests: XCTestCase {
     let up = HeroDelta.compute(current: 64_824_24, prior: 58_404_00)!
     XCTAssertEqual(HeroDelta.chipCopy(up), "up ₹6,420.24 vs last period")
     let down = HeroDelta.compute(current: 1_000_00, prior: 1_500_00)!
-    XCTAssertEqual(HeroDelta.chipCopy(down), "down ₹500.00 vs last period")
+    XCTAssertEqual(HeroDelta.chipCopy(down), "down ₹500 vs last period")
   }
 }
