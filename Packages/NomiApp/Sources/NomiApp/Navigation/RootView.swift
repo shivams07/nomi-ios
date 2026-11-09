@@ -51,6 +51,23 @@ struct RootView: View {
     SwiftDataTransactionEditor(context: environment.container.mainContext, coordinator: environment.coordinator)
   }
 
+  /// The Needs-you card's two taps (G1). Each one writes the chip, then the tab,
+  /// through `NeedsYouRoute`, so the pairing is the one `NeedsYouRouteTests` pins.
+  private var needsYouTaps: NeedsYouRoute.Taps {
+    NeedsYouRoute.taps { outcome in
+      NeedsYouRoute.apply(
+        outcome,
+        setChip: { ledgerInitialChip = $0 },
+        setSelection: { selection = $0 }
+      )
+    }
+  }
+
+  /// The refresh token for each cache-backed route, all from one generation (G1, G4).
+  private var tokens: RouteTokens {
+    RouteTokens(generation: environment.insightsGeneration)
+  }
+
   /// Whether the bar is on screen right now: only on a tab root.
   private var isTabBarShown: Bool {
     TabBarVisibility.isVisible(pathCount: pathCount(for: selection))
@@ -222,17 +239,11 @@ struct RootView: View {
           // It is what makes SwiftUI re-invoke `body` after a write, and it is
           // only doing that job because it *changes*: passing a literal here
           // would compile, satisfy the parameter, and fix nothing.
-          refreshToken: environment.insightsGeneration,
-          onOpenReviewQueue: {
-            ledgerInitialChip = .needsReview
-            selection = .ledger
-          },
+          refreshToken: tokens.dashboard,
+          onOpenReviewQueue: needsYouTaps.reviewQueue,
           // G1. The Needs-you card calls this when its only count is
           // uncategorized rows: the Needs review chip is empty in that state.
-          onOpenUncategorized: {
-            ledgerInitialChip = .uncategorized
-            selection = .ledger
-          },
+          onOpenUncategorized: needsYouTaps.uncategorized,
           onSelectTransaction: { id in presentedTransaction = PresentedTransaction(id: id) }
         )
         // The back button on a pushed screen reads this title, so Home keeps it
@@ -246,10 +257,10 @@ struct RootView: View {
             BudgetsScreen(
               budgetStore: environment.budgetStore,
               insightsStore: environment.insightsStore,
-              refreshToken: environment.insightsGeneration
+              refreshToken: tokens.budgets
             )
           case .subscriptions:
-            SubscriptionsScreen(recurringStore: recurringStore, refreshToken: environment.insightsGeneration)
+            SubscriptionsScreen(recurringStore: recurringStore, refreshToken: tokens.subscriptions)
           }
         }
         // The gear (Settings) and the mail banner or Connect mail button.
@@ -268,7 +279,7 @@ struct RootView: View {
               // SettingsScreen shows no row.
               budgetStore: environment.budgetStore,
               insightsStore: environment.insightsStore,
-              refreshToken: environment.insightsGeneration
+              refreshToken: tokens.settings
             )
           case .connectMail:
             ConnectMailScreen(mailConnectionService: environment.mailConnectionService)
@@ -297,7 +308,7 @@ struct RootView: View {
         // `ReportsScreen` sets its own "Insights" title.
         ReportsScreen(
           insightsStore: environment.insightsStore,
-          refreshToken: environment.insightsGeneration
+          refreshToken: tokens.reports
         )
       }
 
@@ -306,7 +317,7 @@ struct RootView: View {
         AccountsScreen(
           accountStore: environment.accountStore,
           insightsStore: environment.insightsStore,
-          refreshToken: environment.insightsGeneration
+          refreshToken: tokens.accounts
         )
       }
     }
