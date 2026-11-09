@@ -18,13 +18,20 @@ struct SyncAttention: Equatable {
 /// the copy says what to do, and the icon and text carry the meaning.
 public struct SyncStatusRow: View {
   public let state: MailConnectionState
+  /// Whether this device has ever connected a mailbox. It only changes the
+  /// disconnected banner: a user who never connected is asked to connect, not
+  /// to "connect again" (D14). The default `.never` is right for a caller with
+  /// no history. Connect mail's connected view never reaches the attention
+  /// branch, so it does not depend on this value.
+  public let history: MailConnectionHistory
 
-  public init(state: MailConnectionState) {
+  public init(state: MailConnectionState, history: MailConnectionHistory = .never) {
     self.state = state
+    self.history = history
   }
 
   public var body: some View {
-    if let attention = Self.attention(for: state) {
+    if let attention = Self.attention(for: state, history: history) {
       NomiAttentionRow(systemImage: attention.systemImage, title: attention.title, message: attention.message)
     } else {
       HStack(spacing: NomiSpacing.xxs) {
@@ -40,8 +47,10 @@ public struct SyncStatusRow: View {
   }
 
   /// The attention copy for a state. `nil` for `.connected`, which has nothing
-  /// to ask of the user.
-  static func attention(for state: MailConnectionState) -> SyncAttention? {
+  /// to ask of the user. `history` changes only the disconnected copy: a device
+  /// that never connected is asked to connect, and one that has connected
+  /// before keeps "Connect again" (D14).
+  static func attention(for state: MailConnectionState, history: MailConnectionHistory) -> SyncAttention? {
     switch state {
     case .connected:
       return nil
@@ -52,6 +61,13 @@ public struct SyncStatusRow: View {
         message: nil
       )
     case .disconnected:
+      guard history.hasEverConnected else {
+        return SyncAttention(
+          systemImage: "envelope.badge",
+          title: "Mail not connected",
+          message: "Connect mail to log bank and card alerts automatically."
+        )
+      }
       return SyncAttention(
         systemImage: "envelope.badge",
         title: "Mail disconnected",
@@ -103,8 +119,15 @@ public struct SyncStatusRow: View {
   }
 }
 
-#Preview("Sync status · disconnected") {
-  SyncStatusRow(state: .disconnected)
+#Preview("Sync status · disconnected, never connected") {
+  SyncStatusRow(state: .disconnected, history: .never)
+    .padding()
+    .background(NomiColor.ground)
+    .preferredColorScheme(.light)
+}
+
+#Preview("Sync status · disconnected after connecting") {
+  SyncStatusRow(state: .disconnected, history: MailConnectionHistory(hasEverConnected: true, lastSync: nil))
     .padding()
     .background(NomiColor.ground)
     .preferredColorScheme(.light)

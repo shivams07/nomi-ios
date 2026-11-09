@@ -110,6 +110,38 @@ enum DashboardWiring {
     }
   }
 
+  // MARK: - D26: the Needs-you review count is the Ledger chip's count
+
+  /// The Ledger's Needs review chip counts every flagged row, whatever the
+  /// period. Home's card read the selected period, so the two disagreed in any
+  /// month but the one that held them all. This read is the chip's count, as
+  /// its own `Load` so a failure is not taken for zero (F3).
+  @MainActor
+  static func needsReviewAllTime(from store: InsightsStore) -> Load<Int> {
+    do {
+      return .loaded(try store.needsReviewCountAllTime())
+    } catch {
+      return .failed
+    }
+  }
+
+  /// The counts the Needs-you card shows. The review count is the all-time one,
+  /// and the uncategorized count is still the selected period's, as before.
+  struct NeedsYouInputs: Equatable {
+    let needsReviewCount: Int
+    let uncategorizedCount: Int
+  }
+
+  /// Takes the review count from `needsReviewAllTime`, never from
+  /// `period.needsReviewCount`, which is the selected period's. Pure, so a test
+  /// can hold that choice without the view.
+  static func needsYouInputs(period: PeriodInsights, needsReviewAllTime: Int) -> NeedsYouInputs {
+    NeedsYouInputs(
+      needsReviewCount: needsReviewAllTime,
+      uncategorizedCount: period.uncategorizedCount
+    )
+  }
+
   // MARK: - F3: the rest of the dashboard's reads, pulled out of `body` for
   // the same reason `recentTransactions(from:)` above already is — `swift
   // test` cannot reach `DashboardView.body` or its private computed
@@ -266,6 +298,18 @@ public struct DashboardView: View {
     DashboardWiring.recentTransactions(from: insightsStore)
   }
 
+  /// D26. All time, not the selected period: see `DashboardWiring.needsReviewAllTime`.
+  private var needsReviewAllTime: DashboardWiring.Load<Int> {
+    DashboardWiring.needsReviewAllTime(from: insightsStore)
+  }
+
+  /// D14. Read through the service on each render: `MailStack.history` reads the
+  /// preferences every time, so a connect that completes is seen on the next
+  /// render. No service means no connection has ever been made here.
+  private var mailHistory: MailConnectionHistory {
+    mailConnectionService?.history ?? .never
+  }
+
   /// `nil` when there is no `recurringStore` at all — distinct from
   /// `DashboardWiring.Load`'s own two cases, same shape `budgetProgress`
   /// already uses for its own third, store-independent "nothing to show"
@@ -289,6 +333,7 @@ public struct DashboardView: View {
   public var body: some View {
     let insightsResult = insights
     let transactionsResult = recentTransactions
+    let reviewResult = needsReviewAllTime
     let mode = HomeLayout.mode(mail: mailState, hasAnyTransaction: hasAnyTransaction(transactionsResult))
     return NomiHeroScaffold(heroBottomSpacing: 12) {
       navRow
@@ -302,6 +347,7 @@ public struct DashboardView: View {
         homeSheet(
           showAttention: showAttention,
           insights: insightsResult,
+          needsReview: reviewResult,
           transactions: transactionsResult
         )
       }
@@ -367,6 +413,7 @@ public struct DashboardView: View {
   private func homeSheet(
     showAttention: Bool,
     insights: DashboardWiring.Load<PeriodInsights>,
+    needsReview: DashboardWiring.Load<Int>,
     transactions: DashboardWiring.Load<[NomiCore.Transaction]>
   ) -> some View {
     let categories: [CategoryBadge]
@@ -379,7 +426,7 @@ public struct DashboardView: View {
       if showAttention {
         syncBanner
       }
-      needsYouModule(insights)
+      needsYouModule(insights, needsReview: needsReview)
       budgetModule
       recentModule(transactions, categories: categories)
       upcomingModule
@@ -390,34 +437,49 @@ public struct DashboardView: View {
   /// it opens Connect mail.
   private var syncBanner: some View {
     NavigationLink(value: HomeRoute.connectMail) {
-      SyncStatusRow(state: mailState)
+      SyncStatusRow(state: mailState, history: mailHistory)
     }
     .buttonStyle(.plain)
   }
 
   @ViewBuilder
-  private func needsYouModule(_ result: DashboardWiring.Load<PeriodInsights>) -> some View {
-    switch result {
-    case .loaded(let insights):
+  private func needsYouModule(
+    _ result: DashboardWiring.Load<PeriodInsights>,
+    needsReview: DashboardWiring.Load<Int>
+  ) -> some View {
+    if let inputs = needsYouInputs(result, needsReview: needsReview) {
       NeedsYouCard(
-        needsReviewCount: insights.needsReviewCount,
-        uncategorizedCount: insights.uncategorizedCount,
-        onTap: needsYouTap(for: insights)
+        needsReviewCount: inputs.needsReviewCount,
+        uncategorizedCount: inputs.uncategorizedCount,
+        onTap: needsYouTap(for: inputs)
       )
-    case .failed:
-      // The Needs-you counts come from the same read as the hero. Without a
-      // card here a failed spend read would leave no retry on screen.
+    } else {
+      // The Needs-you counts come from the period read and the review read. A
+      // failure in either is not a zero, so without a card here a failed read
+      // would leave no retry on screen.
       NomiLoadFailedCard(message: "Spending didn’t load.") { retryToken += 1 }
     }
+  }
+
+  /// The card's counts when both reads loaded, otherwise `nil`. D26 takes the
+  /// review count from the all-time read and the rest from the period.
+  private func needsYouInputs(
+    _ result: DashboardWiring.Load<PeriodInsights>,
+    needsReview: DashboardWiring.Load<Int>
+  ) -> DashboardWiring.NeedsYouInputs? {
+    guard case .loaded(let insights) = result, case .loaded(let reviewAllTime) = needsReview else {
+      return nil
+    }
+    return DashboardWiring.needsYouInputs(period: insights, needsReviewAllTime: reviewAllTime)
   }
 
   /// The Needs-you tap for these counts (G1): review opens the review queue,
   /// uncategorized-only opens the Uncategorized chip, and a card with nothing
   /// to show has no tap.
-  private func needsYouTap(for insights: PeriodInsights) -> (() -> Void)? {
+  private func needsYouTap(for inputs: DashboardWiring.NeedsYouInputs) -> (() -> Void)? {
     DashboardWiring.needsYouHandler(
-      needsReviewCount: insights.needsReviewCount,
-      uncategorizedCount: insights.uncategorizedCount,
+      needsReviewCount: inputs.needsReviewCount,
+      uncategorizedCount: inputs.uncategorizedCount,
       reviewQueue: onOpenReviewQueue,
       uncategorized: onOpenUncategorized
     )
