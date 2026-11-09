@@ -46,6 +46,7 @@ public actor AppSyncCoordinator {
   private(set) var foregroundTask: Task<Void, Never>?
   private(set) var remoteChangeTask: Task<Void, Never>?
   private var lastReconcileAt: Date?
+  private let onRemoteChangeSettled: (@MainActor @Sendable () -> Void)?
 
   /// `referenceData` is optional only so the coordinator tests that never touch
   /// reference rows need no container. `AppEnvironment` always passes one.
@@ -53,6 +54,15 @@ public actor AppSyncCoordinator {
   /// `sleep` is the remote-change debounce's wait, injectable for the same
   /// reason `now` is: a test that has to wait out two real seconds is a test
   /// that is slow when it passes and flaky when CI is loaded.
+  ///
+  /// `onRemoteChangeSettled` runs once per debounced remote-change reconcile,
+  /// after that reconcile returns, whether or not it changed anything. The
+  /// import that caused the notification changed rows regardless of whether the
+  /// reconcile then removed a duplicate, so this is where cached totals are
+  /// dropped. `AppEnvironment` wires it to `cache.invalidate()`, not to
+  /// `WriteCoordinator.didWrite`: a remote import must not run the budget
+  /// observer, or a second device re-alerts on spend the first one already
+  /// alerted on.
   public init(
     mail: MailStack,
     pipeline: IngestPipeline,
@@ -61,7 +71,8 @@ public actor AppSyncCoordinator {
     now: @escaping @Sendable () -> Date = { Date() },
     sleep: @escaping @Sendable (TimeInterval) async throws -> Void = {
       try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000))
-    }
+    },
+    onRemoteChangeSettled: (@MainActor @Sendable () -> Void)? = nil
   ) {
     self.mail = mail
     self.pipeline = pipeline
@@ -69,6 +80,7 @@ public actor AppSyncCoordinator {
     self.submitter = submitter
     self.now = now
     self.pause = sleep
+    self.onRemoteChangeSettled = onRemoteChangeSettled
   }
 
   // MARK: - Reconcile
@@ -113,6 +125,10 @@ public actor AppSyncCoordinator {
       }
       guard let self, !Task.isCancelled else { return }
       await self.reconcile()
+      // Not from `reconcile()` itself: the launch and foreground reconciles
+      // follow local writes or bootstrap's own `cache.invalidate()`, so only a
+      // remote change needs this. Not reached on the cancelled early returns.
+      if let hook = self.onRemoteChangeSettled { await hook() }
     }
   }
 

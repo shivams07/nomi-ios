@@ -135,7 +135,16 @@ public final class AppEnvironment: ObservableObject {
     // W1-1. On `mainContext`, beside the stores whose rows it collapses, and
     // through the same coordinator, so a removal drops the aggregate cache.
     let referenceData = ReferenceDataReconciler(context: context, coordinator: coordinator)
-    self.sync = AppSyncCoordinator(mail: mail, pipeline: pipeline, referenceData: referenceData)
+    // WR-1. A settled remote change drops the aggregate cache even when the
+    // reconcile removed nothing: the import itself changed rows the cache had
+    // already answered for. `cache.invalidate()`, not `coordinator.didWrite()`,
+    // so the budget observer does not run for a change another device made.
+    self.sync = AppSyncCoordinator(
+      mail: mail,
+      pipeline: pipeline,
+      referenceData: referenceData,
+      onRemoteChangeSettled: { [cache] in cache.invalidate() }
+    )
 
     // File import writes through the same pipeline mail does. U3b (#17) closed
     // the gap this unit reported: `commit` used to map rows, count them against
