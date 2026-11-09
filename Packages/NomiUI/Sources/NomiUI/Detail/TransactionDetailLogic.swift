@@ -29,17 +29,42 @@ public enum TransactionDetailLogic {
   }
 
   /// Every reason this screen can see for a row's flags, in a fixed order.
-  /// It cannot know *which* pipeline rule set `needsReview` — only that it is
-  /// set — so this reports symptoms, not causes. `isTransfer` is the row's
-  /// transfer state (DEC-05 T3): "Transfer" is the last flag, and it reads
-  /// `isTransfer` only (Amendment 3, U6).
-  public static func flagReasons(accountID: UUID?, needsReview: Bool, mergedCount: Int, isTransfer: Bool) -> [String] {
+  /// The "Needs review" slot reports the reason mail extraction stored at
+  /// ingest when there is one (WR-2, see `reviewReasonText`), else the bare
+  /// symptom: the screen cannot see a reason it was not handed. A reason is
+  /// only ever shown while `needsReview` is set, so a dismissed row shows none.
+  /// `isTransfer` is the row's transfer state (DEC-05 T3): "Transfer" is the
+  /// last flag, and it reads `isTransfer` only (Amendment 3, U6).
+  public static func flagReasons(
+    accountID: UUID?, needsReview: Bool, mergedCount: Int, isTransfer: Bool,
+    needsReviewReason: NeedsReviewReason? = nil
+  ) -> [String] {
     var reasons: [String] = []
     if accountID == nil { reasons.append("No account assigned") }
-    if needsReview { reasons.append("Needs review") }
+    if needsReview { reasons.append(reviewReasonText(needsReviewReason)) }
     if mergedCount > 1 { reasons.append("Merged from \(mergedCount) sources") }
     if isTransfer { reasons.append("Transfer") }
     return reasons
+  }
+
+  /// The chip text for a flagged row, from the reason ingest stored on it
+  /// (WR-2, G2). Each wording says what the user needs to know about the row:
+  /// an untrusted sender, or an amount left out of every total. `nil` covers
+  /// both a row with no stored reason and a raw value this build does not
+  /// know (`Transaction.needsReviewReason` yields nil for it), and keeps the
+  /// bare "Needs review". `.unidentifiedAccount` also reads "Needs review": the
+  /// "No account assigned" chip already says it. No `default`, so a new
+  /// `NeedsReviewReason` case fails to compile here until it has its wording.
+  public static func reviewReasonText(_ reason: NeedsReviewReason?) -> String {
+    switch reason {
+    case .unauthenticatedSender: return "Sender not verified"
+    case .foreignCurrency: return "Not in rupees, not counted"
+    case .unreadableDate: return "Date couldn't be read"
+    case .unparseable: return "Amount couldn't be read"
+    case .heuristic: return "Read from an unfamiliar email"
+    case .unidentifiedAccount: return "Needs review"
+    case nil: return "Needs review"
+    }
   }
 
   /// U24: what `saveEdit()` sends to `TransactionEditing.update`'s `note`
