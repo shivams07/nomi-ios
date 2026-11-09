@@ -14,11 +14,19 @@ import SwiftUI
 ///
 /// Home passes `heroBottomSpacing: 12` and Accounts `40`. At a 54 pt safe-area
 /// top these reproduce sheet tops 332 and 226, and hero heights 356 and 250.
+///
+/// Screen contract for the status bar (SB1, nomi-ios-statusbar-ruling): any
+/// screen whose top edge is a navy ground gets the light status bar by using
+/// this scaffold, which publishes `NomiStatusBarToneKey` while it is on screen.
+/// A screen that draws navy any other way does not participate and keeps the
+/// default dark bar. A hero screen must not use `.statusBarHidden`: while the
+/// light overlay is shown, it owns the bar.
 public struct NomiHeroScaffold<NavRow: View, Hero: View, Sheet: View>: View {
   private let heroBottomSpacing: CGFloat
   private let navRow: NavRow
   private let hero: Hero
   private let sheet: Sheet
+  @State private var isOnScreen = false
 
   public init(
     heroBottomSpacing: CGFloat,
@@ -33,11 +41,15 @@ public struct NomiHeroScaffold<NavRow: View, Hero: View, Sheet: View>: View {
   }
 
   public var body: some View {
-    #if os(iOS)
-    scaffold.toolbar(.hidden, for: .navigationBar)
-    #else
-    scaffold
-    #endif
+    Group {
+      #if os(iOS)
+      scaffold.toolbar(.hidden, for: .navigationBar)
+      #else
+      scaffold
+      #endif
+    }
+    .onAppear { isOnScreen = true }
+    .onDisappear { isOnScreen = false }
   }
 
   /// `navigationBar` is not available on macOS, so the hide modifier above is
@@ -76,7 +88,18 @@ public struct NomiHeroScaffold<NavRow: View, Hero: View, Sheet: View>: View {
     .frame(maxWidth: .infinity)
     .background {
       GeometryReader { block in
+        let frame = block.frame(in: .global)
         NomiHeroGradient.gradient(height: block.size.height, safeTop: safeTop)
+          .preference(
+            key: NomiStatusBarToneKey.self,
+            value: NomiStatusBarToneRule.tone(
+              isOnScreen: isOnScreen,
+              heroMinY: frame.minY,
+              heroMaxY: frame.maxY,
+              overlap: NomiSpacing.heroSheetOverlap,
+              safeTop: safeTop
+            )
+          )
       }
     }
   }
