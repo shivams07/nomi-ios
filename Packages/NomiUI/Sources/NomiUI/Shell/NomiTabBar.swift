@@ -55,6 +55,27 @@ public enum NomiTabBarSizing {
   public static let addButtonWidth: CGFloat = 52
   /// The bar's own padding on each side, inside its glass.
   public static let barHorizontalPadding: CGFloat = 8
+  /// The selected capsule's minimum height at default size: the artboard's 48 pt.
+  public static let capsuleMinHeight: CGFloat = 48
+  /// The bar's minimum height at default size: the artboard's 64 pt.
+  public static let barMinHeight: CGFloat = 64
+  /// The space the bar keeps above and below its tallest child. The tallest child at
+  /// Large is the 52 pt `+`, so 6 pt each side gives the artboard's 64 pt bar.
+  public static let barVerticalPadding: CGFloat = 6
+  /// The tallest the bar may grow at the cap. Tests check every size against it.
+  public static let barHeightBound: CGFloat = 72
+
+  /// The capsule's height for its content: the icon, label and gap, plus the same
+  /// 4 pt padding above and below as beside the label (D10), never below the minimum.
+  public static func capsuleHeight(contentHeight: CGFloat) -> CGFloat {
+    max(capsuleMinHeight, contentHeight + 2 * capsuleLabelPadding)
+  }
+
+  /// The bar's height for its capsule: never below the minimum. Above it the bar
+  /// grows only as far as its tallest child, the capsule or the 52 pt `+`.
+  public static func barHeight(capsuleHeight: CGFloat) -> CGFloat {
+    max(barMinHeight, max(capsuleHeight, addButtonWidth) + 2 * barVerticalPadding)
+  }
 
   public static func effectiveTypeSize(_ size: DynamicTypeSize) -> DynamicTypeSize {
     min(size, maximumTypeSize)
@@ -148,7 +169,8 @@ public struct NomiTabBar: View {
     // capped size from `NomiTabItemContent`.
     .dynamicTypeSize(...NomiTabBarSizing.maximumTypeSize)
     .padding(.horizontal, NomiTabBarSizing.barHorizontalPadding)
-    .frame(maxWidth: .infinity, minHeight: 64)
+    .padding(.vertical, NomiTabBarSizing.barVerticalPadding)
+    .frame(maxWidth: .infinity, minHeight: NomiTabBarSizing.barMinHeight)
     .nomiGlass(.tabBar, in: RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
     .background {
       GeometryReader { proxy in
@@ -248,8 +270,9 @@ private struct NomiTabItemContent: View {
     .foregroundStyle(isSelected ? NomiColor.onPrimary : NomiColor.inkTab)
     // The padding sits inside the capsule, which is drawn after it (D10).
     .padding(.horizontal, NomiTabBarSizing.capsuleLabelPadding)
+    .padding(.vertical, NomiTabBarSizing.capsuleLabelPadding)
     .frame(minWidth: NomiTabBarSizing.slotMinWidth)
-    .frame(minHeight: 48)
+    .frame(minHeight: NomiTabBarSizing.capsuleMinHeight)
     .background {
       if isSelected {
         Capsule().fill(NomiColor.primary)

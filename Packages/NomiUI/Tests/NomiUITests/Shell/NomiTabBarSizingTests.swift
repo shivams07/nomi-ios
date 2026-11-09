@@ -135,6 +135,47 @@ struct NomiTabBarSizingTests {
     #expect(abs(NomiTabBarSizing.slotWidth(forLabelWidth: 68.0) - 76) < 0.001)
   }
 
+  // MARK: - Vertical rule (content -> capsule -> bar)
+
+  @Test("the capsule's minimum height at default size is the artboard's 48 pt")
+  func capsuleMinimumIsFortyEight() {
+    #expect(NomiTabBarSizing.capsuleMinHeight == 48)
+    #expect(NomiTabBarSizing.capsuleHeight(contentHeight: 0) == 48)
+    #expect(NomiTabBarSizing.capsuleHeight(contentHeight: 37) == 48)
+  }
+
+  @Test("a capsule taller than its minimum keeps 4 pt above and below its content")
+  func capsulePadsContentOnBothEnds() {
+    // The measured xLarge content is 50.7 pt (icon, gap and label), so the capsule is 58.7 pt.
+    #expect(abs(NomiTabBarSizing.capsuleHeight(contentHeight: 50.7) - 58.7) < 0.001)
+    #expect(abs(NomiTabBarSizing.capsuleHeight(contentHeight: 50.7) - 50.7 - 8) < 0.001)
+  }
+
+  @Test("the bar is the artboard's 64 pt at default size, around the 52 pt plus")
+  func barIsSixtyFourAtDefaultSize() {
+    #expect(NomiTabBarSizing.barMinHeight == 64)
+    #expect(abs(NomiTabBarSizing.barHeight(capsuleHeight: 48) - 64) < 0.001)
+  }
+
+  @Test("at xLarge the bar grows by the capsule's extra height only, to 70.7 pt")
+  func barGrowsOnlyAsMuchAsTheCapsule() {
+    #expect(abs(NomiTabBarSizing.barHeight(capsuleHeight: 58.7) - 70.7) < 0.001)
+  }
+
+  @Test("the bar stays within the 72 pt bound at the cap, and the bound is 72 pt")
+  func barStaysBoundedAtTheCap() {
+    #expect(NomiTabBarSizing.barHeightBound == 72)
+    let capsuleAtCap = NomiTabBarSizing.capsuleHeight(contentHeight: 50.7)
+    #expect(NomiTabBarSizing.barHeight(capsuleHeight: capsuleAtCap) <= NomiTabBarSizing.barHeightBound)
+  }
+
+  @Test("the bar never shrinks below 64 pt, whatever the capsule")
+  func barNeverBelowSixtyFour() {
+    for capsule: CGFloat in [0, 40, 48, 52, 58.7, 66] {
+      #expect(NomiTabBarSizing.barHeight(capsuleHeight: capsule) >= 64)
+    }
+  }
+
   @Test("the tap target stays at least 44 pt on each tab")
   func tapTargetStaysAtLeast44() {
     #expect(NomiTabBarSizing.slotMinWidth >= 44)
