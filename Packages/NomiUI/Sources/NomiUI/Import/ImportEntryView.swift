@@ -35,6 +35,9 @@ public struct ImportEntryView: View {
 
   @Query(sort: \NomiCore.Account.displayName) private var accounts: [NomiCore.Account]
   @Environment(\.dismiss) private var dismiss
+  /// The "show the Ledger" action (FU-1). `nil` until RootView sets it, and the
+  /// Done state's "View in Ledger" is hidden while it is nil.
+  @Environment(\.nomiShowLedger) private var showLedger
   @State private var flow: ImportFlowState = .idle
   @State private var isPickerPresented = false
   @State private var isMappingPresented = false
@@ -197,41 +200,75 @@ public struct ImportEntryView: View {
     }
   }
 
-  /// `ImportDone` artboard. "View in Ledger" is not drawn: it needs a route
-  /// into the Ledger tab, which S1 does not provide.
+  /// `ImportDone` artboard: the result card, then "View in Ledger" while the
+  /// root has wired `\.nomiShowLedger`, then the pinned "Done". The title and
+  /// detail copy are Claire's ruling and are unchanged here.
+  @ViewBuilder
   private func doneView(_ summary: ImportSummary) -> some View {
     ScrollView {
-      HStack(alignment: .center, spacing: 12) {
-        Image(systemName: "checkmark")
-          .resizable()
-          .scaledToFit()
-          .frame(width: 18, height: 18)
-          .foregroundStyle(NomiColor.navy)
-          .frame(width: 40, height: 40)
-          .background(Circle().fill(NomiColor.iconTile))
-          .accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: NomiSpacing.sm) {
+        HStack(alignment: .center, spacing: 12) {
+          Image(systemName: "checkmark")
+            .resizable()
+            .scaledToFit()
+            .frame(width: 18, height: 18)
+            .foregroundStyle(NomiColor.navy)
+            .frame(width: 40, height: 40)
+            .background(Circle().fill(NomiColor.iconTile))
+            .accessibilityHidden(true)
 
-        VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-          Text(ImportDoneCopy.title(summary))
-            .nomiTextStyle(.headline)
-            .foregroundStyle(NomiColor.ink)
-          if let detail = ImportDoneCopy.detail(summary, accountName: selectedAccountName) {
-            Text(detail)
-              .nomiTextStyle(.caption)
-              .foregroundStyle(NomiColor.inkSecondary)
+          VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+            Text(ImportDoneCopy.title(summary))
+              .nomiTextStyle(.headline)
+              .foregroundStyle(NomiColor.ink)
+            if let detail = ImportDoneCopy.detail(summary, accountName: selectedAccountName) {
+              Text(detail)
+                .nomiTextStyle(.caption)
+                .foregroundStyle(NomiColor.inkSecondary)
+            }
           }
+          .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .nomiCard(padding: EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16))
+        .accessibilityElement(children: .combine)
+        if NomiShowLedgerLogic.showsControl(isWired: showLedger != nil), let showLedger {
+          viewInLedgerCard(showLedger)
+        }
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .nomiCard(padding: EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16))
-      .accessibilityElement(children: .combine)
       .padding(.horizontal, NomiSpacing.screenGutter)
       .padding(.top, NomiSpacing.sm)
     }
     .safeAreaInset(edge: .bottom) {
       pinnedPrimary("Done") { dismiss() }
     }
+  }
+
+  /// The row link under the result card (`ImportDone` artboard): navy "View in
+  /// Ledger" with a chevron, on a card. It clears Home's stack, which takes this
+  /// screen with it, and selects the Ledger tab.
+  private func viewInLedgerCard(_ showLedger: NomiShowLedgerAction) -> some View {
+    Button {
+      showLedger()
+    } label: {
+      HStack(spacing: NomiSpacing.xs) {
+        Text("View in Ledger")
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(NomiColor.navy)
+        Spacer(minLength: NomiSpacing.xs)
+        Image(systemName: "chevron.right")
+          .resizable()
+          .scaledToFit()
+          .frame(width: 16, height: 16)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .accessibilityHidden(true)
+      }
+      .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .frame(maxWidth: .infinity)
+    .nomiCard()
   }
 
   // MARK: - Pieces
@@ -555,5 +592,15 @@ public struct ImportEntryView: View {
       ImportSummary(created: 24, merged: 0, skipped: 2)
     ))
   }
+  .modelContainer(ImportPreviewSupport.makeAccountContainer())
+}
+
+#Preview("Import — done, Ledger wired") {
+  NavigationStack {
+    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .done(
+      ImportSummary(created: 24, merged: 0, skipped: 2)
+    ))
+  }
+  .environment(\.nomiShowLedger, NomiShowLedgerAction {})
   .modelContainer(ImportPreviewSupport.makeAccountContainer())
 }
