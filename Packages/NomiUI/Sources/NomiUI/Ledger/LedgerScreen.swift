@@ -24,6 +24,21 @@ private enum LedgerMetrics {
   static let dayHeaderHeight: CGFloat = 20
 }
 
+/// The first-run Ledger's band: the scroll container's height less the tab bar's
+/// reserved space, so the block centres between the pill row and the bar's top.
+/// Pure, so `LedgerFirstRunBandTests` pins the arithmetic.
+enum LedgerFirstRunBand {
+  /// The tab bar's bottom reserve on the artboards: the bar (62 pt) plus its 22 pt
+  /// bottom margin. Fixed, because the bar's measured height reads 0 on this runtime
+  /// (`NomiTabBarHeightKey` never reaches `RootView`), so it cannot be measured here.
+  static let tabBarReserve: CGFloat = 86
+
+  static func height(containerHeight: CGFloat, tabBottomReserve: CGFloat) -> CGFloat {
+    guard containerHeight.isFinite, tabBottomReserve.isFinite else { return 0 }
+    return max(0, containerHeight - max(0, tabBottomReserve))
+  }
+}
+
 /// The list's top marker, scrolled to after "Show <previous period>".
 private enum LedgerScrollTarget {
   static let top = "ledger-top"
@@ -203,7 +218,65 @@ public struct LedgerScreen: View {
     Dictionary(accounts.map { ($0.id, $0.displayName) }, uniquingKeysWith: { first, _ in first })
   }
 
+  /// The transaction list, shared by the scrolling layout and the first-run layout.
+  private var transactionList: some View {
+      LedgerTransactionList(
+        filter: filter,
+        range: range,
+        now: now,
+        periodLabel: periodLabel,
+        scope: scope,
+        wholeLedgerSearch: transactionSearch != nil,
+        isFiltered: isFiltered,
+        transactionStore: transactionStore,
+        categoryNamesByID: categoryNamesByID,
+        categoryPaletteSlotByID: categoryPaletteSlotByID,
+        categorySymbolNameByID: categorySymbolNameByID,
+        accountNamesByID: accountNamesByID,
+        searchMatches: searchResults,
+        onSelectTransaction: { id in
+          // Drop the whole-ledger rows before the sheet opens. The sheet can
+          // delete or edit the row it shows, and a model read after that
+          // can trap; the list then falls back to the live period until the
+          // sheet closes and the search runs again.
+          searchResults = nil
+          presented = PresentedTransaction(id: id)
+        },
+        onMutate: {
+          // Same reason as above, for delete and "Mark reviewed" in the
+          // context menu: those rows may be in `searchResults`.
+          searchResults = nil
+          searchGeneration += 1
+        },
+        onWindowChange: { windowSummary = $0 },
+        onClearFilters: clearFilters
+      )
+      .id(queryKey)
+  }
+
+  /// The first-run Ledger (no transactions): the pill row, then the empty block in
+  /// the space the pill row leaves above the tab bar (D15). Flexible frames split
+  /// the visible height, so the block centres in that space with no measurement.
+  private var firstRunLayout: some View {
+    // The scroll view ends at the tab bar's top, so its visible height is the band
+    // the block must fill. `containerRelativeFrame` pins the stack to that height.
+    ScrollView {
+      VStack(spacing: 0) {
+        periodRow
+        transactionList
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+      }
+      .containerRelativeFrame(.vertical, alignment: .top) { length, _ in
+        LedgerFirstRunBand.height(containerHeight: length, tabBottomReserve: LedgerFirstRunBand.tabBarReserve)
+      }
+    }
+  }
+
   public var body: some View {
+    Group {
+    if emptyKind == .empty {
+      firstRunLayout
+    } else {
     ScrollViewReader { proxy in
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
@@ -233,38 +306,7 @@ public struct LedgerScreen: View {
           // range is in `queryKey` — a chip switch or a search edit updates
           // `filter` in place instead, which `rows` already re-reads without
           // forcing a new instance.
-          LedgerTransactionList(
-            filter: filter,
-            range: range,
-            now: now,
-            periodLabel: periodLabel,
-            scope: scope,
-            wholeLedgerSearch: transactionSearch != nil,
-            isFiltered: isFiltered,
-            transactionStore: transactionStore,
-            categoryNamesByID: categoryNamesByID,
-            categoryPaletteSlotByID: categoryPaletteSlotByID,
-            categorySymbolNameByID: categorySymbolNameByID,
-            accountNamesByID: accountNamesByID,
-            searchMatches: searchResults,
-            onSelectTransaction: { id in
-              // Drop the whole-ledger rows before the sheet opens. The sheet can
-              // delete or edit the row it shows, and a model read after that
-              // can trap; the list then falls back to the live period until the
-              // sheet closes and the search runs again.
-              searchResults = nil
-              presented = PresentedTransaction(id: id)
-            },
-            onMutate: {
-              // Same reason as above, for delete and "Mark reviewed" in the
-              // context menu: those rows may be in `searchResults`.
-              searchResults = nil
-              searchGeneration += 1
-            },
-            onWindowChange: { windowSummary = $0 },
-            onClearFilters: clearFilters
-          )
-          .id(queryKey)
+          transactionList
 
           // Hidden in the true first-run state, and while the list is a queue
           // (Needs review, or a search): a queue takes no period.
@@ -273,6 +315,8 @@ public struct LedgerScreen: View {
           }
         }
       }
+    }
+    }
     }
     .background(NomiColor.ground)
     .modifier(
@@ -747,7 +791,8 @@ private struct LedgerTransactionList: View {
       hasRows: summary.hasRows, storeHasRows: summary.storeHasRows, isFiltered: isFiltered)
     {
     case .empty:
-      // Centred in the scroll view's visible height (D15), not top-aligned.
+      // Centred in the space the pill row leaves above the tab bar (D15); the
+      // list's flexible frame gives it that space (`firstRunLayout`).
       NomiEmptyState(
         systemImage: "receipt",
         title: "No transactions yet",
@@ -756,8 +801,7 @@ private struct LedgerTransactionList: View {
         action: addAction
       )
       .padding(.horizontal, NomiSpacing.md)
-      .frame(maxWidth: .infinity)
-      .containerRelativeFrame(.vertical, alignment: .center)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     case .nothingRecent:
       NomiEmptyState(
         systemImage: "clock",
