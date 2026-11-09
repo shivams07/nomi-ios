@@ -123,6 +123,82 @@ final class DashboardWiringTests: XCTestCase {
     }
   }
 
+  // MARK: - D26: the Needs-you review count is the all-time one
+
+  /// Built without a `Transaction` (see `SpyInsightsStore`).
+  private func period(needsReview: Int, uncategorized: Int) -> PeriodInsights {
+    PeriodInsights(
+      period: .month(year: 2026, month: 9), debitMinor: 0, creditMinor: 0, netMinor: 0,
+      priorDebitMinor: nil, priorCreditMinor: nil, transactionCount: 0, byDay: [], byCategory: [],
+      topMerchants: [], needsReviewCount: needsReview, uncategorizedCount: uncategorized
+    )
+  }
+
+  @MainActor
+  func testNeedsReviewAllTimeReadsTheStoresAllTimeCount() {
+    let spy = SpyInsightsStore()
+    spy.needsReviewAllTimeValue = 7
+
+    guard case .loaded(let count) = DashboardWiring.needsReviewAllTime(from: spy) else {
+      return XCTFail("a non-throwing store must yield .loaded")
+    }
+    XCTAssertEqual(count, 7)
+    XCTAssertEqual(spy.needsReviewAllTimeCallCount, 1)
+  }
+
+  /// A failed read is a failure, not a zero that hides the card's count.
+  @MainActor
+  func testAThrowingAllTimeReviewReadYieldsFailedNotZero() {
+    let spy = SpyInsightsStore(shouldThrow: true)
+
+    guard case .failed = DashboardWiring.needsReviewAllTime(from: spy) else {
+      return XCTFail("a throwing store must yield .failed, not .loaded(0)")
+    }
+  }
+
+  /// The card's review count is the all-time one. The period holds 5 and all time
+  /// holds 7: the card must say 7.
+  func testNeedsYouCountsTheAllTimeReviewNotThePeriodOne() {
+    let inputs = DashboardWiring.needsYouInputs(
+      period: period(needsReview: 5, uncategorized: 2),
+      needsReviewAllTime: 7
+    )
+    XCTAssertEqual(inputs.needsReviewCount, 7)
+  }
+
+  /// The mirror image: a month with flagged rows and none all time cannot show
+  /// a review count from the month.
+  func testNeedsYouShowsNoReviewWhenAllTimeHasNone() {
+    let inputs = DashboardWiring.needsYouInputs(
+      period: period(needsReview: 3, uncategorized: 0),
+      needsReviewAllTime: 0
+    )
+    XCTAssertEqual(inputs.needsReviewCount, 0)
+  }
+
+  /// The uncategorized count is still the selected period's.
+  func testNeedsYouKeepsTheUncategorizedCountFromThePeriod() {
+    let inputs = DashboardWiring.needsYouInputs(
+      period: period(needsReview: 5, uncategorized: 4),
+      needsReviewAllTime: 7
+    )
+    XCTAssertEqual(inputs.uncategorizedCount, 4)
+  }
+
+  /// With the all-time review count at zero, a card whose only count is
+  /// uncategorized routes to the Uncategorized chip, not the review queue.
+  func testAllTimeZeroReviewRoutesToUncategorized() {
+    let inputs = DashboardWiring.needsYouInputs(
+      period: period(needsReview: 9, uncategorized: 2),
+      needsReviewAllTime: 0
+    )
+    XCTAssertEqual(
+      DashboardWiring.needsYouDestination(
+        needsReviewCount: inputs.needsReviewCount,
+        uncategorizedCount: inputs.uncategorizedCount),
+      .uncategorized)
+  }
+
   @MainActor
   func testBudgetProgressIsNilWhenMonthIsNil() {
     let spy = SpyInsightsStore()
@@ -261,5 +337,16 @@ private final class SpyInsightsStore: InsightsStore {
   func budgetProgress(year: Int, month: Int) throws -> [BudgetProgress] {
     if shouldThrow { throw Failure() }
     return []
+  }
+
+  /// D26. Answered explicitly, not by the protocol default, so a test can set
+  /// the all-time count and see which read the view's rule took it from.
+  var needsReviewAllTimeValue = 0
+  private(set) var needsReviewAllTimeCallCount = 0
+
+  func needsReviewCountAllTime() throws -> Int {
+    needsReviewAllTimeCallCount += 1
+    if shouldThrow { throw Failure() }
+    return needsReviewAllTimeValue
   }
 }

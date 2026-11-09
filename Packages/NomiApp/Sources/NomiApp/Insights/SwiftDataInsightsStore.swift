@@ -143,6 +143,20 @@ public final class SwiftDataInsightsStore: InsightsStore {
     }
   }
 
+  /// D26. The same predicate as the Ledger's Needs review queue
+  /// (`LedgerFilterPredicate.makeNeedsReview`): `needsReview == true`, no date
+  /// bound, so the Home count and the chip count the same rows in any month.
+  /// A `fetchCount`, so SQLite counts and no row crosses the boundary. It is
+  /// not cached: a new `InsightsCacheKey` case would touch `InsightsCache.swift`,
+  /// which this unit does not own, and one COUNT per Home render is cheap.
+  public func needsReviewCountAllTime() throws -> Int {
+    var descriptor = FetchDescriptor<Transaction>(
+      predicate: #Predicate<Transaction> { $0.needsReview == true }
+    )
+    descriptor.includePendingChanges = true
+    return try context.fetchCount(descriptor)
+  }
+
   // MARK: -
 
   /// `nil` range means all time and issues no date predicate at all — a

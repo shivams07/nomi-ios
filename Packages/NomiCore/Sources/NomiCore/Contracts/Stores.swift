@@ -117,6 +117,13 @@ public protocol InsightsStore: AnyObject {
   /// database answers this with a `fetchLimit`; the default below is for
   /// stubs only.
   func recentTransactions(limit: Int) throws -> [Transaction]
+
+  /// D26. Every row with `needsReview == true`, no date bound: the Ledger's
+  /// Needs review chip counts this same set (`LedgerFilterPredicate.makeNeedsReview`).
+  /// Home's Needs-you count reads it, so the card and the chip agree in any
+  /// month. Independent of `insights(for:)`, whose `needsReviewCount` is the
+  /// selected period.
+  func needsReviewCountAllTime() throws -> Int
 }
 
 extension InsightsStore {
@@ -131,6 +138,16 @@ extension InsightsStore {
         .sorted { $0.date > $1.date }
         .prefix(max(0, limit))
     )
+  }
+
+  /// D26. Default for stubs, the same arrangement as `recentTransactions`: a
+  /// stub that holds rows in memory counts its own flagged rows, so it answers
+  /// the question the Ledger chip answers. It is not 0: a zero here would make
+  /// Home's card in every preview and test double disagree with the rows the
+  /// double holds. **Every store that talks to a database overrides it**, or
+  /// the all-time fetch is paid on each Home render.
+  public func needsReviewCountAllTime() throws -> Int {
+    try transactions(in: .allTime).filter { $0.needsReview }.count
   }
 }
 

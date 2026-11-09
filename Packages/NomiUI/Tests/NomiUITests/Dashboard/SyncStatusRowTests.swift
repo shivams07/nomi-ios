@@ -86,23 +86,59 @@ final class SyncStatusRowTests: XCTestCase {
 
   /// Only states that need attention get the banner. Connected has nothing to ask.
   func testConnectedHasNoAttentionRow() {
-    XCTAssertNil(SyncStatusRow.attention(for: .connected(address: "a@b.com", lastSync: nil)))
+    XCTAssertNil(
+      SyncStatusRow.attention(for: .connected(address: "a@b.com", lastSync: nil), history: .never))
   }
 
-  func testDisconnectedBannerSaysWhatToDo() {
-    let attention = SyncStatusRow.attention(for: .disconnected)
+  // MARK: - D14: a never-connected user is asked to connect, not to connect again
+
+  private let neverConnected = MailConnectionHistory.never
+  private let connectedBefore = MailConnectionHistory(hasEverConnected: true, lastSync: nil)
+
+  /// The user who skipped mail: no connect ever succeeded, so "Connect again"
+  /// would claim a past connection that never existed.
+  func testNeverConnectedSaysNotConnected() {
+    let attention = SyncStatusRow.attention(for: .disconnected, history: neverConnected)
+    XCTAssertEqual(attention?.title, "Mail not connected")
+    XCTAssertEqual(attention?.message, "Connect mail to log bank and card alerts automatically.")
+    XCTAssertEqual(attention?.systemImage, "envelope.badge")
+    XCTAssertFalse(attention?.message?.contains("again") ?? true)
+  }
+
+  /// A user who connected before and then disconnected keeps the copy it had.
+  func testHistorySaysDisconnected() {
+    let attention = SyncStatusRow.attention(for: .disconnected, history: connectedBefore)
     XCTAssertEqual(attention?.title, "Mail disconnected")
     XCTAssertEqual(attention?.message, "Connect again to keep your numbers current.")
+    XCTAssertEqual(attention?.systemImage, "envelope.badge")
+  }
+
+  /// The wording follows `hasEverConnected` alone. A stamped last sync with the
+  /// flag false is not written by the app, but if it were it must not change
+  /// the copy.
+  func testAStampedLastSyncWithoutTheConnectFlagStillReadsNotConnected() {
+    let stamped = MailConnectionHistory(hasEverConnected: false, lastSync: Date(timeIntervalSince1970: 1))
+    XCTAssertEqual(
+      SyncStatusRow.attention(for: .disconnected, history: stamped)?.title, "Mail not connected")
+  }
+
+  /// History only reaches the disconnected copy. A failure keeps its own copy
+  /// whether or not this device ever connected.
+  func testFailedBannerIgnoresHistory() {
+    let never = SyncStatusRow.attention(for: .failed(.connectionFailed), history: neverConnected)
+    let before = SyncStatusRow.attention(for: .failed(.connectionFailed), history: connectedBefore)
+    XCTAssertEqual(never, before)
+    XCTAssertEqual(never?.title, "Couldn’t reach your mail")
   }
 
   func testFailedBannerTitleIsTheReachFailure() {
-    let attention = SyncStatusRow.attention(for: .failed(.connectionFailed))
+    let attention = SyncStatusRow.attention(for: .failed(.connectionFailed), history: neverConnected)
     XCTAssertEqual(attention?.title, "Couldn’t reach your mail")
     XCTAssertEqual(attention?.message, "Check your connection, then try again.")
   }
 
   func testConnectingBannerHasNoMessage() {
-    let attention = SyncStatusRow.attention(for: .connecting)
+    let attention = SyncStatusRow.attention(for: .connecting, history: neverConnected)
     XCTAssertEqual(attention?.title, "Connecting…")
     XCTAssertNil(attention?.message)
   }
