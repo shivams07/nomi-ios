@@ -79,6 +79,8 @@ struct RootView: View {
     }
     // The "+" slot and any "Add transaction" button in the app open this sheet.
     .environment(\.nomiAddTransaction, NomiAddTransactionAction { isPresentingEntry = true })
+    // Home "See all" and Import "View in Ledger" (FU-1). Both sit on Home's stack.
+    .environment(\.nomiShowLedger, NomiShowLedgerAction { showLedger() })
     .onChange(of: selection) { _, newValue in
       // `LedgerScreen` only reads `initialChip` once, at construction — the
       // instance is torn down the moment `selection` leaves `.ledger`. Reset
@@ -171,6 +173,16 @@ struct RootView: View {
       popToRoot(tab)
     }
     selection = tab
+  }
+
+  /// Clears Home's stack and selects the Ledger tab (`ShowLedgerRoute`). The
+  /// Ledger's own stack is left as it was.
+  private func showLedger() {
+    let outcome = ShowLedgerRoute.outcome()
+    if outcome.clearsHomeStack {
+      homePath = NavigationPath()
+    }
+    selection = outcome.selection
   }
 
   private func popToRoot(_ tab: RootTab) {

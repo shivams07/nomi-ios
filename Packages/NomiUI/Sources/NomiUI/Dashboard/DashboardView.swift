@@ -182,6 +182,10 @@ public struct DashboardView: View {
   /// the second first-run card's button is hidden while it is nil.
   @Environment(\.nomiAddTransaction) private var addTransaction
 
+  /// The "show the Ledger" action (FU-1). `nil` until RootView sets it, and the
+  /// Recent header's "See all" is hidden while it is nil.
+  @Environment(\.nomiShowLedger) private var showLedger
+
   public init(
     insightsStore: InsightsStore,
     mailConnectionService: MailConnectionService? = nil,
@@ -385,19 +389,41 @@ public struct DashboardView: View {
     }
   }
 
-  /// The Recent header is text only. "See all" is not drawn here yet: it needs
-  /// a Home → Ledger tab switch, which belongs to FU-1 (after S1).
+  /// The Recent header (Main artboard, 602 to 646). "See all" opens the Ledger
+  /// tab. It is drawn only while RootView has wired `\.nomiShowLedger`. The
+  /// caption keeps the artboard's 14 pt medium navy text, and its hit area is
+  /// at least 44 by 44 pt.
+  private var recentHeader: some View {
+    HStack(alignment: .center, spacing: NomiSpacing.xs) {
+      Text("Recent")
+        .nomiTextStyle(.headline)
+        .foregroundStyle(NomiColor.ink)
+        .accessibilityAddTraits(.isHeader)
+      Spacer(minLength: NomiSpacing.xs)
+      if NomiShowLedgerLogic.showsControl(isWired: showLedger != nil), let showLedger {
+        Button {
+          showLedger()
+        } label: {
+          Text("See all")
+            .nomiTextStyle(.chip)
+            .foregroundStyle(NomiColor.navy)
+            .frame(minWidth: NomiSpacing.minTarget, minHeight: NomiSpacing.minTarget, alignment: .trailing)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("See all recent transactions")
+      }
+    }
+    .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget, alignment: .leading)
+  }
+
   @ViewBuilder
   private func recentModule(
     _ result: DashboardWiring.Load<[NomiCore.Transaction]>,
     categories: [CategoryBadge]
   ) -> some View {
     VStack(alignment: .leading, spacing: 0) {
-      Text("Recent")
-        .nomiTextStyle(.headline)
-        .foregroundStyle(NomiColor.ink)
-        .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget, alignment: .leading)
-        .accessibilityAddTraits(.isHeader)
+      recentHeader
       switch result {
       case .loaded(let transactions):
         RecentTransactionsCard(
