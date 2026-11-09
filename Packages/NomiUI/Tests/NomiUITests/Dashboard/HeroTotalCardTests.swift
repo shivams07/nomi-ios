@@ -155,6 +155,56 @@ final class HeroTotalCardTests: XCTestCase {
     XCTAssertEqual(fy.last, "31 Mar")
   }
 
+  // MARK: - FR1: when the chip is shown at all. Zero against zero is the
+  // first-run Home (no transactions, no prior period) and must draw no chip.
+  // A zero delta has no direction, so it never prints "up ₹0.00".
+
+  func testChipHiddenWhenZeroAgainstZeroPrior() {
+    XCTAssertNil(HeroDelta.visibleDelta(current: 0, prior: 0))
+  }
+
+  func testChipHiddenWhenThereIsNoPriorPeriod() {
+    XCTAssertNil(HeroDelta.visibleDelta(current: 0, prior: nil))
+    XCTAssertNil(HeroDelta.visibleDelta(current: 500_00, prior: nil))
+  }
+
+  func testChipShownAsUpWhenPriorIsZeroAndCurrentIsNonZero() {
+    let delta = HeroDelta.visibleDelta(current: 500_00, prior: 0)
+    XCTAssertEqual(delta?.isIncrease, true)
+    XCTAssertEqual(delta?.deltaMinor, 500_00)
+    XCTAssertEqual(HeroDelta.chipCopy(delta!), "up ₹500.00 vs last period")
+  }
+
+  func testChipShownAsDownWhenCurrentIsZeroAndPriorIsNonZero() {
+    let delta = HeroDelta.visibleDelta(current: 0, prior: 500_00)
+    XCTAssertEqual(delta?.isIncrease, false)
+    XCTAssertEqual(delta?.deltaMinor, -500_00)
+    XCTAssertEqual(HeroDelta.chipCopy(delta!), "down ₹500.00 vs last period")
+  }
+
+  func testChipShownForNonZeroAgainstNonZeroDifferentFigures() {
+    let up = HeroDelta.visibleDelta(current: 1_200_00, prior: 1_000_00)
+    XCTAssertEqual(HeroDelta.chipCopy(up!), "up ₹200.00 vs last period")
+    let down = HeroDelta.visibleDelta(current: 800_00, prior: 1_000_00)
+    XCTAssertEqual(HeroDelta.chipCopy(down!), "down ₹200.00 vs last period")
+  }
+
+  func testChipHiddenWhenDeltaIsExactlyZeroWithData() {
+    XCTAssertNil(HeroDelta.visibleDelta(current: 1_000_00, prior: 1_000_00))
+  }
+
+  /// Rounding: amounts are integer minor units and the delta is exact, so a
+  /// one-paisa difference is a real change. It must show, and must not be
+  /// rounded to the zero case that hides the chip.
+  func testOnePaisaDeltaIsShownNotRoundedAway() {
+    let up = HeroDelta.visibleDelta(current: 1, prior: 0)
+    XCTAssertEqual(up?.deltaMinor, 1)
+    XCTAssertEqual(HeroDelta.chipCopy(up!), "up ₹0.01 vs last period")
+    let down = HeroDelta.visibleDelta(current: 100, prior: 101)
+    XCTAssertEqual(down?.isIncrease, false)
+    XCTAssertEqual(HeroDelta.chipCopy(down!), "down ₹0.01 vs last period")
+  }
+
   func testChipCopyReadsTheDirectionAsAWord() {
     let up = HeroDelta.compute(current: 64_824_24, prior: 58_404_00)!
     XCTAssertEqual(HeroDelta.chipCopy(up), "up ₹6,420.24 vs last period")
