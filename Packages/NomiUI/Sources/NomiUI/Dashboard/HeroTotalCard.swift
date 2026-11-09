@@ -24,6 +24,21 @@ enum HeroDelta {
     let direction = result.isIncrease ? "up" : "down"
     return "\(direction) \(NomiFormatters.amountString(minor: abs(result.deltaMinor))) vs last period"
   }
+
+  /// The delta the chip may state, or `nil` when it has nothing to say.
+  ///
+  /// Hidden when there is no prior period, and when the delta is exactly zero.
+  /// The zero case covers zero spend against a zero prior (the first-run Home,
+  /// HomeFirstRun artboard: no chip) and an unchanged figure against a real
+  /// prior. Neither has a direction to state, so the chip never prints
+  /// "up ₹0.00". The test is on minor units, not on the formatted string, so a
+  /// one-paisa change is still a change and is never rounded away.
+  static func visibleDelta(current: Int, prior: Int?) -> Result? {
+    guard let delta = compute(current: current, prior: prior), delta.deltaMinor != 0 else {
+      return nil
+    }
+    return delta
+  }
 }
 
 /// Whether the hero figure starts its count-up from zero or renders the
@@ -119,11 +134,12 @@ public struct HeroTotalCard: View {
     HeroIncomeExpense.tiles(for: insights).first { $0.title == "Income" }?.amountText ?? ""
   }
 
-  /// The chip keeps its 34 pt row when there is no prior period, so the chart
-  /// stays at 232 pt. A zero spend with a prior period still shows its chip.
+  /// The chip keeps its 26 pt row when there is nothing to state, so the chart
+  /// stays at 232 pt. A zero spend against a real prior period still shows its
+  /// "down" chip. See `HeroDelta.visibleDelta` for the hidden cases.
   private var chipRow: some View {
     Group {
-      if let delta = HeroDelta.compute(current: insights.debitMinor, prior: insights.priorDebitMinor) {
+      if let delta = HeroDelta.visibleDelta(current: insights.debitMinor, prior: insights.priorDebitMinor) {
         HeroDeltaChip(text: HeroDelta.chipCopy(delta))
       } else {
         Color.clear.frame(height: 26)
