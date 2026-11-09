@@ -1,3 +1,5 @@
+import NomiUI
+import SwiftUI
 import XCTest
 
 @testable import NomiApp
@@ -34,6 +36,17 @@ final class TabBarLayoutTests: XCTestCase {
     // reserved space must cover that offset as well as the bar.
     XCTAssertEqual(TabBarInsetHeight.reserved(barHeight: 0), 22, accuracy: 0.001)
     XCTAssertEqual(TabBarInsetHeight.reserved(barHeight: 64), 86, accuracy: 0.001)
+  }
+
+  /// TB1 with the D10 capsule padding: at the cap (xLarge) the four slots, each the
+  /// label plus 4 pt either side, fit 375 pt with RootView's margins. The widths are the
+  /// device's xLarge label widths from `NomiTabBarLayoutTests`.
+  func testSlotsFit375AtCapWithPadding() {
+    let budget = NomiTabBarSizing.tabSpaceBudget(screenWidth: 375, sideMargin: TabBarInsetHeight.sideMargin)
+    XCTAssertEqual(NomiTabBarSizing.maximumTypeSize, .xLarge)
+    XCTAssertTrue(NomiTabBarSizing.labelsFitOneLine(labelWidths: [42.7, 50.7, 56.7, 68.0], budget: budget))
+    // The next size up does not fit with the padding, so the cap is the largest that does.
+    XCTAssertFalse(NomiTabBarSizing.labelsFitOneLine(labelWidths: [45.3, 54.0, 60.3, 72.7], budget: budget))
   }
 
   func testZeroMeasuredHeightStillReservesTheMargin() {

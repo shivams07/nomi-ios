@@ -26,6 +26,7 @@ final class NomiTabBarLayoutTests: XCTestCase {
   private static let widths: [CGFloat] = [375, 390, 402, 440]
   private static let checkedSizes: [(name: String, category: UIContentSizeCategory)] = [
     ("large", .large),
+    ("xLarge", .extraLarge),
     ("xxLarge", .extraExtraLarge),
     ("xxxLarge", .extraExtraExtraLarge),
     ("accessibilityMedium", .accessibilityMedium),
@@ -44,7 +45,7 @@ final class NomiTabBarLayoutTests: XCTestCase {
     ("accessibilityXXXLarge", .accessibilityExtraExtraExtraLarge),
   ]
   /// The category at `NomiTabBarSizing.maximumTypeSize`. Sizes above it must measure as this one.
-  private static let capCategory: UIContentSizeCategory = .extraExtraLarge
+  private static let capCategory: UIContentSizeCategory = .extraLarge
 
   // MARK: - Tests
 
@@ -121,7 +122,7 @@ final class NomiTabBarLayoutTests: XCTestCase {
   func testCapHoldsLabelWidthsAndBarAboveTheCap() {
     for width in Self.widths {
       let atCap = measure(width: width, category: Self.capCategory)
-      for category in [UIContentSizeCategory.extraExtraExtraLarge, .accessibilityMedium, .accessibilityExtraExtraExtraLarge] {
+      for category in [UIContentSizeCategory.extraExtraLarge, .extraExtraExtraLarge, .accessibilityMedium, .accessibilityExtraExtraExtraLarge] {
         let above = measure(width: width, category: category)
         for title in Self.tabTitles {
           let capWidth = atCap.frame("label:\(title)")?.width ?? -1
@@ -129,6 +130,32 @@ final class NomiTabBarLayoutTests: XCTestCase {
           XCTAssertEqual(aboveWidth, capWidth, accuracy: 0.5, "\(title) grows above the cap at \(width) pt, \(category.rawValue)")
         }
         XCTAssertEqual(above.frame("bar")?.height ?? -1, atCap.frame("bar")?.height ?? -2, accuracy: 0.5, "bar grows above the cap at \(width) pt, \(category.rawValue)")
+      }
+    }
+  }
+
+  /// Each selected capsule contains its label with the padding on both sides, for every
+  /// tab selected, at 375, 390, 402 and 440 pt, at Large, the cap and AX-XXXL (D10).
+  func testSelectedCapsuleContainsItsLabelWithPaddingForEveryTab() {
+    let minimumInset = NomiTabBarSizing.capsuleLabelPadding - 0.5
+    let checked: [UIContentSizeCategory] = [.large, .extraLarge, .accessibilityExtraExtraExtraLarge]
+    for selected in Self.tabTitles {
+      for width in Self.widths {
+        for category in checked {
+          let measured = measure(width: width, category: category, selectedID: selected.lowercased())
+          guard let label = measured.frame("label:\(selected)"), let slot = measured.frame("slot:\(selected)") else {
+            XCTFail("no label or capsule for \(selected) at \(category.rawValue), \(width) pt")
+            continue
+          }
+          XCTAssertGreaterThanOrEqual(
+            label.minX - slot.minX, minimumInset,
+            "\(selected) capsule leaves \(label.minX - slot.minX) pt on the left at \(category.rawValue), \(width) pt"
+          )
+          XCTAssertGreaterThanOrEqual(
+            slot.maxX - label.maxX, minimumInset,
+            "\(selected) capsule leaves \(slot.maxX - label.maxX) pt on the right at \(category.rawValue), \(width) pt"
+          )
+        }
       }
     }
   }
@@ -184,7 +211,7 @@ final class NomiTabBarLayoutTests: XCTestCase {
 
   /// Hosts the real bar at `width`, inside RootView's margins, with the category set
   /// through UIKit's trait override. Lays it out and returns the published frames.
-  private func measure(width: CGFloat, category: UIContentSizeCategory) -> Measured {
+  private func measure(width: CGFloat, category: UIContentSizeCategory, selectedID: String = "home") -> Measured {
     let capture = Capture()
     let bar = NomiTabBar(
       leading: [
@@ -195,7 +222,7 @@ final class NomiTabBarLayoutTests: XCTestCase {
         NomiTabBarItem(id: "insights", title: "Insights", symbolName: "chart.pie"),
         NomiTabBarItem(id: "accounts", title: "Accounts", symbolName: "creditcard"),
       ],
-      selectedID: "home",
+      selectedID: selectedID,
       onSelect: { _ in },
       onAdd: {}
     )
