@@ -86,14 +86,37 @@ public enum NomiModelContainer {
   /// function returns is still only the *construction* answer; it is no longer
   /// the whole answer, and it is no longer what Settings renders on its own.
   ///
-  /// - Parameter cloudKit: the CloudKit container maker. Injectable **only**
-  ///   so the fallback branch is reachable in a test — constructing a real
-  ///   CloudKit container under `swift test` traps the process, so a test that
-  ///   called the default would take the whole suite down with it. Production
-  ///   passes nothing and gets `makeCloudKit`.
+  /// **Simulator Debug builds never reach CloudKit by default (SIM1).** An
+  /// unsigned simulator build has no iCloud entitlement, and that case does
+  /// not throw: `makeCloudKit()` returns, and the mirroring delegate traps the
+  /// process asynchronously a moment later (CrashReporter: `EXC_BREAKPOINT` in
+  /// `NSCloudKitMirroringDelegate _performSetupRequest:`). So the decision is
+  /// made before the CloudKit maker is called at all. See
+  /// `simulatorLocalOnlyReason`. Setting `NOMI_FORCE_CLOUDKIT=1` restores
+  /// CloudKit for a signed simulator build; it has no effect on a device or a
+  /// Release build.
+  ///
+  /// - Parameters:
+  ///   - cloudKit: the CloudKit container maker. Injectable **only** so the
+  ///     fallback branch is reachable in a test — constructing a real CloudKit
+  ///     container under `swift test` traps the process, so a test that called
+  ///     the default would take the whole suite down with it. Production passes
+  ///     nothing and gets `makeCloudKit`.
+  ///   - isSimulatorDebugBuild: production passes nothing. Injectable so the
+  ///     simulator branch is testable from a macOS `swift test`.
+  ///   - forceCloudKit: production passes nothing. Injectable for the same
+  ///     reason as `isSimulatorDebugBuild`.
   public static func makeWithLocalFallback(
-    cloudKit: () throws -> ModelContainer = makeCloudKit
+    cloudKit: () throws -> ModelContainer = makeCloudKit,
+    isSimulatorDebugBuild: Bool = currentBuildIsSimulatorDebug,
+    forceCloudKit: Bool = currentForceCloudKitRequested
   ) -> (container: ModelContainer, mode: StorageMode) {
+    if let reason = simulatorLocalOnlyReason(
+      isSimulatorDebugBuild: isSimulatorDebugBuild, forceCloudKit: forceCloudKit)
+    {
+      logger.notice("Opening local storage without CloudKit: \(reason, privacy: .public)")
+      return (try! makeLocal(), .localOnly(reason: reason))
+    }
     do {
       return (try cloudKit(), .cloudKit)
     } catch {
@@ -105,6 +128,58 @@ public enum NomiModelContainer {
         "CloudKit container unavailable, falling back to local storage: \(error, privacy: .public)")
       return (try! makeLocal(), .localOnly(reason: String(describing: error)))
     }
+  }
+
+  /// The SIM1 decision, pure so it can be tested without a CloudKit container.
+  ///
+  /// Returns the reason to open the local store without trying CloudKit, or
+  /// `nil` to keep the CloudKit path exactly as before. The local store is
+  /// chosen only when both hold: this is a simulator Debug build, and
+  /// `NOMI_FORCE_CLOUDKIT` is not set. Device and Release builds always get
+  /// `nil`, because the two inputs are compile-time constants there.
+  ///
+  /// The entitlement itself is not checked. Detecting it at runtime needs
+  /// private API, and the build-time guard (`EntitlementsParityTests`) already
+  /// covers the signed case. So a signed simulator Debug build also opens the
+  /// local store unless `NOMI_FORCE_CLOUDKIT=1` is set.
+  public static func simulatorLocalOnlyReason(
+    isSimulatorDebugBuild: Bool,
+    forceCloudKit: Bool
+  ) -> String? {
+    guard isSimulatorDebugBuild, !forceCloudKit else { return nil }
+    return "Simulator build without iCloud entitlement"
+  }
+
+  /// True only in a simulator Debug build. Under any other compile
+  /// configuration this is a constant `false`, so device and Release code
+  /// never reads the environment.
+  public static let currentBuildIsSimulatorDebug: Bool = {
+    #if DEBUG && targetEnvironment(simulator)
+      return true
+    #else
+      return false
+    #endif
+  }()
+
+  /// The escape hatch, read from `environment`. The compile guard is here, not
+  /// only at the call site: outside a simulator Debug build the variable is
+  /// never honoured, whatever the environment holds. Launch a simulator build
+  /// with CloudKit with `SIMCTL_CHILD_NOMI_FORCE_CLOUDKIT=1 xcrun simctl launch …`,
+  /// or set the variable in the Xcode scheme.
+  public static func forceCloudKitRequested(in environment: [String: String]) -> Bool {
+    #if DEBUG && targetEnvironment(simulator)
+      return environment["NOMI_FORCE_CLOUDKIT"] == "1"
+    #else
+      _ = environment
+      return false
+    #endif
+  }
+
+  /// The production value: the process environment, through the guarded reader.
+  /// Computed rather than stored so it reads the environment at the moment it
+  /// is asked, which is what lets a test set the variable and see the result.
+  public static var currentForceCloudKitRequested: Bool {
+    forceCloudKitRequested(in: ProcessInfo.processInfo.environment)
   }
 
   private static let logger = Logger(subsystem: "com.shivams07.nomi", category: "storage")
