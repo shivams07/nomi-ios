@@ -77,6 +77,39 @@ enum DashboardWiring {
     needsReviewCount > 0 || uncategorizedCount > 0
   }
 
+  /// G1: which list the Needs-you card's tap opens. Review leads, as
+  /// `NeedsYouText.line` does, because the Needs review chip filters on
+  /// `needsReview` and is empty for an uncategorized-only card.
+  enum NeedsYouDestination: Equatable {
+    case reviewQueue
+    case uncategorized
+  }
+
+  static func needsYouDestination(needsReviewCount: Int, uncategorizedCount: Int) -> NeedsYouDestination? {
+    if needsReviewCount > 0 { return .reviewQueue }
+    if uncategorizedCount > 0 { return .uncategorized }
+    return nil
+  }
+
+  /// The handler the card's tap runs for these counts, or nil when it has
+  /// none. Generic so a test can hold the choice between the two handlers with
+  /// sentinel values, which is the routing decision itself.
+  static func needsYouHandler<Handler>(
+    needsReviewCount: Int,
+    uncategorizedCount: Int,
+    reviewQueue: Handler?,
+    uncategorized: Handler?
+  ) -> Handler? {
+    switch needsYouDestination(needsReviewCount: needsReviewCount, uncategorizedCount: uncategorizedCount) {
+    case .reviewQueue:
+      return reviewQueue
+    case .uncategorized:
+      return uncategorized
+    case nil:
+      return nil
+    }
+  }
+
   // MARK: - F3: the rest of the dashboard's reads, pulled out of `body` for
   // the same reason `recentTransactions(from:)` above already is — `swift
   // test` cannot reach `DashboardView.body` or its private computed
@@ -162,6 +195,12 @@ public struct DashboardView: View {
   /// supplies this from `RootView`.
   public let onOpenReviewQueue: (() -> Void)?
 
+  /// G1. Opens the Ledger's Uncategorized chip. The Needs-you card calls it
+  /// when its only count is uncategorized rows (review count zero), because
+  /// the Needs review chip is empty in that state. `nil` leaves the card
+  /// non-interactive in that state, as `onOpenReviewQueue` does.
+  public let onOpenUncategorized: (() -> Void)?
+
   /// v5 (`nomi-ui-refresh`, M2). `nil` — same default-so-every-call-site-
   /// compiles rule as `onOpenReviewQueue` — leaves `RecentTransactionsCard`'s
   /// rows non-interactive. `ui-root-wiring` (M6) supplies this, opening the
@@ -192,6 +231,7 @@ public struct DashboardView: View {
     recurringStore: RecurringInsightsStore? = nil,
     refreshToken: Int = 0,
     onOpenReviewQueue: (() -> Void)? = nil,
+    onOpenUncategorized: (() -> Void)? = nil,
     onSelectTransaction: ((UUID) -> Void)? = nil,
     basis: PeriodBasis = .calendarMonth,
     anchor: Date = Date()
@@ -201,6 +241,7 @@ public struct DashboardView: View {
     self.recurringStore = recurringStore
     self.refreshToken = refreshToken
     self.onOpenReviewQueue = onOpenReviewQueue
+    self.onOpenUncategorized = onOpenUncategorized
     self.onSelectTransaction = onSelectTransaction
     _basis = State(initialValue: basis)
     _anchor = State(initialValue: anchor)
@@ -361,13 +402,25 @@ public struct DashboardView: View {
       NeedsYouCard(
         needsReviewCount: insights.needsReviewCount,
         uncategorizedCount: insights.uncategorizedCount,
-        onTap: onOpenReviewQueue
+        onTap: needsYouTap(for: insights)
       )
     case .failed:
       // The Needs-you counts come from the same read as the hero. Without a
       // card here a failed spend read would leave no retry on screen.
       NomiLoadFailedCard(message: "Spending didn’t load.") { retryToken += 1 }
     }
+  }
+
+  /// The Needs-you tap for these counts (G1): review opens the review queue,
+  /// uncategorized-only opens the Uncategorized chip, and a card with nothing
+  /// to show has no tap.
+  private func needsYouTap(for insights: PeriodInsights) -> (() -> Void)? {
+    DashboardWiring.needsYouHandler(
+      needsReviewCount: insights.needsReviewCount,
+      uncategorizedCount: insights.uncategorizedCount,
+      reviewQueue: onOpenReviewQueue,
+      uncategorized: onOpenUncategorized
+    )
   }
 
   @ViewBuilder

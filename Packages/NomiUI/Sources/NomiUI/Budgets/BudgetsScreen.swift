@@ -13,6 +13,12 @@ public struct BudgetsScreen: View {
   public let budgetStore: BudgetStore
   public let insightsStore: InsightsStore
 
+  /// G4. The composition root's `InsightsCache` generation. Stored and never
+  /// read: a new value from the parent re-renders this screen, which re-reads
+  /// the progress. Same contract as `DashboardView.refreshToken`. A pushed copy
+  /// gets a new value only when its parent re-renders (device check N3).
+  public let refreshToken: Int
+
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
   @Query private var budgetRows: [NomiCore.Budget]
   @State private var editingCategory: NomiCore.Category?
@@ -20,9 +26,10 @@ public struct BudgetsScreen: View {
   @State private var now = Date()
   @State private var retryToken = 0
 
-  public init(budgetStore: BudgetStore, insightsStore: InsightsStore) {
+  public init(budgetStore: BudgetStore, insightsStore: InsightsStore, refreshToken: Int = 0) {
     self.budgetStore = budgetStore
     self.insightsStore = insightsStore
+    self.refreshToken = refreshToken
   }
 
   /// `nil` means the fetch threw. That is distinct from a legitimate
@@ -261,6 +268,17 @@ public struct BudgetsScreen: View {
         .nomiTextStyle(.footnote)
         .foregroundStyle(NomiColor.inkSecondary)
     }
+  }
+}
+
+/// Manual conformance, as on `DashboardView`: identity for the two stores, and
+/// `refreshToken` compared so a test can assert that a new generation makes a
+/// different view value.
+extension BudgetsScreen: Equatable {
+  public static func == (lhs: BudgetsScreen, rhs: BudgetsScreen) -> Bool {
+    lhs.budgetStore === rhs.budgetStore
+      && lhs.insightsStore === rhs.insightsStore
+      && lhs.refreshToken == rhs.refreshToken
   }
 }
 

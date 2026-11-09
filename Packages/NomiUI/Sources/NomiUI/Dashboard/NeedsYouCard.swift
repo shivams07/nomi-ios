@@ -9,8 +9,8 @@ public struct NeedsYouCard: View {
   public let uncategorizedCount: Int
 
   /// M9. `nil` — the default — leaves the card non-interactive: no chevron,
-  /// no `Button` wrapper. `DashboardView` supplies this from its own
-  /// `onOpenReviewQueue`.
+  /// no `Button` wrapper. `DashboardView` supplies this, choosing between its
+  /// `onOpenReviewQueue` and `onOpenUncategorized` by the counts above (G1).
   public let onTap: (() -> Void)?
 
   public init(needsReviewCount: Int, uncategorizedCount: Int, onTap: (() -> Void)? = nil) {

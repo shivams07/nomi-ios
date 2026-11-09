@@ -155,6 +155,61 @@ final class DashboardWiringTests: XCTestCase {
   func testNeedsYouIsTappableWhenBothCountsArePositive() {
     XCTAssertTrue(DashboardWiring.needsYouIsTappable(needsReviewCount: 3, uncategorizedCount: 2))
   }
+
+  // MARK: - G1: the Needs-you tap opens the chip its own count names
+
+  func testNeedsYouDestinationIsReviewQueueWhenOnlyReviewCountIsPositive() {
+    XCTAssertEqual(
+      DashboardWiring.needsYouDestination(needsReviewCount: 2, uncategorizedCount: 0),
+      .reviewQueue
+    )
+  }
+
+  func testNeedsYouDestinationIsReviewQueueWhenBothCountsArePositive() {
+    XCTAssertEqual(
+      DashboardWiring.needsYouDestination(needsReviewCount: 2, uncategorizedCount: 3),
+      .reviewQueue
+    )
+  }
+
+  func testNeedsYouDestinationIsUncategorizedWhenOnlyUncategorizedCountIsPositive() {
+    XCTAssertEqual(
+      DashboardWiring.needsYouDestination(needsReviewCount: 0, uncategorizedCount: 3),
+      .uncategorized
+    )
+  }
+
+  func testNeedsYouDestinationIsNilWhenBothCountsAreZero() {
+    XCTAssertNil(DashboardWiring.needsYouDestination(needsReviewCount: 0, uncategorizedCount: 0))
+  }
+
+  func testNeedsYouHandlerRunsReviewQueueWhenReviewCountIsPositive() {
+    let handler = DashboardWiring.needsYouHandler(
+      needsReviewCount: 2, uncategorizedCount: 3, reviewQueue: "review", uncategorized: "uncategorized"
+    )
+    XCTAssertEqual(handler, "review")
+  }
+
+  func testNeedsYouHandlerRunsUncategorizedWhenOnlyUncategorizedCountIsPositive() {
+    let handler = DashboardWiring.needsYouHandler(
+      needsReviewCount: 0, uncategorizedCount: 3, reviewQueue: "review", uncategorized: "uncategorized"
+    )
+    XCTAssertEqual(handler, "uncategorized")
+  }
+
+  func testNeedsYouHandlerIsNilWhenBothCountsAreZero() {
+    let handler = DashboardWiring.needsYouHandler(
+      needsReviewCount: 0, uncategorizedCount: 0, reviewQueue: "review", uncategorized: "uncategorized"
+    )
+    XCTAssertNil(handler)
+  }
+
+  func testNeedsYouHandlerIsNilWhenTheMatchingHandlerIsNotWired() {
+    let handler: String? = DashboardWiring.needsYouHandler(
+      needsReviewCount: 0, uncategorizedCount: 3, reviewQueue: "review", uncategorized: nil
+    )
+    XCTAssertNil(handler, "an uncategorized-only card must not fall back to the review queue")
+  }
 }
 
 /// Records which read the dashboard actually issues.

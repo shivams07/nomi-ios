@@ -26,6 +26,10 @@ public struct SettingsScreen: View {
   /// no row. The toolbar icon this replaces is `RootView`'s to remove (S1).
   public let budgetStore: BudgetStore?
   public let insightsStore: InsightsStore?
+  /// G4. Passed on to the Budgets row, so a pushed `BudgetsScreen` re-reads
+  /// when the cache is invalidated. Stored and never read here, as on
+  /// `DashboardView.refreshToken`.
+  public let refreshToken: Int
 
   @State private var connectionState: MailConnectionState = .disconnected
   @State private var permissionDenied = false
@@ -48,7 +52,8 @@ public struct SettingsScreen: View {
     storageMode: StorageMode = .cloudKit,
     accounts: [NomiCore.Account] = [],
     budgetStore: BudgetStore? = nil,
-    insightsStore: InsightsStore? = nil
+    insightsStore: InsightsStore? = nil,
+    refreshToken: Int = 0
   ) {
     self.mailConnectionService = mailConnectionService
     self.fileImportService = fileImportService
@@ -59,6 +64,7 @@ public struct SettingsScreen: View {
     self.accounts = accounts
     self.budgetStore = budgetStore
     self.insightsStore = insightsStore
+    self.refreshToken = refreshToken
     forcedPermissionDenied = nil
   }
 
@@ -75,7 +81,8 @@ public struct SettingsScreen: View {
     storageMode: StorageMode = .cloudKit,
     accounts: [NomiCore.Account] = [],
     budgetStore: BudgetStore? = nil,
-    insightsStore: InsightsStore? = nil
+    insightsStore: InsightsStore? = nil,
+    refreshToken: Int = 0
   ) {
     self.mailConnectionService = mailConnectionService
     self.fileImportService = fileImportService
@@ -86,6 +93,7 @@ public struct SettingsScreen: View {
     self.accounts = accounts
     self.budgetStore = budgetStore
     self.insightsStore = insightsStore
+    self.refreshToken = refreshToken
     self.forcedPermissionDenied = forcedPermissionDenied
   }
 
@@ -94,6 +102,14 @@ public struct SettingsScreen: View {
   /// initialiser without rendering the view.
   func rulesScreen() -> RulesScreen {
     RulesScreen(ruleStore: ruleStore, categoryStore: categoryStore, accounts: accounts)
+  }
+
+  /// The Budgets destination, or nil when either store is missing (no row).
+  /// Carries `refreshToken` (G4). Internal so `SettingsRefreshTokenWiringTests`
+  /// can check what reaches `BudgetsScreen`'s initialiser without rendering.
+  func budgetsScreen() -> BudgetsScreen? {
+    guard let budgetStore, let insightsStore else { return nil }
+    return BudgetsScreen(budgetStore: budgetStore, insightsStore: insightsStore, refreshToken: refreshToken)
   }
 
   public var body: some View {
@@ -273,9 +289,9 @@ public struct SettingsScreen: View {
           CategoriesScreen(categoryStore: categoryStore)
         }
         rowDivider
-        if let budgetStore, let insightsStore {
+        if let budgets = budgetsScreen() {
           navigationRow("Budgets") {
-            BudgetsScreen(budgetStore: budgetStore, insightsStore: insightsStore)
+            budgets
           }
           rowDivider
         }
