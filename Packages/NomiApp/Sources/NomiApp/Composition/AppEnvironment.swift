@@ -263,6 +263,23 @@ public final class AppEnvironment: ObservableObject {
       assertionFailure("Default seed failed: \(error)")
     }
 
+    // Debug simulator only: `NOMI_DEMO_DATA=1` seeds the demo dataset into an
+    // empty store, after the category and rule seeds it depends on. Compiled
+    // into no other build. See `DemoDataSeeder`.
+    #if DEBUG && targetEnvironment(simulator)
+      if DemoDataSeeder.isRequested(in: ProcessInfo.processInfo.environment) {
+        do {
+          try await DemoDataSeeder.seedIfEmpty(
+            DemoDataset.make(today: Date()),
+            into: DemoDataSeeder.Stores(
+              transactions: transactionStore, accounts: accountStore, rules: ruleStore,
+              budgets: budgetStore, insights: insightsStore, pipeline: pipeline))
+        } catch {
+          assertionFailure("Demo data seed failed: \(error)")
+        }
+      }
+    #endif
+
     await sync.reconcile()
     await mail.reconnectFromKeychain(credentials)
     await sync.syncAfterConnect()
