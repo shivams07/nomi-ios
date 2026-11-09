@@ -90,7 +90,7 @@ public protocol RuleStore: AnyObject {
 /// through the protocol. That is the intent — there is one implementation of
 /// each behaviour, and it is the scoped one.
 ///
-/// There is no scope-less `update`: it would reset a scoped rule to `.any`.
+/// There is no scope-less `update`: one would pass `.any` and reset a scoped rule.
 extension RuleStore {
   @discardableResult
   public func create(pattern: String, categoryID: UUID) throws -> RuleApplyResult {
@@ -177,8 +177,8 @@ public protocol AccountStore: AnyObject {
   /// Edits every field of an existing account, under exactly the rules
   /// `create` enforces and throwing the same `AccountStoreError` cases.
   ///
-  /// Not a superset of `rename`, and it does not replace it: rename is kept for
-  /// API stability; no screen calls it. The edit sheet writes through this.
+  /// `rename` has no caller in `Packages`, `App` or `scripts`. The account edit
+  /// sheet (`AccountRenameSheet`) writes through this.
   ///
   /// `openingBalanceMinor: nil` clears the opening balance rather than leaving
   /// the stored one alone. There is no "unchanged" sentinel here because the
