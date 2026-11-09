@@ -15,14 +15,12 @@ public struct RulesScreen: View {
 
   /// The account list for the editor's "Only when" section and this
   /// screen's own scope-summary line (W2-M4). A plain array, not `@Query`:
-  /// `RulesScreen` is built against preview/test containers
+  /// `RulesScreen` is built against preview containers
   /// (`EntryRulesPreviewSupport.makeRulesContainer()` and this file's own
-  /// `makeSystemRuleDisabledContainer()`) whose schema doesn't include
-  /// `NomiCore.Account` — an `@Query` here would crash every one of them,
-  /// not just the ones that care about scope. Defaulted to `[]` so
-  /// `RootView`'s existing call site keeps compiling unchanged; wiring the
-  /// real account list through from there is follow-up, not this unit's file
-  /// to touch.
+  /// `makeSystemRuleDisabledContainer()`), whose schema lists only
+  /// `NomiCore.Category` and `NomiCore.Rule`, not `NomiCore.Account`.
+  /// Defaulted to `[]` for previews. Production passes the live list from
+  /// RootView through SettingsScreen (P-3, #111).
   public let accounts: [NomiCore.Account]
 
   @Query(sort: \NomiCore.Rule.priority) private var rules: [NomiCore.Rule]
