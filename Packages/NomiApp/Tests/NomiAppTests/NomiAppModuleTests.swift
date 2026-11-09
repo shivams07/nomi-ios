@@ -24,7 +24,10 @@ final class NomiAppModuleTests: XCTestCase {
   /// `.localOnly`, must carry a reason a user could read out, and must still
   /// hand back a container that works — falling back loses sync, not data.
   func testAFailingCloudKitMakerFallsBackToAWorkingLocalStoreAndSaysWhy() throws {
-    let storage = NomiModelContainer.makeWithLocalFallback(cloudKit: { throw NoCloudKit() })
+    // Pinned to the device path: on an iOS Simulator Debug test run the
+    // default would open the local store before the maker is ever called.
+    let storage = NomiModelContainer.makeWithLocalFallback(
+      cloudKit: { throw NoCloudKit() }, isSimulatorDebugBuild: false, forceCloudKit: false)
 
     guard case .localOnly(let reason) = storage.mode else {
       return XCTFail("expected the local fallback when the maker throws, got \(storage.mode)")
@@ -47,7 +50,8 @@ final class NomiAppModuleTests: XCTestCase {
   /// `.cloudKit` and must carry no reason, or Settings would show a failure
   /// caption to a user who has none.
   func testAMakerThatSucceedsIsReportedAsCloudKitWithNoReason() throws {
-    let storage = NomiModelContainer.makeWithLocalFallback(cloudKit: NomiModelContainer.makeLocal)
+    let storage = NomiModelContainer.makeWithLocalFallback(
+      cloudKit: NomiModelContainer.makeLocal, isSimulatorDebugBuild: false, forceCloudKit: false)
 
     XCTAssertEqual(storage.mode, .cloudKit)
     XCTAssertNil(storage.mode.reason)
