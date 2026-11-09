@@ -19,11 +19,16 @@ final class StorageModeMonitorTests: XCTestCase {
     private let lock = NSLock()
     private var _reason: SyncPauseReason?
     private var _probeCount = 0
+    private var _streamOpened = false
     private var continuation: AsyncStream<Void>.Continuation?
 
     init(reason: SyncPauseReason?) { _reason = reason }
 
     var probeCount: Int { lock.withLock { _probeCount } }
+
+    /// True once `run()` has subscribed to the account-change stream, which it
+    /// does after its first refresh. Lets a test wait for that point exactly.
+    var streamOpened: Bool { lock.withLock { _streamOpened } }
 
     func setReason(_ reason: SyncPauseReason?) { lock.withLock { _reason = reason } }
 
@@ -38,7 +43,10 @@ final class StorageModeMonitorTests: XCTestCase {
     }
 
     func accountChanges() -> AsyncStream<Void> {
-      AsyncStream { continuation in self.continuation = continuation }
+      AsyncStream { continuation in
+        self.continuation = continuation
+        self.lock.withLock { self._streamOpened = true }
+      }
     }
   }
 
@@ -96,6 +104,67 @@ final class StorageModeMonitorTests: XCTestCase {
 
     XCTAssertEqual(monitor.mode, .cloudKitPaused(.noAccount))
     XCTAssertFalse(monitor.mode.isSyncing, "a paused container is not syncing")
+  }
+
+  // MARK: - SIM1: a local-only launch never asks the probe
+
+  /// `CKAccountProbe.pauseReason()` builds a `CKContainer`, which traps an
+  /// unsigned simulator build. A local-only monitor must not ask it at all, and
+  /// two refreshes must leave the probe untouched.
+  @MainActor
+  func testALocalOnlyMonitorNeverAsksTheProbe() async {
+    let probe = FakeProbe(reason: .noAccount)
+    let monitor = StorageModeMonitor(constructed: .localOnly(reason: "boom"), probe: probe)
+
+    await monitor.refresh()
+    await monitor.refresh()
+
+    XCTAssertEqual(probe.probeCount, 0, "a local-only process must not reach CloudKit")
+    XCTAssertEqual(monitor.mode, .localOnly(reason: "boom"))
+  }
+
+  /// Skipping the probe is only invisible if the mode never depended on it.
+  /// Every answer, including none, must leave a local-only launch unchanged.
+  @MainActor
+  func testALocalOnlyModeIsTheSameWhateverTheProbeWouldHaveSaid() async {
+    let constructed = StorageMode.localOnly(reason: "boom")
+    let answers: [SyncPauseReason?] = [
+      nil, .noAccount, .restricted, .temporarilyUnavailable, .couldNotDetermine("x"),
+    ]
+    for answer in answers {
+      let monitor = StorageModeMonitor(constructed: constructed, probe: FakeProbe(reason: answer))
+      await monitor.refresh()
+      XCTAssertEqual(monitor.mode, constructed, "probe answer \(String(describing: answer))")
+    }
+  }
+
+  /// `run()` on a local-only launch still subscribes to account changes (a
+  /// notification, not a container), but the first refresh and every later one
+  /// leave the probe alone.
+  @MainActor
+  func testRunOnALocalOnlyLaunchSubscribesButNeverProbes() async {
+    let probe = FakeProbe(reason: .noAccount)
+    let monitor = StorageModeMonitor(constructed: .localOnly(reason: "boom"), probe: probe)
+
+    let running = Task { await monitor.run() }
+    await untilTrue { probe.streamOpened }
+    probe.finish()
+    await running.value
+
+    XCTAssertEqual(probe.probeCount, 0)
+    XCTAssertEqual(monitor.mode, .localOnly(reason: "boom"))
+  }
+
+  /// The CloudKit path is unchanged: every refresh still asks the probe once.
+  @MainActor
+  func testACloudKitMonitorAsksTheProbeOnEveryRefresh() async {
+    let probe = FakeProbe(reason: nil)
+    let monitor = StorageModeMonitor(constructed: .cloudKit, probe: probe)
+
+    await monitor.refresh()
+    await monitor.refresh()
+
+    XCTAssertEqual(probe.probeCount, 2)
   }
 
   /// The behaviour the unit exists for: the app is running, already showing

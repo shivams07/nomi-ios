@@ -130,8 +130,18 @@ public final class StorageModeMonitor: ObservableObject {
   /// signed in while the app was backgrounded may not deliver a notification
   /// this process saw.
   public func refresh() async {
-    let resolved = StorageModeResolver.resolve(
-      constructed: constructed, account: await probe.pauseReason())
+    let resolved: StorageMode
+    switch constructed {
+    case .localOnly:
+      // SIM1. A local-only process is not on a CloudKit store, and the resolver
+      // ignores the account for it anyway. So the probe is not asked at all: its
+      // `CKContainer(identifier:)` is the call that traps an unsigned simulator
+      // build (V2, `CODE_SIGNING_ALLOWED=NO`), even when the store is local.
+      resolved = constructed
+    case .cloudKit, .cloudKitPaused:
+      resolved = StorageModeResolver.resolve(
+        constructed: constructed, account: await probe.pauseReason())
+    }
     // Assigning unconditionally would publish on every foreground and every
     // notification, re-rendering the tree for an answer that has not changed.
     guard resolved != mode else { return }

@@ -161,17 +161,26 @@ public enum NomiModelContainer {
     #endif
   }()
 
-  /// The escape hatch. Read only in a simulator Debug build; everywhere else it
-  /// is a constant `false`. Launch a simulator build with CloudKit with
-  /// `SIMCTL_CHILD_NOMI_FORCE_CLOUDKIT=1 xcrun simctl launch …`, or set the
-  /// variable in the Xcode scheme.
-  public static let currentForceCloudKitRequested: Bool = {
+  /// The escape hatch, read from `environment`. The compile guard is here, not
+  /// only at the call site: outside a simulator Debug build the variable is
+  /// never honoured, whatever the environment holds. Launch a simulator build
+  /// with CloudKit with `SIMCTL_CHILD_NOMI_FORCE_CLOUDKIT=1 xcrun simctl launch …`,
+  /// or set the variable in the Xcode scheme.
+  public static func forceCloudKitRequested(in environment: [String: String]) -> Bool {
     #if DEBUG && targetEnvironment(simulator)
-      return ProcessInfo.processInfo.environment["NOMI_FORCE_CLOUDKIT"] == "1"
+      return environment["NOMI_FORCE_CLOUDKIT"] == "1"
     #else
+      _ = environment
       return false
     #endif
-  }()
+  }
+
+  /// The production value: the process environment, through the guarded reader.
+  /// Computed rather than stored so it reads the environment at the moment it
+  /// is asked, which is what lets a test set the variable and see the result.
+  public static var currentForceCloudKitRequested: Bool {
+    forceCloudKitRequested(in: ProcessInfo.processInfo.environment)
+  }
 
   private static let logger = Logger(subsystem: "com.shivams07.nomi", category: "storage")
 }

@@ -1,3 +1,4 @@
+import Foundation
 import NomiCore
 import XCTest
 
@@ -64,6 +65,40 @@ final class SimulatorLocalStoreTests: XCTestCase {
       XCTAssertFalse(NomiModelContainer.currentBuildIsSimulatorDebug)
       XCTAssertFalse(NomiModelContainer.currentForceCloudKitRequested)
     #endif
+  }
+
+  // MARK: - The escape hatch is read only inside the guard
+
+  /// Whether this configuration may honour the escape hatch at all. Written as
+  /// the same compile condition as production, so the expectation is per build.
+  private var escapeHatchHonouredHere: Bool {
+    #if DEBUG && targetEnvironment(simulator)
+      return true
+    #else
+      return false
+    #endif
+  }
+
+  /// The reader given a dictionary. Off the simulator Debug build it must
+  /// return `false` even when the variable is set to "1": a device or Release
+  /// build must never be steered to a store by its environment.
+  func testTheEscapeHatchReaderHonoursTheVariableOnlyWhereTheGuardAllows() {
+    XCTAssertEqual(
+      NomiModelContainer.forceCloudKitRequested(in: ["NOMI_FORCE_CLOUDKIT": "1"]),
+      escapeHatchHonouredHere)
+    XCTAssertFalse(NomiModelContainer.forceCloudKitRequested(in: [:]))
+    XCTAssertFalse(NomiModelContainer.forceCloudKitRequested(in: ["NOMI_FORCE_CLOUDKIT": "0"]))
+  }
+
+  /// The production value reads the real process environment. The variable is
+  /// set here rather than in the scheme, so this runs in the default
+  /// `swift test` configuration as well: a reader that consults the environment
+  /// outside the guard fails this test without any extra environment setup.
+  func testTheProductionValueReadsTheProcessEnvironmentOnlyWhereTheGuardAllows() {
+    setenv("NOMI_FORCE_CLOUDKIT", "1", 1)
+    defer { unsetenv("NOMI_FORCE_CLOUDKIT") }
+
+    XCTAssertEqual(NomiModelContainer.currentForceCloudKitRequested, escapeHatchHonouredHere)
   }
 
   // MARK: - Through the fallback, with the CloudKit maker counted
