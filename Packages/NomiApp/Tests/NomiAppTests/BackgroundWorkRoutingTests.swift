@@ -18,103 +18,111 @@ import XCTest
 /// built here and handed to an `AppSyncCoordinator`.
 final class BackgroundWorkRoutingTests: XCTestCase {
 
-  // MARK: - Routing by kind
+  #if !os(iOS)
+    // Compiled off iOS only. Every test in this block builds a `BackgroundWork`
+    // with a `BackgroundWorkRecord`. On iOS `BackgroundWork` wraps a real `BGTask`
+    // that only the system hands out, and the record does not exist, so neither
+    // can be built in a test. The backgrounding tests at the end of the class
+    // build no `BackgroundWork` and run on both platforms.
 
-  /// The finding, stated as an assertion. A `.backfill` task used to reach
-  /// `syncIfIdle()` and issue `uids(after:)` from the stored cursor — which
-  /// returns nothing an interrupted backfill had not already passed, so the
-  /// months it never reached stayed unfetched no matter how often iOS ran the
-  /// task.
-  func testABackfillTaskRunsABackfillAndNotAnIncrementalSync() async throws {
-    let context = try makeContext(storedCursorAt: 20)
+    // MARK: - Routing by kind
 
-    try await context.stack.service.connect(.test)
-    await context.coordinator.run(BackgroundWork(kind: .backfill, record: context.record))
+    /// The finding, stated as an assertion. A `.backfill` task used to reach
+    /// `syncIfIdle()` and issue `uids(after:)` from the stored cursor — which
+    /// returns nothing an interrupted backfill had not already passed, so the
+    /// months it never reached stayed unfetched no matter how often iOS ran the
+    /// task.
+    func testABackfillTaskRunsABackfillAndNotAnIncrementalSync() async throws {
+      let context = try makeContext(storedCursorAt: 20)
 
-    XCTAssertGreaterThan(context.fetcher.calls.backfillWindows, 0)
-    XCTAssertEqual(context.fetcher.calls.incrementalSearches, 0)
-  }
+      try await context.stack.service.connect(.test)
+      await context.coordinator.run(BackgroundWork(kind: .backfill, record: context.record))
 
-  /// The other half of the same claim: `.refresh` still does what it always did.
-  /// Without this, "routes by kind" would be satisfied by a coordinator that
-  /// backfills on every background task.
-  func testARefreshTaskRunsAnIncrementalSync() async throws {
-    let context = try makeContext(storedCursorAt: 20)
+      XCTAssertGreaterThan(context.fetcher.calls.backfillWindows, 0)
+      XCTAssertEqual(context.fetcher.calls.incrementalSearches, 0)
+    }
 
-    try await context.stack.service.connect(.test)
-    await context.coordinator.run(BackgroundWork(kind: .refresh, record: context.record))
+    /// The other half of the same claim: `.refresh` still does what it always did.
+    /// Without this, "routes by kind" would be satisfied by a coordinator that
+    /// backfills on every background task.
+    func testARefreshTaskRunsAnIncrementalSync() async throws {
+      let context = try makeContext(storedCursorAt: 20)
 
-    XCTAssertEqual(context.fetcher.calls.incrementalSearches, 1)
-    XCTAssertEqual(context.fetcher.calls.backfillWindows, 0)
-  }
+      try await context.stack.service.connect(.test)
+      await context.coordinator.run(BackgroundWork(kind: .refresh, record: context.record))
 
-  func testARefreshTaskAsksForTheNextRefresh() async throws {
-    let context = try makeContext(storedCursorAt: 20)
+      XCTAssertEqual(context.fetcher.calls.incrementalSearches, 1)
+      XCTAssertEqual(context.fetcher.calls.backfillWindows, 0)
+    }
 
-    try await context.stack.service.connect(.test)
-    await context.coordinator.run(BackgroundWork(kind: .refresh, record: context.record))
+    func testARefreshTaskAsksForTheNextRefresh() async throws {
+      let context = try makeContext(storedCursorAt: 20)
 
-    XCTAssertEqual(context.submitter.identifiers, [AppSyncCoordinator.TaskIdentifier.refresh])
-    XCTAssertEqual(context.record.recordedCompletions, [true])
-  }
+      try await context.stack.service.connect(.test)
+      await context.coordinator.run(BackgroundWork(kind: .refresh, record: context.record))
 
-  /// A backfill that finished has nothing left to ask for — not another backfill,
-  /// and not a refresh either, since re-scheduling on a `.backfill` task would
-  /// quietly turn one interrupted scan into a permanent refresh loop.
-  func testACompletedBackgroundBackfillAsksForNothingMore() async throws {
-    let context = try makeContext(storedCursorAt: 20)
+      XCTAssertEqual(context.submitter.identifiers, [AppSyncCoordinator.TaskIdentifier.refresh])
+      XCTAssertEqual(context.record.recordedCompletions, [true])
+    }
 
-    try await context.stack.service.connect(.test)
-    await context.coordinator.run(BackgroundWork(kind: .backfill, record: context.record))
+    /// A backfill that finished has nothing left to ask for — not another backfill,
+    /// and not a refresh either, since re-scheduling on a `.backfill` task would
+    /// quietly turn one interrupted scan into a permanent refresh loop.
+    func testACompletedBackgroundBackfillAsksForNothingMore() async throws {
+      let context = try makeContext(storedCursorAt: 20)
 
-    XCTAssertEqual(context.submitter.identifiers, [])
-    XCTAssertEqual(context.record.recordedCompletions, [true])
-  }
+      try await context.stack.service.connect(.test)
+      await context.coordinator.run(BackgroundWork(kind: .backfill, record: context.record))
 
-  // MARK: - Expiration
+      XCTAssertEqual(context.submitter.identifiers, [])
+      XCTAssertEqual(context.record.recordedCompletions, [true])
+    }
 
-  /// Finding 9. The handler used to cancel `foregroundTask`, which is nil here —
-  /// a background task runs when the app is not in the foreground, so nothing
-  /// ever set it. Expiration therefore cancelled nothing and the sync ran on
-  /// until iOS killed the process, which is the over-run that spends the app's
-  /// scheduling budget.
-  ///
-  /// Two assertions, and both are needed: that the work stopped, and that the
-  /// task was still answered exactly once.
-  func testExpirationCancelsTheWorkInFlightAndCompletesExactlyOnce() async throws {
-    let searchStarted = StartSignal()
-    let context = try makeContext(storedCursorAt: 20, blockOnSearch: searchStarted)
+    // MARK: - Expiration
 
-    try await context.stack.service.connect(.test)
-    let work = BackgroundWork(kind: .refresh, record: context.record)
-    let run = Task { await context.coordinator.run(work) }
+    /// Finding 9. The handler used to cancel `foregroundTask`, which is nil here —
+    /// a background task runs when the app is not in the foreground, so nothing
+    /// ever set it. Expiration therefore cancelled nothing and the sync ran on
+    /// until iOS killed the process, which is the over-run that spends the app's
+    /// scheduling budget.
+    ///
+    /// Two assertions, and both are needed: that the work stopped, and that the
+    /// task was still answered exactly once.
+    func testExpirationCancelsTheWorkInFlightAndCompletesExactlyOnce() async throws {
+      let searchStarted = StartSignal()
+      let context = try makeContext(storedCursorAt: 20, blockOnSearch: searchStarted)
 
-    await searchStarted.wait()
-    context.record.expire()
-    await run.value
+      try await context.stack.service.connect(.test)
+      let work = BackgroundWork(kind: .refresh, record: context.record)
+      let run = Task { await context.coordinator.run(work) }
 
-    XCTAssertTrue(context.fetcher.sawCancellation)
-    XCTAssertEqual(context.record.recordedCompletions, [false])
-  }
+      await searchStarted.wait()
+      context.record.expire()
+      await run.value
 
-  /// An expired backfill is an interrupted backfill, so it asks for another
-  /// window rather than being dropped. This is the path that makes a six-month
-  /// scan survive the OS deciding it has had long enough.
-  func testAnExpiredBackfillAsksForAnotherWindow() async throws {
-    let searchStarted = StartSignal()
-    let context = try makeContext(storedCursorAt: 20, blockOnSearch: searchStarted)
+      XCTAssertTrue(context.fetcher.sawCancellation)
+      XCTAssertEqual(context.record.recordedCompletions, [false])
+    }
 
-    try await context.stack.service.connect(.test)
-    let work = BackgroundWork(kind: .backfill, record: context.record)
-    let run = Task { await context.coordinator.run(work) }
+    /// An expired backfill is an interrupted backfill, so it asks for another
+    /// window rather than being dropped. This is the path that makes a six-month
+    /// scan survive the OS deciding it has had long enough.
+    func testAnExpiredBackfillAsksForAnotherWindow() async throws {
+      let searchStarted = StartSignal()
+      let context = try makeContext(storedCursorAt: 20, blockOnSearch: searchStarted)
 
-    await searchStarted.wait()
-    context.record.expire()
-    await run.value
+      try await context.stack.service.connect(.test)
+      let work = BackgroundWork(kind: .backfill, record: context.record)
+      let run = Task { await context.coordinator.run(work) }
 
-    XCTAssertEqual(context.submitter.identifiers, [AppSyncCoordinator.TaskIdentifier.backfill])
-    XCTAssertEqual(context.record.recordedCompletions, [false])
-  }
+      await searchStarted.wait()
+      context.record.expire()
+      await run.value
+
+      XCTAssertEqual(context.submitter.identifiers, [AppSyncCoordinator.TaskIdentifier.backfill])
+      XCTAssertEqual(context.record.recordedCompletions, [false])
+    }
+  #endif
 
   // MARK: - Backgrounding
 
@@ -155,7 +163,9 @@ final class BackgroundWorkRoutingTests: XCTestCase {
     let coordinator: AppSyncCoordinator
     let fetcher: RecordingMailFetcher
     let submitter: RecordingSubmitter
-    let record: BackgroundWorkRecord
+    #if !os(iOS)
+      let record: BackgroundWorkRecord
+    #endif
   }
 
   /// `storedCursorAt` seeds a cursor whose mailbox and UIDVALIDITY match the
@@ -179,18 +189,20 @@ final class BackgroundWorkRoutingTests: XCTestCase {
     let fetcher = RecordingMailFetcher(uids: [11, 12, 42], blockOnSearch: blockOnSearch)
     let stack = makeStack(fetcher: fetcher, preferences: preferences)
     let submitter = RecordingSubmitter()
-
-    return Context(
-      stack: stack,
-      coordinator: AppSyncCoordinator(
-        mail: stack,
-        pipeline: IngestPipeline(store: EmptyPipelineStore()),
-        submitter: submitter
-      ),
-      fetcher: fetcher,
-      submitter: submitter,
-      record: BackgroundWorkRecord()
+    let coordinator = AppSyncCoordinator(
+      mail: stack,
+      pipeline: IngestPipeline(store: EmptyPipelineStore()),
+      submitter: submitter
     )
+
+    #if os(iOS)
+      return Context(
+        stack: stack, coordinator: coordinator, fetcher: fetcher, submitter: submitter)
+    #else
+      return Context(
+        stack: stack, coordinator: coordinator, fetcher: fetcher, submitter: submitter,
+        record: BackgroundWorkRecord())
+    #endif
   }
 }
 
