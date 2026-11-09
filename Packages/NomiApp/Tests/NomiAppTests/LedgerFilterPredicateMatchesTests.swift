@@ -152,6 +152,58 @@ final class LedgerFilterPredicateMatchesTests: XCTestCase {
     XCTAssertFalse(LedgerFilterPredicate.matches(inPeriodCategorized, filter: filter, within: range))
   }
 
+  // MARK: - Uncategorized excludes transfer legs (DEC-05, WR-3b)
+
+  /// The chip lists the rows Home's uncategorized count counts. Each recognised
+  /// pair with no category is checked on its own: unmarked and rejected are
+  /// listed, auto and manual are transfer legs and are not.
+  func testUncategorizedChipExcludesEveryRecognisedTransferPair() throws {
+    let context = try makeContext()
+    let group = UUID()
+    let unmarked = insert(Transaction(categoryID: nil), into: context)
+    let auto = insert(
+      Transaction(categoryID: nil, transferGroupID: group, transferSourceRaw: "auto"), into: context)
+    let manual = insert(
+      Transaction(categoryID: nil, transferGroupID: group, transferSourceRaw: "manual"), into: context)
+    let rejected = insert(
+      Transaction(categoryID: nil, transferSourceRaw: "rejected"), into: context)
+    let filter = TransactionFilter(uncategorizedOnly: true)
+
+    XCTAssertTrue(LedgerFilterPredicate.matches(unmarked, filter: filter, within: nil))
+    XCTAssertFalse(LedgerFilterPredicate.matches(auto, filter: filter, within: nil))
+    XCTAssertFalse(LedgerFilterPredicate.matches(manual, filter: filter, within: nil))
+    XCTAssertTrue(LedgerFilterPredicate.matches(rejected, filter: filter, within: nil))
+  }
+
+  /// DEC-05 Amendment 3, U1: exclusion reads only `transferGroupID`. An
+  /// unrecognized source with a group id is a transfer leg, so it is not listed;
+  /// the same source with no group id is counted, so it is listed.
+  func testUncategorizedChipFollowsTheGroupIDForAnUnrecognizedPair() throws {
+    let context = try makeContext()
+    let withGroup = insert(
+      Transaction(categoryID: nil, transferGroupID: UUID(), transferSourceRaw: "zzz"), into: context)
+    let withoutGroup = insert(
+      Transaction(categoryID: nil, transferSourceRaw: "zzz"), into: context)
+    let filter = TransactionFilter(uncategorizedOnly: true)
+
+    XCTAssertFalse(LedgerFilterPredicate.matches(withGroup, filter: filter, within: nil))
+    XCTAssertTrue(LedgerFilterPredicate.matches(withoutGroup, filter: filter, within: nil))
+  }
+
+  /// A transfer leg with a category is excluded by the category test anyway; a
+  /// categorized row is excluded by the uncategorized test, which this must not
+  /// loosen. Pins that the new rule only ever narrows the chip.
+  func testUncategorizedChipStillExcludesCategorizedRowsWhetherOrNotTheyAreTransfers() throws {
+    let context = try makeContext()
+    let categorized = insert(Transaction(categoryID: UUID()), into: context)
+    let categorizedTransfer = insert(
+      Transaction(categoryID: UUID(), transferGroupID: UUID(), transferSourceRaw: "manual"), into: context)
+    let filter = TransactionFilter(uncategorizedOnly: true)
+
+    XCTAssertFalse(LedgerFilterPredicate.matches(categorized, filter: filter, within: nil))
+    XCTAssertFalse(LedgerFilterPredicate.matches(categorizedTransfer, filter: filter, within: nil))
+  }
+
   // MARK: -
 
   /// UTC, fixed, so these dates mean the same thing on every machine.

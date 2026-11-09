@@ -99,7 +99,11 @@ enum LedgerFiltering {
     case .category(let id):
       return rows.filter { $0.categoryID == id }
     case .uncategorized:
-      return rows.filter { $0.categoryID == nil }
+      // The same rule Home's uncategorized count uses (DEC-05): transfer legs
+      // are ledger rows but never need a category, so they are not listed here.
+      return rows.filter {
+        TransferRules.countsAsUncategorized(categoryID: $0.categoryID, isTransfer: $0.isTransfer)
+      }
     case .needsReview:
       // `LedgerRow` carries no needs-review flag — this pure filtering path
       // is superseded in production by `LedgerFilterPredicate.matches`
@@ -269,7 +273,12 @@ enum LedgerFilterPredicate {
       guard transaction.needsReview else { return false }
     }
     if filter.uncategorizedOnly {
-      guard transaction.categoryID == nil else { return false }
+      // DEC-05: the rule `LedgerFiltering.apply` and Home's count share. A
+      // transfer leg is not listed.
+      guard TransferRules.countsAsUncategorized(
+        categoryID: transaction.categoryID,
+        isTransfer: transaction.isTransfer
+      ) else { return false }
     } else if !filter.categoryIDs.isEmpty {
       guard let categoryID = transaction.categoryID, filter.categoryIDs.contains(categoryID) else { return false }
     }

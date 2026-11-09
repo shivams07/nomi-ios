@@ -243,8 +243,11 @@ public enum InsightsAggregator {
       // and a row that vanished from both the totals and the review count would
       // be invisible in the app entirely.
       needsReviewCount: rows.filter(\.needsReview).count,
-      // A transfer never needs a category (DEC-05).
-      uncategorizedCount: rows.filter { $0.categoryID == nil && !$0.isTransfer }.count,
+      // A transfer never needs a category (DEC-05). The Ledger's Uncategorized
+      // chip calls the same rule, so the two cannot drift.
+      uncategorizedCount: rows.filter {
+        TransferRules.countsAsUncategorized(categoryID: $0.categoryID, isTransfer: $0.isTransfer)
+      }.count,
       categories: categoryBadges(categories)
     )
   }

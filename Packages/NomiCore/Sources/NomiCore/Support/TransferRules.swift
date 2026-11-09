@@ -124,6 +124,16 @@ public enum TransferRules {
     return found[0].id
   }
 
+  /// Whether a row is counted as uncategorized: no category, and not a transfer
+  /// leg (DEC-05). Home's `uncategorizedCount` and the Ledger's Uncategorized
+  /// chip both call this one rule, so the chip lists exactly the rows the count
+  /// counts. Exclusion reads `isTransfer` (`transferGroupID != nil`) and nothing
+  /// else, whatever the source says (Amendment 3, U1): a row with an unrecognised
+  /// pair is excluded only if it has a group id.
+  public static func countsAsUncategorized(categoryID: UUID?, isTransfer: Bool) -> Bool {
+    categoryID == nil && !isTransfer
+  }
+
   /// Whether a pipeline write may change a row's transfer pair (DEC-05
   /// Amendment 3, rule C). `read` is the pair the pipeline read from the store
   /// with the snapshot. Nothing is written without it, and nothing is written

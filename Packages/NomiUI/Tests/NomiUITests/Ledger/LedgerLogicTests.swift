@@ -186,6 +186,36 @@ final class LedgerFilteringTests: XCTestCase {
     XCTAssertEqual(result.map(\.label), ["uncategorized"])
   }
 
+  /// WR-3b, DEC-05. A transfer leg is a ledger row but never needs a category,
+  /// so the Uncategorized chip does not list it. Home's uncategorized count
+  /// applies the same rule (`TransferRules.countsAsUncategorized`).
+  func testUncategorizedSelectionExcludesTransferLegs() {
+    let rows = [
+      StubRow(label: "plain", date: date("2026-08-20"), amountMinor: 300, direction: .debit, categoryID: nil),
+      StubRow(
+        label: "transfer leg", date: date("2026-08-20"), amountMinor: 300, direction: .debit,
+        categoryID: nil, isTransfer: true),
+    ]
+
+    let result = LedgerFiltering.apply(rows, selection: .uncategorized)
+
+    XCTAssertEqual(result.map(\.label), ["plain"])
+  }
+
+  /// The exclusion is for uncategorized legs only: a categorized transfer leg is
+  /// already out of this chip, and `.all` keeps every row, transfers included.
+  func testAllKeepsTransferLegsAndUncategorizedExcludesOnlyThem() {
+    let rows = [
+      StubRow(label: "transfer leg", date: date("2026-08-20"), amountMinor: 300, direction: .debit,
+              categoryID: nil, isTransfer: true),
+      StubRow(label: "categorized transfer", date: date("2026-08-20"), amountMinor: 300, direction: .debit,
+              categoryID: foodID, isTransfer: true),
+    ]
+
+    XCTAssertEqual(LedgerFiltering.apply(rows, selection: .all).count, 2)
+    XCTAssertTrue(LedgerFiltering.apply(rows, selection: .uncategorized).isEmpty)
+  }
+
   func testCategoryWithNoMatchesReturnsEmpty() {
     XCTAssertTrue(LedgerFiltering.apply(rows(), selection: .category(UUID())).isEmpty)
   }
