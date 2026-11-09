@@ -447,7 +447,13 @@ private struct LedgerSearchModifier: ViewModifier {
 
   func body(content: Content) -> some View {
     if isEnabled {
+      #if os(iOS)
+      // Under the large title, not at the bottom: the iOS 26 default bottom
+      // placement sits under the tab bar (fid-ledger-search, D2).
+      content.searchable(text: $text, placement: .navigationBarDrawer(displayMode: .always), prompt: prompt)
+      #else
       content.searchable(text: $text, prompt: prompt)
+      #endif
     } else {
       content
     }
@@ -741,6 +747,7 @@ private struct LedgerTransactionList: View {
       hasRows: summary.hasRows, storeHasRows: summary.storeHasRows, isFiltered: isFiltered)
     {
     case .empty:
+      // Centred in the scroll view's visible height (D15), not top-aligned.
       NomiEmptyState(
         systemImage: "receipt",
         title: "No transactions yet",
@@ -749,7 +756,8 @@ private struct LedgerTransactionList: View {
         action: addAction
       )
       .padding(.horizontal, NomiSpacing.md)
-      .padding(.top, NomiSpacing.lg)
+      .frame(maxWidth: .infinity)
+      .containerRelativeFrame(.vertical, alignment: .center)
     case .nothingRecent:
       NomiEmptyState(
         systemImage: "clock",

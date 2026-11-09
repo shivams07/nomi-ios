@@ -2,6 +2,9 @@ import NomiCore
 import NomiUI
 import SwiftData
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// The navigation graph. Five slots: Home, Ledger, the centre `+`, Insights,
 /// Accounts (`RootTab`, `TabBarLayout`; SIMP §0).
@@ -30,6 +33,9 @@ struct RootView: View {
   @State private var backfillProgress: BackfillProgress?
   @State private var backfillUnfinished = false
   @State private var presentedTransaction: PresentedTransaction?
+  /// True between the system's keyboard-will-show and keyboard-will-hide, so the
+  /// bar can step aside and leave the Ledger search field clear (D2).
+  @State private var keyboardVisible = false
 
   /// The live account list, passed to Settings and on to `RulesScreen`, so the
   /// rule editor's Account picker has something to show. Sorted like
@@ -73,6 +79,13 @@ struct RootView: View {
     TabBarVisibility.isVisible(pathCount: pathCount(for: selection))
   }
 
+  /// The bar is drawn only on a tab root and only while the keyboard is down.
+  /// The reserved bottom inset still follows `isTabBarShown`, so the list does
+  /// not jump when the keyboard closes.
+  private var isTabBarDrawn: Bool {
+    TabBarVisibility.isVisible(pathCount: pathCount(for: selection), keyboardVisible: keyboardVisible)
+  }
+
   var body: some View {
     NomiTabShell {
       ZStack(alignment: .bottom) {
@@ -89,7 +102,7 @@ struct RootView: View {
             // bottom edge.
             Color.clear.frame(height: isTabBarShown ? TabBarInsetHeight.reserved(barHeight: tabBarHeight) : 0)
           }
-        if isTabBarShown {
+        if isTabBarDrawn {
           tabBar
         }
       }
@@ -98,6 +111,16 @@ struct RootView: View {
     .environment(\.nomiAddTransaction, NomiAddTransactionAction { isPresentingEntry = true })
     // Home "See all" and Import "View in Ledger" (FU-1). Both sit on Home's stack.
     .environment(\.nomiShowLedger, NomiShowLedgerAction { showLedger() })
+    #if os(iOS)
+    // The keyboard takes the bar away while it is up: the bar otherwise rides
+    // up over a focused search field (D2). `tabBar` also ignores the keyboard.
+    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+      keyboardVisible = true
+    }
+    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+      keyboardVisible = false
+    }
+    #endif
     .onChange(of: selection) { _, newValue in
       // `LedgerScreen` only reads `initialChip` once, at construction — the
       // instance is torn down the moment `selection` leaves `.ledger`. Reset
@@ -159,6 +182,8 @@ struct RootView: View {
     .onPreferenceChange(NomiTabBarHeightKey.self) { tabBarHeight = $0 }
     .padding(.horizontal, TabBarInsetHeight.sideMargin)
     .padding(.bottom, TabBarInsetHeight.bottomMargin)
+    // Keep the bar fixed when the keyboard rises, so it never slides up over a field.
+    .ignoresSafeArea(.keyboard, edges: .bottom)
   }
 
   /// The two halves of the bar, read from `TabBarLayout.items` so the order is
@@ -335,5 +360,15 @@ enum TabBarInsetHeight {
 
   static func reserved(barHeight: CGFloat) -> CGFloat {
     barHeight + bottomMargin
+  }
+}
+
+extension TabBarVisibility {
+  /// The bar is drawn only on a tab root and only while the keyboard is down
+  /// (fid-ledger-search, D2). Defined here rather than beside `isVisible(pathCount:)`
+  /// in `RootTab.swift`, which is outside this unit's files. Pure, so
+  /// `TabBarKeyboardVisibilityTests` pins it without a view.
+  public static func isVisible(pathCount: Int, keyboardVisible: Bool) -> Bool {
+    isVisible(pathCount: pathCount) && !keyboardVisible
   }
 }
