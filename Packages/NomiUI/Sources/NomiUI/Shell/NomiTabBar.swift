@@ -24,22 +24,66 @@ public struct NomiTabBarHeightKey: PreferenceKey {
   }
 }
 
+/// The Dynamic Type rule for the tab bar (TB1), as plain values so the tests can
+/// pin it.
+///
+/// Each tab label is caption2-scaled text. Past `xxxLarge` the labels stop fitting
+/// on one line across a 375 pt phone, and they wrap mid-word. The bar therefore
+/// caps its own type size at `maximumTypeSize`, the largest non-accessibility
+/// size. Sizes at or below the cap are untouched, and the rest of the app keeps
+/// its full scale.
+public enum NomiTabBarSizing {
+  /// Sizes above this draw as this size, inside the bar only.
+  public static let maximumTypeSize: DynamicTypeSize = .xxxLarge
+  /// The narrowest a tab slot may be: the artboard's 56 pt. A slot widens to fit
+  /// a longer label.
+  public static let slotMinWidth: CGFloat = 56
+  /// The `+` button's diameter.
+  public static let addButtonWidth: CGFloat = 52
+  /// The bar's own padding on each side, inside its glass.
+  public static let barHorizontalPadding: CGFloat = 8
+  /// The least clear space kept between neighbouring tab labels.
+  public static let minimumLabelGap: CGFloat = 6
+
+  public static func effectiveTypeSize(_ size: DynamicTypeSize) -> DynamicTypeSize {
+    min(size, maximumTypeSize)
+  }
+
+  public static func slotWidth(forLabelWidth labelWidth: CGFloat) -> CGFloat {
+    max(slotMinWidth, labelWidth)
+  }
+
+  /// The width left for the four tab slots once the screen's side margins, the
+  /// bar's padding and the `+` are taken out. `sideMargin` is the margin the
+  /// caller sets on the bar (24 on the artboards).
+  public static func tabSpaceBudget(screenWidth: CGFloat, sideMargin: CGFloat) -> CGFloat {
+    screenWidth - 2 * sideMargin - 2 * barHorizontalPadding - addButtonWidth
+  }
+
+  /// Whether every label fits on one line in `budget`: each slot at its label's
+  /// width (or the minimum), plus a gap after each label.
+  public static func labelsFitOneLine(labelWidths: [CGFloat], budget: CGFloat) -> Bool {
+    let slots = labelWidths.reduce(0) { $0 + slotWidth(forLabelWidth: $1) }
+    let gaps = CGFloat(labelWidths.count) * minimumLabelGap
+    return slots + gaps <= budget
+  }
+}
+
 /// The floating tab bar (F3, I-4; SIMP §0). Five slots, icons with labels, and
 /// the selected tab is a filled `primary` capsule. The centre slot is the "+"
 /// button, which opens the transaction entry sheet.
 ///
 /// The bar is at least 64 pt high, with 8 pt side padding and a 32 pt corner
-/// radius, on `nomiGlass(.tabBar)`. Each item is 56 pt wide and at least 48 pt
-/// high, so AX sizes grow the bar. The caller sets the side and bottom margins
-/// (24 and 22 on the artboards).
+/// radius, on `nomiGlass(.tabBar)`. Each tab is at least 56 pt wide and 48 pt
+/// high, and widens to fit its label. The type size is capped at
+/// `NomiTabBarSizing.maximumTypeSize`, so the bar stays a bounded height at every
+/// size. The caller sets the side and bottom margins (24 and 22 on the artboards).
 public struct NomiTabBar: View {
   private let leading: [NomiTabBarItem]
   private let trailing: [NomiTabBarItem]
   private let selectedID: String
   private let onSelect: (String) -> Void
   private let onAdd: () -> Void
-
-  @ScaledMetric(relativeTo: .caption2) private var glyphSize: CGFloat = 22
 
   public init(
     leading: [NomiTabBarItem],
@@ -69,7 +113,10 @@ public struct NomiTabBar: View {
         tabItem(item)
       }
     }
-    .padding(.horizontal, 8)
+    // The cap. It is applied to the row, so each tab's label and icon read the
+    // capped size from `NomiTabItemContent`.
+    .dynamicTypeSize(...NomiTabBarSizing.maximumTypeSize)
+    .padding(.horizontal, NomiTabBarSizing.barHorizontalPadding)
     .frame(maxWidth: .infinity, minHeight: 64)
     .nomiGlass(.tabBar, in: RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
     .background {
@@ -84,23 +131,7 @@ public struct NomiTabBar: View {
     return Button {
       onSelect(item.id)
     } label: {
-      VStack(spacing: 2) {
-        Image(systemName: item.symbolName)
-          .resizable()
-          .scaledToFit()
-          .frame(width: glyphSize, height: glyphSize)
-        Text(item.title)
-          .nomiTextStyle(.tabLabel)
-      }
-      .foregroundStyle(isSelected ? NomiColor.onPrimary : NomiColor.inkTab)
-      .frame(width: 56)
-      .frame(minHeight: 48)
-      .background {
-        if isSelected {
-          Capsule().fill(NomiColor.primary)
-        }
-      }
-      .contentShape(Capsule())
+      NomiTabItemContent(title: item.title, symbolName: item.symbolName, isSelected: isSelected)
     }
     .buttonStyle(.plain)
     .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
@@ -113,7 +144,7 @@ public struct NomiTabBar: View {
         .scaledToFit()
         .frame(width: 22, height: 22)
         .foregroundStyle(NomiColor.onPrimary)
-        .frame(width: 52, height: 52)
+        .frame(width: NomiTabBarSizing.addButtonWidth, height: NomiTabBarSizing.addButtonWidth)
         .background {
           Circle()
             .fill(
@@ -133,6 +164,39 @@ public struct NomiTabBar: View {
     }
     .buttonStyle(.plain)
     .accessibilityLabel("Add transaction")
+  }
+}
+
+/// The icon and label inside one tab. A child view, so `@ScaledMetric` reads the
+/// size `NomiTabBar` caps. A property wrapper declared on the bar itself would read
+/// the size from outside the cap, and the icon would keep growing.
+private struct NomiTabItemContent: View {
+  let title: String
+  let symbolName: String
+  let isSelected: Bool
+
+  @ScaledMetric(relativeTo: .caption2) private var glyphSize: CGFloat = 22
+
+  var body: some View {
+    VStack(spacing: 2) {
+      Image(systemName: symbolName)
+        .resizable()
+        .scaledToFit()
+        .frame(width: glyphSize, height: glyphSize)
+      Text(title)
+        .nomiTextStyle(.tabLabel)
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+    .foregroundStyle(isSelected ? NomiColor.onPrimary : NomiColor.inkTab)
+    .frame(minWidth: NomiTabBarSizing.slotMinWidth)
+    .frame(minHeight: 48)
+    .background {
+      if isSelected {
+        Capsule().fill(NomiColor.primary)
+      }
+    }
+    .contentShape(Capsule())
   }
 }
 
