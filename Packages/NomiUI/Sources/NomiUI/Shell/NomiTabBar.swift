@@ -25,16 +25,26 @@ public struct NomiTabBarHeightKey: PreferenceKey {
 }
 
 /// The Dynamic Type rule for the tab bar (TB1), as plain values so the tests can
-/// pin it.
+/// pin it. `NomiTabBarLayoutTests` checks it against the widths the device draws.
 ///
-/// Each tab label is caption2-scaled text. Past `xxxLarge` the labels stop fitting
-/// on one line across a 375 pt phone, and they wrap mid-word. The bar therefore
-/// caps its own type size at `maximumTypeSize`, the largest non-accessibility
-/// size. Sizes at or below the cap are untouched, and the rest of the app keeps
-/// its full scale.
+/// Each tab label is caption2-scaled Inter Medium. Its rendered width on iOS, at
+/// 440 pt, from `NomiTabBarLayoutTests` (points):
+///
+/// | Size | Home | Ledger | Insights | Accounts |
+/// |---|---|---|---|---|
+/// | large | 31.3 | 37.3 | 41.3 | 50.0 |
+/// | xLarge | 42.7 | 50.7 | 56.7 | 68.0 |
+/// | xxLarge | 45.3 | 54.0 | 60.3 | 72.7 |
+/// | xxxLarge | 51.0 | 60.7 | 67.7 | 81.7 |
+///
+/// At 375 pt the four tab slots and the `+` share 259 pt, once RootView's 24 pt side
+/// margins, the bar's 8 pt padding and the 52 pt `+` come out. A slot is at least
+/// 56 pt and widens to its label. The slots at `xxLarge` add to 245 pt, which fits
+/// with 14 pt spare. At `xxxLarge` they add to 266.1 pt, which does not fit. So the
+/// cap is `xxLarge`, the largest size whose five slots fit 375 pt with no overlap.
 public enum NomiTabBarSizing {
   /// Sizes above this draw as this size, inside the bar only.
-  public static let maximumTypeSize: DynamicTypeSize = .xxxLarge
+  public static let maximumTypeSize: DynamicTypeSize = .xxLarge
   /// The narrowest a tab slot may be: the artboard's 56 pt. A slot widens to fit
   /// a longer label.
   public static let slotMinWidth: CGFloat = 56
@@ -42,8 +52,6 @@ public enum NomiTabBarSizing {
   public static let addButtonWidth: CGFloat = 52
   /// The bar's own padding on each side, inside its glass.
   public static let barHorizontalPadding: CGFloat = 8
-  /// The least clear space kept between neighbouring tab labels.
-  public static let minimumLabelGap: CGFloat = 6
 
   public static func effectiveTypeSize(_ size: DynamicTypeSize) -> DynamicTypeSize {
     min(size, maximumTypeSize)
@@ -60,12 +68,25 @@ public enum NomiTabBarSizing {
     screenWidth - 2 * sideMargin - 2 * barHorizontalPadding - addButtonWidth
   }
 
-  /// Whether every label fits on one line in `budget`: each slot at its label's
-  /// width (or the minimum), plus a gap after each label.
+  /// Whether the slots for all labels fit on one line in `budget`, with no overlap.
   public static func labelsFitOneLine(labelWidths: [CGFloat], budget: CGFloat) -> Bool {
-    let slots = labelWidths.reduce(0) { $0 + slotWidth(forLabelWidth: $1) }
-    let gaps = CGFloat(labelWidths.count) * minimumLabelGap
-    return slots + gaps <= budget
+    labelWidths.reduce(0) { $0 + slotWidth(forLabelWidth: $1) } <= budget
+  }
+}
+
+/// One rendered frame in the tab bar, in global coordinates, for
+/// `NomiTabBarLayoutTests`. `name` is `slot:<id>`, `label:<id>`, or `slot:add`.
+/// Nothing in the app reads it.
+struct NomiTabBarFrame: Equatable {
+  let name: String
+  let frame: CGRect
+}
+
+struct NomiTabBarFramesKey: PreferenceKey {
+  static let defaultValue: [NomiTabBarFrame] = []
+
+  static func reduce(value: inout [NomiTabBarFrame], nextValue: () -> [NomiTabBarFrame]) {
+    value.append(contentsOf: nextValue())
   }
 }
 
@@ -124,6 +145,14 @@ public struct NomiTabBar: View {
         Color.clear.preference(key: NomiTabBarHeightKey.self, value: proxy.size.height)
       }
     }
+    .background {
+      GeometryReader { proxy in
+        Color.clear.preference(
+          key: NomiTabBarFramesKey.self,
+          value: [NomiTabBarFrame(name: "bar", frame: proxy.frame(in: .global))]
+        )
+      }
+    }
   }
 
   private func tabItem(_ item: NomiTabBarItem) -> some View {
@@ -145,6 +174,14 @@ public struct NomiTabBar: View {
         .frame(width: 22, height: 22)
         .foregroundStyle(NomiColor.onPrimary)
         .frame(width: NomiTabBarSizing.addButtonWidth, height: NomiTabBarSizing.addButtonWidth)
+        .background {
+          GeometryReader { proxy in
+            Color.clear.preference(
+              key: NomiTabBarFramesKey.self,
+              value: [NomiTabBarFrame(name: "slot:add", frame: proxy.frame(in: .global))]
+            )
+          }
+        }
         .background {
           Circle()
             .fill(
@@ -187,6 +224,14 @@ private struct NomiTabItemContent: View {
         .nomiTextStyle(.tabLabel)
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
+        .background {
+          GeometryReader { proxy in
+            Color.clear.preference(
+              key: NomiTabBarFramesKey.self,
+              value: [NomiTabBarFrame(name: "label:\(title)", frame: proxy.frame(in: .global))]
+            )
+          }
+        }
     }
     .foregroundStyle(isSelected ? NomiColor.onPrimary : NomiColor.inkTab)
     .frame(minWidth: NomiTabBarSizing.slotMinWidth)
@@ -194,6 +239,14 @@ private struct NomiTabItemContent: View {
     .background {
       if isSelected {
         Capsule().fill(NomiColor.primary)
+      }
+    }
+    .background {
+      GeometryReader { proxy in
+        Color.clear.preference(
+          key: NomiTabBarFramesKey.self,
+          value: [NomiTabBarFrame(name: "slot:\(title)", frame: proxy.frame(in: .global))]
+        )
       }
     }
     .contentShape(Capsule())
