@@ -119,6 +119,19 @@ struct RootContainerView: View {
         RootView(environment: environment)
       }
     }
+    #if canImport(UIKit)
+    // SB2 (nomi-ios-statusbar-ruling). The anchor attaches the light-bar overlay
+    // window once this view is in a window. The tone is published by
+    // `NomiHeroScaffold` while a navy hero is under the status bar, and the
+    // overlay is shown only for `.light`. Nothing else in this file sets a
+    // status bar style.
+    .background(StatusBarOverlayAnchor().frame(width: 0, height: 0).accessibilityHidden(true))
+    .onPreferenceChange(NomiStatusBarToneKey.self) { tone in
+      MainActor.assumeIsolated {
+        StatusBarOverlay.shared.apply(tone)
+      }
+    }
+    #endif
     .task {
       await environment.bootstrap()
     }
