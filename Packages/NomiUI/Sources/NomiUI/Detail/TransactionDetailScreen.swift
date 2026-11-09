@@ -344,13 +344,16 @@ public struct TransactionDetailScreen: View {
       .accessibilityLabel(spoken)
   }
 
-  /// Read-only flags: "Needs review", "Merged from N sources", "No account
-  /// assigned", "Transfer". Inline when they fit, one per line at large text sizes.
+  /// Read-only flags: "Merged from N sources", "No account assigned", "Transfer",
+  /// and for a flagged row the stored reason (WR-2): "Sender not verified",
+  /// "Not in rupees, not counted", "Date couldn't be read", "Amount couldn't be
+  /// read", "Read from an unfamiliar email"; otherwise "Needs review".
+  /// Inline when they fit, one per line at large text sizes.
   @ViewBuilder
   private func flagChips(_ transaction: NomiCore.Transaction) -> some View {
     let reasons = TransactionDetailLogic.flagReasons(
       accountID: transaction.accountID, needsReview: transaction.needsReview, mergedCount: transaction.mergedCount,
-      isTransfer: transaction.isTransfer)
+      isTransfer: transaction.isTransfer, needsReviewReason: transaction.needsReviewReason)
     if !reasons.isEmpty {
       ViewThatFits(in: .horizontal) {
         HStack(spacing: NomiSpacing.xxs) {
