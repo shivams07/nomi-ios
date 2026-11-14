@@ -6,7 +6,11 @@ struct TransactionCSVExporterTests {
   private static let categoryID = UUID(uuidString: "00000000-0000-0000-0000-000000000701")!
   private static let unknownID = UUID(uuidString: "00000000-0000-0000-0000-000000000703")!
 
+  /// UTC by default, so every existing expectation reads the same date text it
+  /// did before the exporter took a time zone.
   private func row(
+    date: Date = Date(timeIntervalSince1970: 1_700_000_000),
+    timeZone: TimeZone = TimeZone(identifier: "UTC")!,
     descriptionText: String = "SWIGGY ORDER",
     merchantName: String? = "SWIGGY",
     amountMinor: Int = 123_456,
@@ -22,7 +26,8 @@ struct TransactionCSVExporterTests {
     note: String? = nil
   ) -> String {
     TransactionCSVExporter.row(
-      date: Date(timeIntervalSince1970: 1_700_000_000),
+      date: date,
+      timeZone: timeZone,
       descriptionText: descriptionText,
       merchantName: merchantName,
       amountMinor: amountMinor,
@@ -120,5 +125,18 @@ struct TransactionCSVExporterTests {
   @Test func noteContainingACommaIsQuoted() {
     let csvRow = row(note: "Great, thanks")
     #expect(csvRow.hasSuffix("\"Great, thanks\""))
+  }
+
+  /// R12a. 19:00 UTC on 13 Nov is 00:30 on 14 Nov in India, and the export
+  /// must say the local day with the local offset, or a spreadsheet files the
+  /// row under the wrong day.
+  @Test func datesCarryTheGivenOffset() {
+    var utc = Calendar(identifier: .gregorian)
+    utc.timeZone = TimeZone(identifier: "UTC")!
+    let instant = utc.date(from: DateComponents(year: 2026, month: 11, day: 13, hour: 19))!
+    let csvRow = row(
+      date: instant,
+      timeZone: TimeZone(identifier: "Asia/Kolkata")!)
+    #expect(csvRow.hasPrefix("2026-11-14T00:30:00+05:30,"))
   }
 }

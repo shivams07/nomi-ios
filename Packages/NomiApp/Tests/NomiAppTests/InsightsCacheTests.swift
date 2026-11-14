@@ -220,4 +220,50 @@ final class InsightsCacheTests: XCTestCase {
     }
     XCTAssertEqual(cache.count, InsightsCache.capacity, "nothing was evicted early")
   }
+
+  // MARK: - R12a: nothing computed on an earlier day is served
+
+  private func day(_ month: Int, _ dayOfMonth: Int) -> Date {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Asia/Kolkata") ?? .current
+    return calendar.date(from: DateComponents(year: 2026, month: month, day: dayOfMonth))!
+  }
+
+  /// The same day is a hit. A new day drops everything held, and the drop does
+  /// not publish: a roll-over runs inside a view body, and a published change
+  /// there is a render loop.
+  func testRollOverDropsYesterdaysValueWithoutBumpingGeneration() {
+    let cache = InsightsCache()
+    let key = InsightsCacheKey.insights(.month(year: 2026, month: 11))
+
+    cache.rollOver(toDay: day(11, 14))
+    _ = cache.value(for: key) { 1 }
+    let generation = cache.generation
+
+    cache.rollOver(toDay: day(11, 14))
+    let missesBeforeSameDay = cache.missCount
+    XCTAssertEqual(cache.value(for: key) { 2 }, 1, "the same day is still a hit")
+    XCTAssertEqual(cache.missCount, missesBeforeSameDay)
+
+    cache.rollOver(toDay: day(11, 15))
+    XCTAssertTrue(cache.isEmpty, "yesterday's value is dropped")
+    XCTAssertEqual(cache.generation, generation, "the roll-over does not publish")
+
+    XCTAssertEqual(cache.value(for: key) { 3 }, 3, "the next read recomputes")
+  }
+
+  /// A day change that happens while the app is open must reach the screens,
+  /// which hold no `@Query`. The observer runs on the main queue, so the test
+  /// yields until the change lands rather than blocking it.
+  func testDayChangedNotificationBumpsGeneration() async throws {
+    let cache = InsightsCache()
+    let before = cache.generation
+
+    NotificationCenter.default.post(name: .NSCalendarDayChanged, object: nil)
+
+    for _ in 0..<200 where cache.generation == before {
+      try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    XCTAssertEqual(cache.generation, before + 1)
+  }
 }

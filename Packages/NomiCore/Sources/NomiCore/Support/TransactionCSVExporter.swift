@@ -2,14 +2,17 @@ import Foundation
 
 /// Pure function. Amounts are plain decimal (`1234.50`), never `\u{20B9}` or a
 /// grouping separator — a CSV is opened in a spreadsheet, not displayed in the
-/// app. Dates export as ISO-8601. Header row always present, even for zero rows.
+/// app. Dates export as ISO-8601 with the offset of `timeZone` (R12a), so a
+/// 00:30 IST row reads `...T00:30:00+05:30` and not the UTC hour it was stored
+/// as. Header row always present, even for zero rows.
 public enum TransactionCSVExporter {
   static let header = "date,description,merchant,amount,currency,direction,category,account,source,needs_review,merged_count,upi_kind,counterparty_vpa,note"
 
-  public static func export(_ rows: [Transaction], names: CSVNameMaps) -> String {
+  public static func export(_ rows: [Transaction], names: CSVNameMaps, timeZone: TimeZone = .current) -> String {
     let csvRows = rows.map {
       row(
         date: $0.date,
+        timeZone: timeZone,
         descriptionText: $0.descriptionText,
         merchantName: $0.merchantName,
         amountMinor: $0.amountMinor,
@@ -39,6 +42,7 @@ public enum TransactionCSVExporter {
   /// so it can be unit tested without constructing one.
   static func row(
     date: Date,
+    timeZone: TimeZone = .current,
     descriptionText: String,
     merchantName: String?,
     amountMinor: Int,
@@ -55,6 +59,7 @@ public enum TransactionCSVExporter {
   ) -> String {
     let iso = ISO8601DateFormatter()
     iso.formatOptions = [.withInternetDateTime]
+    iso.timeZone = timeZone
 
     let isoDate = iso.string(from: date)
     let description = csvField(descriptionText)
