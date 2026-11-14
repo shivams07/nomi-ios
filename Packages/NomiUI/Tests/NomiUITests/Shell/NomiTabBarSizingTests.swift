@@ -6,8 +6,9 @@ import Testing
 
 /// TB1's Dynamic Type rule for the tab bar, pinned as values. The label widths are
 /// the iOS rendered widths from `NomiTabBarLayoutTests` (points, Home, Ledger,
-/// Insights, Accounts). Sizes above `xxLarge` are the uncapped widths, measured
+/// Insights, Accounts). Sizes above `xLarge` are the uncapped widths, measured
 /// with the cap removed, so the claims about AX sizes are about what the cap stops.
+/// Slot widths include the capsule padding (`capsuleLabelPadding`, D10).
 @Suite("Tab bar Dynamic Type")
 struct NomiTabBarSizingTests {
   private static let everySize: [DynamicTypeSize] = [
@@ -35,9 +36,24 @@ struct NomiTabBarSizingTests {
     measured.first { $0.size == size }?.widths ?? []
   }
 
-  @Test("the cap is xxLarge, the largest size whose five slots fit 375 pt")
-  func capIsXXLarge() {
-    #expect(NomiTabBarSizing.maximumTypeSize == .xxLarge)
+  @Test("the cap is xLarge, the largest size whose padded slots fit 375 pt")
+  func capIsXLarge() {
+    #expect(NomiTabBarSizing.maximumTypeSize == .xLarge)
+  }
+
+  @Test("the capsule padding is 4 pt on each side of the label")
+  func capsulePaddingIsFourPoints() {
+    #expect(NomiTabBarSizing.capsuleLabelPadding == 4)
+  }
+
+  @Test("every slot leaves at least the padding on each side of its label, up to the cap")
+  func everySlotPadsEachLabel() {
+    for entry in Self.measured where entry.size <= NomiTabBarSizing.maximumTypeSize {
+      for width in entry.widths {
+        let slot = NomiTabBarSizing.slotWidth(forLabelWidth: width)
+        #expect(slot - width >= 2 * NomiTabBarSizing.capsuleLabelPadding - 0.001, "label \(width) pt in slot \(slot) pt, size \(entry.size)")
+      }
+    }
   }
 
   @Test("the cap sits below every accessibility size, so AX sizes are the ones it clamps")
@@ -75,7 +91,7 @@ struct NomiTabBarSizingTests {
     }
   }
 
-  @Test("xxxLarge does not fit at 375 pt: its slots add to 266.1 pt against 259 pt")
+  @Test("xxxLarge does not fit at 375 pt: its padded slots add to 293.1 pt against 259 pt")
   func xxxLargeDoesNotFitAtNarrowWidth() {
     #expect(
       !NomiTabBarSizing.labelsFitOneLine(
@@ -108,7 +124,56 @@ struct NomiTabBarSizingTests {
   @Test("a tab slot is never narrower than the artboard's 56 pt")
   func slotNeverNarrowerThanArtboard() {
     #expect(NomiTabBarSizing.slotWidth(forLabelWidth: 10) == 56)
-    #expect(NomiTabBarSizing.slotWidth(forLabelWidth: 72.7) == 72.7)
+    #expect(NomiTabBarSizing.slotWidth(forLabelWidth: 40) == 56)
+  }
+
+  @Test("a slot is its label plus the padding on each side, once wider than 56 pt")
+  func slotWidensByThePadding() {
+    // Large Accounts is 50.0 pt, so its selected capsule is 58 pt (the artboard's 56 to 58 at Large).
+    #expect(abs(NomiTabBarSizing.slotWidth(forLabelWidth: 50.0) - 58) < 0.001)
+    // xLarge Accounts is 68.0 pt, so its capsule is 76 pt.
+    #expect(abs(NomiTabBarSizing.slotWidth(forLabelWidth: 68.0) - 76) < 0.001)
+  }
+
+  // MARK: - Vertical rule (content -> capsule -> bar)
+
+  @Test("the capsule's minimum height at default size is the artboard's 48 pt")
+  func capsuleMinimumIsFortyEight() {
+    #expect(NomiTabBarSizing.capsuleMinHeight == 48)
+    #expect(NomiTabBarSizing.capsuleHeight(contentHeight: 0) == 48)
+    #expect(NomiTabBarSizing.capsuleHeight(contentHeight: 37) == 48)
+  }
+
+  @Test("a capsule taller than its minimum keeps 4 pt above and below its content")
+  func capsulePadsContentOnBothEnds() {
+    // The measured xLarge content is 50.7 pt (icon, gap and label), so the capsule is 58.7 pt.
+    #expect(abs(NomiTabBarSizing.capsuleHeight(contentHeight: 50.7) - 58.7) < 0.001)
+    #expect(abs(NomiTabBarSizing.capsuleHeight(contentHeight: 50.7) - 50.7 - 8) < 0.001)
+  }
+
+  @Test("the bar is the artboard's 64 pt at default size, around the 52 pt plus")
+  func barIsSixtyFourAtDefaultSize() {
+    #expect(NomiTabBarSizing.barMinHeight == 64)
+    #expect(abs(NomiTabBarSizing.barHeight(capsuleHeight: 48) - 64) < 0.001)
+  }
+
+  @Test("at xLarge the bar grows by the capsule's extra height only, to 70.7 pt")
+  func barGrowsOnlyAsMuchAsTheCapsule() {
+    #expect(abs(NomiTabBarSizing.barHeight(capsuleHeight: 58.7) - 70.7) < 0.001)
+  }
+
+  @Test("the bar stays within the 72 pt bound at the cap, and the bound is 72 pt")
+  func barStaysBoundedAtTheCap() {
+    #expect(NomiTabBarSizing.barHeightBound == 72)
+    let capsuleAtCap = NomiTabBarSizing.capsuleHeight(contentHeight: 50.7)
+    #expect(NomiTabBarSizing.barHeight(capsuleHeight: capsuleAtCap) <= NomiTabBarSizing.barHeightBound)
+  }
+
+  @Test("the bar never shrinks below 64 pt, whatever the capsule")
+  func barNeverBelowSixtyFour() {
+    for capsule: CGFloat in [0, 40, 48, 52, 58.7, 66] {
+      #expect(NomiTabBarSizing.barHeight(capsuleHeight: capsule) >= 64)
+    }
   }
 
   @Test("the tap target stays at least 44 pt on each tab")

@@ -177,9 +177,11 @@ struct RootView: View {
           select(tab)
         }
       },
-      onAdd: { isPresentingEntry = true }
+      onAdd: { isPresentingEntry = true },
+      // The bar reports its own measured height (a preference from the bar did not
+      // reach this view; the probe read 0 while the bar measured 64).
+      onHeightChange: { tabBarHeight = $0 }
     )
-    .onPreferenceChange(NomiTabBarHeightKey.self) { tabBarHeight = $0 }
     .padding(.horizontal, TabBarInsetHeight.sideMargin)
     .padding(.bottom, TabBarInsetHeight.bottomMargin)
     // Keep the bar fixed when the keyboard rises, so it never slides up over a field.

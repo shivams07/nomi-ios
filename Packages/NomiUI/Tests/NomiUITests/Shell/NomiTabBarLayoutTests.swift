@@ -26,6 +26,7 @@ final class NomiTabBarLayoutTests: XCTestCase {
   private static let widths: [CGFloat] = [375, 390, 402, 440]
   private static let checkedSizes: [(name: String, category: UIContentSizeCategory)] = [
     ("large", .large),
+    ("xLarge", .extraLarge),
     ("xxLarge", .extraExtraLarge),
     ("xxxLarge", .extraExtraExtraLarge),
     ("accessibilityMedium", .accessibilityMedium),
@@ -44,7 +45,7 @@ final class NomiTabBarLayoutTests: XCTestCase {
     ("accessibilityXXXLarge", .accessibilityExtraExtraExtraLarge),
   ]
   /// The category at `NomiTabBarSizing.maximumTypeSize`. Sizes above it must measure as this one.
-  private static let capCategory: UIContentSizeCategory = .extraExtraLarge
+  private static let capCategory: UIContentSizeCategory = .extraLarge
 
   // MARK: - Tests
 
@@ -67,16 +68,52 @@ final class NomiTabBarLayoutTests: XCTestCase {
     }
   }
 
-  /// The bar is 64 pt, its minimum. Content taller than that would grow it, so this
-  /// is the bound: 64 pt at every checked size and width.
-  func testBarHeightIsBoundedAt64AtEveryCheckedSizeAndWidth() {
+  /// At default size the bar is the artboard's 64 pt at every width. Above it the bar
+  /// grows only as far as its capsule, and never past the bound (D10, vertical).
+  func testBarHeightIsSixtyFourAtLargeAndBoundedAboveAtEveryWidth() {
     for width in Self.widths {
       for size in Self.checkedSizes {
-        let bar = measure(width: width, category: size.category).bar
-        XCTAssertEqual(
-          bar.height, 64, accuracy: 0.5,
-          "bar is \(bar.height) pt at \(size.name), \(width) pt"
+        let measured = measure(width: width, category: size.category)
+        let bar = measured.bar
+        XCTAssertGreaterThanOrEqual(bar.height, 64 - 0.5, "bar below 64 at \(size.name), \(width) pt")
+        XCTAssertLessThanOrEqual(
+          bar.height, NomiTabBarSizing.barHeightBound + 0.5,
+          "bar is \(bar.height) pt at \(size.name), \(width) pt, above the \(NomiTabBarSizing.barHeightBound) pt bound"
         )
+        if size.category == .large {
+          XCTAssertEqual(bar.height, 64, accuracy: 0.5, "bar is \(bar.height) pt at Large, \(width) pt")
+        }
+        // The bar is exactly the rule applied to its selected capsule.
+        if let capsule = measured.frame("slot:Home") {
+          XCTAssertEqual(
+            bar.height, NomiTabBarSizing.barHeight(capsuleHeight: capsule.height), accuracy: 0.5,
+            "bar \(bar.height) pt does not follow its capsule \(capsule.height) pt at \(size.name), \(width) pt"
+          )
+        }
+      }
+    }
+  }
+
+  /// The selected capsule holds its label's full frame, vertically and horizontally,
+  /// with the 4 pt padding on every side, for every tab, at Large, xLarge and AX-XXXL,
+  /// at each width. Without the vertical padding the label sits on or past the bottom edge.
+  func testCapsuleContainsEveryLabelsFullFrameWithPaddingOnAllSides() {
+    let padding = NomiTabBarSizing.capsuleLabelPadding - 0.5
+    let checked: [UIContentSizeCategory] = [.large, .extraLarge, .accessibilityExtraExtraExtraLarge]
+    for selected in Self.tabTitles {
+      for width in Self.widths {
+        for category in checked {
+          let measured = measure(width: width, category: category, selectedID: selected.lowercased())
+          guard let label = measured.frame("label:\(selected)"), let slot = measured.frame("slot:\(selected)") else {
+            XCTFail("no label or capsule for \(selected) at \(category.rawValue), \(width) pt")
+            continue
+          }
+          let at = "\(selected) at \(category.rawValue), \(width) pt"
+          XCTAssertGreaterThanOrEqual(label.minX - slot.minX, padding, "left, \(at)")
+          XCTAssertGreaterThanOrEqual(slot.maxX - label.maxX, padding, "right, \(at)")
+          XCTAssertGreaterThanOrEqual(label.minY - slot.minY, padding, "top, \(at): label \(label.minY - slot.minY) pt below the capsule top")
+          XCTAssertGreaterThanOrEqual(slot.maxY - label.maxY, padding, "bottom, \(at): label \(slot.maxY - label.maxY) pt above the capsule bottom")
+        }
       }
     }
   }
@@ -121,7 +158,7 @@ final class NomiTabBarLayoutTests: XCTestCase {
   func testCapHoldsLabelWidthsAndBarAboveTheCap() {
     for width in Self.widths {
       let atCap = measure(width: width, category: Self.capCategory)
-      for category in [UIContentSizeCategory.extraExtraExtraLarge, .accessibilityMedium, .accessibilityExtraExtraExtraLarge] {
+      for category in [UIContentSizeCategory.extraExtraLarge, .extraExtraExtraLarge, .accessibilityMedium, .accessibilityExtraExtraExtraLarge] {
         let above = measure(width: width, category: category)
         for title in Self.tabTitles {
           let capWidth = atCap.frame("label:\(title)")?.width ?? -1
@@ -129,6 +166,32 @@ final class NomiTabBarLayoutTests: XCTestCase {
           XCTAssertEqual(aboveWidth, capWidth, accuracy: 0.5, "\(title) grows above the cap at \(width) pt, \(category.rawValue)")
         }
         XCTAssertEqual(above.frame("bar")?.height ?? -1, atCap.frame("bar")?.height ?? -2, accuracy: 0.5, "bar grows above the cap at \(width) pt, \(category.rawValue)")
+      }
+    }
+  }
+
+  /// Each selected capsule contains its label with the padding on both sides, for every
+  /// tab selected, at 375, 390, 402 and 440 pt, at Large, the cap and AX-XXXL (D10).
+  func testSelectedCapsuleContainsItsLabelWithPaddingForEveryTab() {
+    let minimumInset = NomiTabBarSizing.capsuleLabelPadding - 0.5
+    let checked: [UIContentSizeCategory] = [.large, .extraLarge, .accessibilityExtraExtraExtraLarge]
+    for selected in Self.tabTitles {
+      for width in Self.widths {
+        for category in checked {
+          let measured = measure(width: width, category: category, selectedID: selected.lowercased())
+          guard let label = measured.frame("label:\(selected)"), let slot = measured.frame("slot:\(selected)") else {
+            XCTFail("no label or capsule for \(selected) at \(category.rawValue), \(width) pt")
+            continue
+          }
+          XCTAssertGreaterThanOrEqual(
+            label.minX - slot.minX, minimumInset,
+            "\(selected) capsule leaves \(label.minX - slot.minX) pt on the left at \(category.rawValue), \(width) pt"
+          )
+          XCTAssertGreaterThanOrEqual(
+            slot.maxX - label.maxX, minimumInset,
+            "\(selected) capsule leaves \(slot.maxX - label.maxX) pt on the right at \(category.rawValue), \(width) pt"
+          )
+        }
       }
     }
   }
@@ -160,7 +223,8 @@ final class NomiTabBarLayoutTests: XCTestCase {
         return "\(title)=\(String(format: "%.1f", label?.width ?? -1))/h\(String(format: "%.1f", label?.height ?? -1))"
       }.joined(separator: " ")
       let bar = measured.frame("bar")?.height ?? -1
-      print("TB1TABLE \(size.name) \(row) barH=\(String(format: "%.1f", bar)) oneLineH=\(String(format: "%.2f", oneLineHeight(size.category)))")
+      let capsule = measured.frame("slot:Home")?.height ?? -1
+      print("TB1TABLE \(size.name) \(row) capsuleH=\(String(format: "%.1f", capsule)) barH=\(String(format: "%.1f", bar)) oneLineH=\(String(format: "%.2f", oneLineHeight(size.category)))")
     }
   }
 
@@ -184,7 +248,7 @@ final class NomiTabBarLayoutTests: XCTestCase {
 
   /// Hosts the real bar at `width`, inside RootView's margins, with the category set
   /// through UIKit's trait override. Lays it out and returns the published frames.
-  private func measure(width: CGFloat, category: UIContentSizeCategory) -> Measured {
+  private func measure(width: CGFloat, category: UIContentSizeCategory, selectedID: String = "home") -> Measured {
     let capture = Capture()
     let bar = NomiTabBar(
       leading: [
@@ -195,7 +259,7 @@ final class NomiTabBarLayoutTests: XCTestCase {
         NomiTabBarItem(id: "insights", title: "Insights", symbolName: "chart.pie"),
         NomiTabBarItem(id: "accounts", title: "Accounts", symbolName: "creditcard"),
       ],
-      selectedID: "home",
+      selectedID: selectedID,
       onSelect: { _ in },
       onAdd: {}
     )

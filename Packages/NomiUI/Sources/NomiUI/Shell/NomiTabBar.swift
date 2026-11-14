@@ -15,15 +15,6 @@ public struct NomiTabBarItem: Identifiable, Equatable, Sendable {
   }
 }
 
-/// Publishes the tab bar's height, so the screen can pad its content above it.
-public struct NomiTabBarHeightKey: PreferenceKey {
-  public static let defaultValue: CGFloat = 0
-
-  public static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-    value = nextValue()
-  }
-}
-
 /// The Dynamic Type rule for the tab bar (TB1), as plain values so the tests can
 /// pin it. `NomiTabBarLayoutTests` checks it against the widths the device draws.
 ///
@@ -37,28 +28,63 @@ public struct NomiTabBarHeightKey: PreferenceKey {
 /// | xxLarge | 45.3 | 54.0 | 60.3 | 72.7 |
 /// | xxxLarge | 51.0 | 60.7 | 67.7 | 81.7 |
 ///
+/// Each selected capsule adds `capsuleLabelPadding` on each side of its label, so the
+/// label never touches the capsule's edge (D10). With that padding the slot widths at
+/// each size are:
+///
+/// | Size | Home | Ledger | Insights | Accounts | Sum |
+/// |---|---|---|---|---|---|
+/// | large | 56.0 | 56.0 | 56.0 | 58.0 | 226.0 |
+/// | xLarge | 56.0 | 58.7 | 64.7 | 76.0 | 255.4 |
+/// | xxLarge | 56.0 | 62.0 | 68.3 | 80.7 | 267.0 |
+///
 /// At 375 pt the four tab slots and the `+` share 259 pt, once RootView's 24 pt side
 /// margins, the bar's 8 pt padding and the 52 pt `+` come out. A slot is at least
-/// 56 pt and widens to its label. The slots at `xxLarge` add to 245 pt, which fits
-/// with 14 pt spare. At `xxxLarge` they add to 266.1 pt, which does not fit. So the
-/// cap is `xxLarge`, the largest size whose five slots fit 375 pt with no overlap.
+/// 56 pt and widens to its label plus the padding. `xLarge` sums to 255.4 pt and fits
+/// with 3.6 pt spare. `xxLarge` sums to 267 pt and does not fit. So the cap is
+/// `xLarge`, the largest size whose slots fit 375 pt with the padding and no overlap.
 public enum NomiTabBarSizing {
   /// Sizes above this draw as this size, inside the bar only.
-  public static let maximumTypeSize: DynamicTypeSize = .xxLarge
+  public static let maximumTypeSize: DynamicTypeSize = .xLarge
   /// The narrowest a tab slot may be: the artboard's 56 pt. A slot widens to fit
   /// a longer label.
   public static let slotMinWidth: CGFloat = 56
+  /// Inner padding on each side of a tab's label, inside the selected capsule (D10).
+  public static let capsuleLabelPadding: CGFloat = 4
   /// The `+` button's diameter.
   public static let addButtonWidth: CGFloat = 52
   /// The bar's own padding on each side, inside its glass.
   public static let barHorizontalPadding: CGFloat = 8
+  /// The selected capsule's minimum height at default size: the artboard's 48 pt.
+  public static let capsuleMinHeight: CGFloat = 48
+  /// The bar's minimum height at default size: the artboard's 64 pt.
+  public static let barMinHeight: CGFloat = 64
+  /// The space the bar keeps above and below its tallest child. The tallest child at
+  /// Large is the 52 pt `+`, so 6 pt each side gives the artboard's 64 pt bar.
+  public static let barVerticalPadding: CGFloat = 6
+  /// The tallest the bar may grow at the cap. Tests check every size against it.
+  public static let barHeightBound: CGFloat = 72
+
+  /// The capsule's height for its content: the icon, label and gap, plus the same
+  /// 4 pt padding above and below as beside the label (D10), never below the minimum.
+  public static func capsuleHeight(contentHeight: CGFloat) -> CGFloat {
+    max(capsuleMinHeight, contentHeight + 2 * capsuleLabelPadding)
+  }
+
+  /// The bar's height for its capsule: never below the minimum. Above it the bar
+  /// grows only as far as its tallest child, the capsule or the 52 pt `+`.
+  public static func barHeight(capsuleHeight: CGFloat) -> CGFloat {
+    max(barMinHeight, max(capsuleHeight, addButtonWidth) + 2 * barVerticalPadding)
+  }
 
   public static func effectiveTypeSize(_ size: DynamicTypeSize) -> DynamicTypeSize {
     min(size, maximumTypeSize)
   }
 
+  /// The slot width for a label: the label plus its capsule padding on each side,
+  /// never narrower than `slotMinWidth`.
   public static func slotWidth(forLabelWidth labelWidth: CGFloat) -> CGFloat {
-    max(slotMinWidth, labelWidth)
+    max(slotMinWidth, labelWidth + 2 * capsuleLabelPadding)
   }
 
   /// The width left for the four tab slots once the screen's side margins, the
@@ -105,19 +131,24 @@ public struct NomiTabBar: View {
   private let selectedID: String
   private let onSelect: (String) -> Void
   private let onAdd: () -> Void
+  private let onHeightChange: (CGFloat) -> Void
 
+  /// `onHeightChange` receives the bar's height on appearance and whenever it changes,
+  /// so the screen can pad its content above the bar.
   public init(
     leading: [NomiTabBarItem],
     trailing: [NomiTabBarItem],
     selectedID: String,
     onSelect: @escaping (String) -> Void,
-    onAdd: @escaping () -> Void
+    onAdd: @escaping () -> Void,
+    onHeightChange: @escaping (CGFloat) -> Void = { _ in }
   ) {
     self.leading = leading
     self.trailing = trailing
     self.selectedID = selectedID
     self.onSelect = onSelect
     self.onAdd = onAdd
+    self.onHeightChange = onHeightChange
   }
 
   private static let cornerRadius: CGFloat = 32
@@ -138,11 +169,14 @@ public struct NomiTabBar: View {
     // capped size from `NomiTabItemContent`.
     .dynamicTypeSize(...NomiTabBarSizing.maximumTypeSize)
     .padding(.horizontal, NomiTabBarSizing.barHorizontalPadding)
-    .frame(maxWidth: .infinity, minHeight: 64)
+    .padding(.vertical, NomiTabBarSizing.barVerticalPadding)
+    .frame(maxWidth: .infinity, minHeight: NomiTabBarSizing.barMinHeight)
     .nomiGlass(.tabBar, in: RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
     .background {
       GeometryReader { proxy in
-        Color.clear.preference(key: NomiTabBarHeightKey.self, value: proxy.size.height)
+        Color.clear
+          .onAppear { onHeightChange(proxy.size.height) }
+          .onChange(of: proxy.size.height) { _, height in onHeightChange(height) }
       }
     }
     .background {
@@ -234,8 +268,11 @@ private struct NomiTabItemContent: View {
         }
     }
     .foregroundStyle(isSelected ? NomiColor.onPrimary : NomiColor.inkTab)
+    // The padding sits inside the capsule, which is drawn after it (D10).
+    .padding(.horizontal, NomiTabBarSizing.capsuleLabelPadding)
+    .padding(.vertical, NomiTabBarSizing.capsuleLabelPadding)
     .frame(minWidth: NomiTabBarSizing.slotMinWidth)
-    .frame(minHeight: 48)
+    .frame(minHeight: NomiTabBarSizing.capsuleMinHeight)
     .background {
       if isSelected {
         Capsule().fill(NomiColor.primary)
