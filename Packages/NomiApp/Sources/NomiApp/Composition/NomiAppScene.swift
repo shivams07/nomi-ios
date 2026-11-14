@@ -3,6 +3,10 @@ import NomiCore
 import NomiUI
 import SwiftUI
 
+#if canImport(UIKit)
+  import UIKit
+#endif
+
 #if os(iOS)
   import UserNotifications
 #endif
@@ -22,17 +26,60 @@ import SwiftUI
 /// (§2.18).
 @MainActor
 enum AppServices {
+  /// The store and how it was opened. Built once, on first access. Reading
+  /// `storage.persistent` is what constructs it, so the background gate below
+  /// reads it only after protected data is known to be available.
+  static let storage = NomiModelContainer.makeWithLocalFallback()
+
+  /// When the store is not persistent, preferences read through to what the
+  /// user last saved but nothing written this launch reaches `UserDefaults`
+  /// (I-6 Amendment 1, step A4).
   static let shared: AppEnvironment = {
-    let storage = NomiModelContainer.makeWithLocalFallback()
-    return AppEnvironment(container: storage.container, storageMode: storage.mode)
+    let preferences: any KeyValueStoring =
+      storage.persistent
+      ? UserDefaultsKeyValueStore()
+      : ReadThroughKeyValueStore(reading: UserDefaultsKeyValueStore())
+    return AppEnvironment(
+      container: storage.container, storageMode: storage.mode, preferences: preferences)
   }()
+
+  /// Whether a background task may run store work. The closure is the only way
+  /// to learn persistence, and it is not called without protected data: that is
+  /// what keeps the store from being constructed in a background launch before
+  /// first unlock (A4).
+  static func mayRunStoreWork(protectedDataAvailable: Bool, storeIsPersistent: () -> Bool) -> Bool {
+    guard protectedDataAvailable else { return false }
+    return storeIsPersistent()
+  }
+
+  /// Whether the device's data protection lets this process read its files.
+  /// Before first unlock, a background launch cannot open the store.
+  static var protectedDataAvailable: Bool {
+    #if canImport(UIKit)
+      UIApplication.shared.isProtectedDataAvailable
+    #else
+      true
+    #endif
+  }
 
   /// Touched from `NomiAppScene.init`. The `Void`-typed `static let` is the
   /// idiom for "run this once, on first access, thread-safely" — a `Bool` flag
   /// checked and set would be two statements a future edit can separate.
+  ///
+  /// A background task that fires without protected data, or on a store that is
+  /// not persistent, completes with `success: false` and does no work. It does
+  /// not reschedule here: the next `.background` scene phase does (A5).
   static let registerBackgroundTasks: Void = {
     AppSyncCoordinator.registerBackgroundTasks { work in
       Task { @MainActor in
+        guard
+          AppServices.mayRunStoreWork(
+            protectedDataAvailable: AppServices.protectedDataAvailable,
+            storeIsPersistent: { AppServices.storage.persistent })
+        else {
+          work.setCompleted(success: false)
+          return
+        }
         await AppServices.shared.sync.run(work)
       }
     }
@@ -80,7 +127,11 @@ public struct NomiAppScene: Scene {
     .onChange(of: scenePhase) { _, phase in
       switch phase {
       case .active:
-        Task { await environment.sync.didBecomeActive() }
+        // A store that is not persistent (I-6 Amendment 1, A6) never syncs in
+        // the foreground either. Its cursor writes would die with the process.
+        if AppServices.storage.persistent {
+          Task { await environment.sync.didBecomeActive() }
+        }
         // U9b. `.CKAccountChanged` is not guaranteed to reach a process that
         // was backgrounded while the user signed in or out, so every
         // foreground re-probes. `refresh()` publishes only on a real change,
