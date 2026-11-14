@@ -76,8 +76,12 @@ public final class SwiftDataColumnMappingStore: ColumnMappingStore, @unchecked S
     // Swallowed because `ColumnMappingStore` does not throw and there is nowhere
     // to report to: this is called from `saveMapping`, whose whole job is a
     // convenience for next time. A failure here costs the user one re-mapping,
-    // not an import.
-    try? context.save()
+    // not an import. It is logged, so the swallow is not silent.
+    do {
+      try context.save()
+    } catch {
+      NomiLog.store.error("column mapping save failed: \(NomiLog.describe(error), privacy: .public)")
+    }
   }
 
   /// **Which record wins is unspecified when there is more than one.** CloudKit
@@ -99,7 +103,12 @@ public final class SwiftDataColumnMappingStore: ColumnMappingStore, @unchecked S
       predicate: #Predicate<ColumnMappingRecord> { $0.formatSignature == signature }
     )
     descriptor.fetchLimit = 1
-    return try? context.fetch(descriptor).first
+    do {
+      return try context.fetch(descriptor).first
+    } catch {
+      NomiLog.store.error("column mapping fetch failed: \(NomiLog.describe(error), privacy: .public)")
+      return nil
+    }
   }
 }
 
@@ -113,7 +122,13 @@ public final class SwiftDataColumnMappingStore: ColumnMappingStore, @unchecked S
 /// that was measured wrong — see `InMemoryModelContainer`'s note.
 enum ColumnMappingCoding {
   static func json(from mapping: ColumnMapping) -> String? {
-    guard let data = try? JSONEncoder().encode(mapping) else { return nil }
+    let data: Data
+    do {
+      data = try JSONEncoder().encode(mapping)
+    } catch {
+      NomiLog.store.error("column mapping encode failed: \(NomiLog.describe(error), privacy: .public)")
+      return nil
+    }
     return String(data: data, encoding: .utf8)
   }
 
@@ -123,8 +138,13 @@ enum ColumnMappingCoding {
   /// `BankPresets` or asks, which is what it does for a format never seen
   /// before and is the right behaviour for one whose record is unusable.
   static func saved(fromJSON json: String, bankLabel: String) -> SavedColumnMapping? {
-    guard let mapping = try? JSONDecoder().decode(ColumnMapping.self, from: Data(json.utf8))
-    else { return nil }
+    let mapping: ColumnMapping
+    do {
+      mapping = try JSONDecoder().decode(ColumnMapping.self, from: Data(json.utf8))
+    } catch {
+      NomiLog.store.error("column mapping decode failed: \(NomiLog.describe(error), privacy: .public)")
+      return nil
+    }
     return SavedColumnMapping(mapping: mapping, bankLabel: bankLabel)
   }
 }
