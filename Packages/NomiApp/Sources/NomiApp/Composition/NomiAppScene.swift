@@ -35,13 +35,23 @@ enum AppServices {
   /// user last saved but nothing written this launch reaches `UserDefaults`
   /// (I-6 Amendment 1, step A4).
   static let shared: AppEnvironment = {
-    let preferences: any KeyValueStoring =
-      storage.persistent
-      ? UserDefaultsKeyValueStore()
-      : ReadThroughKeyValueStore(reading: UserDefaultsKeyValueStore())
-    return AppEnvironment(
-      container: storage.container, storageMode: storage.mode, preferences: preferences)
+    AppEnvironment(
+      container: storage.container, storageMode: storage.mode,
+      preferences: preferenceStore(persistent: storage.persistent))
   }()
+
+  /// The preference store for this launch. A non-persistent launch reads through
+  /// to what the user last saved, and every write stays in an overlay, so
+  /// nothing this launch writes reaches `UserDefaults` (A4). Internal so a test
+  /// can drive it with its own suite.
+  static func preferenceStore(
+    persistent: Bool, defaults: UserDefaults = .standard
+  ) -> any KeyValueStoring {
+    if persistent {
+      return UserDefaultsKeyValueStore(defaults: defaults)
+    }
+    return ReadThroughKeyValueStore(reading: UserDefaultsKeyValueStore(defaults: defaults))
+  }
 
   /// Whether a background task may run store work. The closure is the only way
   /// to learn persistence, and it is not called without protected data: that is
@@ -52,9 +62,13 @@ enum AppServices {
     return storeIsPersistent()
   }
 
+  /// Where the protected-data answer comes from at runtime. A test replaces it.
+  /// Read at the moment a background task runs, never cached.
+  static var protectedDataSource: () -> Bool = { systemProtectedDataAvailable }
+
   /// Whether the device's data protection lets this process read its files.
   /// Before first unlock, a background launch cannot open the store.
-  static var protectedDataAvailable: Bool {
+  static var systemProtectedDataAvailable: Bool {
     #if canImport(UIKit)
       UIApplication.shared.isProtectedDataAvailable
     #else
@@ -62,25 +76,41 @@ enum AppServices {
     #endif
   }
 
+  /// One background task, from the handler the system calls. Without protected
+  /// data it completes `success: false` and does not consult the store, so the
+  /// store is not constructed in a background launch before first unlock. A
+  /// non-persistent store completes the same way. Neither reschedules here; the
+  /// next `.background` scene phase does (A5).
+  static func runBackground(
+    _ work: BackgroundWork,
+    storeIsPersistent: () -> Bool,
+    perform: (BackgroundWork) async -> Void
+  ) async {
+    guard mayRunStoreWork(protectedDataAvailable: protectedDataSource(), storeIsPersistent: storeIsPersistent)
+    else {
+      work.setCompleted(success: false)
+      return
+    }
+    await perform(work)
+  }
+
+  /// The foreground sync on `.active`. A non-persistent store does not sync in the
+  /// foreground either: its cursor writes would die with the process (A6).
+  static func runForegroundSync(storeIsPersistent: () -> Bool, didBecomeActive: () -> Void) {
+    guard storeIsPersistent() else { return }
+    didBecomeActive()
+  }
+
   /// Touched from `NomiAppScene.init`. The `Void`-typed `static let` is the
   /// idiom for "run this once, on first access, thread-safely" — a `Bool` flag
   /// checked and set would be two statements a future edit can separate.
-  ///
-  /// A background task that fires without protected data, or on a store that is
-  /// not persistent, completes with `success: false` and does no work. It does
-  /// not reschedule here: the next `.background` scene phase does (A5).
   static let registerBackgroundTasks: Void = {
     AppSyncCoordinator.registerBackgroundTasks { work in
       Task { @MainActor in
-        guard
-          AppServices.mayRunStoreWork(
-            protectedDataAvailable: AppServices.protectedDataAvailable,
-            storeIsPersistent: { AppServices.storage.persistent })
-        else {
-          work.setCompleted(success: false)
-          return
-        }
-        await AppServices.shared.sync.run(work)
+        await AppServices.runBackground(
+          work,
+          storeIsPersistent: { AppServices.storage.persistent },
+          perform: { work in await AppServices.shared.sync.run(work) })
       }
     }
   }()
@@ -127,11 +157,10 @@ public struct NomiAppScene: Scene {
     .onChange(of: scenePhase) { _, phase in
       switch phase {
       case .active:
-        // A store that is not persistent (I-6 Amendment 1, A6) never syncs in
-        // the foreground either. Its cursor writes would die with the process.
-        if AppServices.storage.persistent {
-          Task { await environment.sync.didBecomeActive() }
-        }
+        // A store that is not persistent never syncs in the foreground (A6).
+        AppServices.runForegroundSync(
+          storeIsPersistent: { AppServices.storage.persistent },
+          didBecomeActive: { Task { await environment.sync.didBecomeActive() } })
         // U9b. `.CKAccountChanged` is not guaranteed to reach a process that
         // was backgrounded while the user signed in or out, so every
         // foreground re-probes. `refresh()` publishes only on a real change,

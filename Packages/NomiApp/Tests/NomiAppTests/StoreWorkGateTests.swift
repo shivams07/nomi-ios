@@ -38,6 +38,121 @@ final class StoreWorkGateTests: XCTestCase {
     XCTAssertTrue(AppServices.mayRunStoreWork(protectedDataAvailable: true, storeIsPersistent: { true }))
   }
 
+  // MARK: - The background handler's real gate (c4, mutant M3b)
+
+  #if !os(iOS)
+    /// (c4) The background handler, driven through the production
+    /// `runBackground`, with protected data unavailable: it completes `success:
+    /// false`, never asks the store for persistence, and never runs sync. The
+    /// protected-data answer is read from `protectedDataSource`, so a mutant that
+    /// hard-codes `true` at that call site is caught here.
+    func testBackgroundTaskWithoutProtectedDataCompletesFalseAndNeverRunsStoreWork() async {
+      let original = AppServices.protectedDataSource
+      AppServices.protectedDataSource = { false }
+      defer { AppServices.protectedDataSource = original }
+
+      let record = BackgroundWorkRecord()
+      let work = BackgroundWork(kind: .refresh, record: record)
+      var performed = 0
+
+      await AppServices.runBackground(
+        work,
+        storeIsPersistent: {
+          XCTFail("the store was consulted before protected data was known to be available")
+          return true
+        },
+        perform: { _ in performed += 1 })
+
+      XCTAssertEqual(record.recordedCompletions, [false], "completed exactly once, as a failure")
+      XCTAssertEqual(performed, 0, "no sync ran")
+    }
+
+    /// With protected data but a non-persistent store, the handler completes
+    /// `success: false` and does not sync.
+    func testBackgroundTaskOnAnInMemoryStoreCompletesFalseAndDoesNotSync() async {
+      let original = AppServices.protectedDataSource
+      AppServices.protectedDataSource = { true }
+      defer { AppServices.protectedDataSource = original }
+
+      let record = BackgroundWorkRecord()
+      var performed = 0
+
+      await AppServices.runBackground(
+        BackgroundWork(kind: .refresh, record: record),
+        storeIsPersistent: { false },
+        perform: { _ in performed += 1 })
+
+      XCTAssertEqual(record.recordedCompletions, [false])
+      XCTAssertEqual(performed, 0)
+    }
+
+    /// The one case that syncs: protected data and a persistent store. Sync is
+    /// responsible for its own completion, so none is recorded here.
+    func testBackgroundTaskOnAPersistentStoreRunsSync() async {
+      let original = AppServices.protectedDataSource
+      AppServices.protectedDataSource = { true }
+      defer { AppServices.protectedDataSource = original }
+
+      let record = BackgroundWorkRecord()
+      var performed = 0
+
+      await AppServices.runBackground(
+        BackgroundWork(kind: .refresh, record: record),
+        storeIsPersistent: { true },
+        perform: { _ in performed += 1 })
+
+      XCTAssertEqual(performed, 1)
+      XCTAssertEqual(record.recordedCompletions, [], "the sync, not the gate, completes this task")
+    }
+  #endif
+
+  // MARK: - The foreground gate (c3, mutant M4)
+
+  /// (c3) On `.active`, a non-persistent store does not start the foreground
+  /// sync. A persistent one does, exactly once.
+  func testForegroundSyncIsGatedOnPersistence() {
+    var ran = 0
+    AppServices.runForegroundSync(
+      storeIsPersistent: { false },
+      didBecomeActive: { ran += 1 })
+    XCTAssertEqual(ran, 0, "a non-persistent store never syncs in the foreground")
+
+    AppServices.runForegroundSync(
+      storeIsPersistent: { true },
+      didBecomeActive: { ran += 1 })
+    XCTAssertEqual(ran, 1, "a persistent store syncs once on becoming active")
+  }
+
+  // MARK: - Preferences (c3, mutant M5)
+
+  /// (c3) A non-persistent launch's preference writes stay off `UserDefaults`,
+  /// and this launch still reads them back. Uses its own suite, so the test
+  /// runner's domain is untouched.
+  func testPreferenceWritesStayOffDiskWhenNotPersistent() throws {
+    let suite = UUID().uuidString
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let key = PreferenceKey.hasCompletedFirstRun
+
+    let store = AppServices.preferenceStore(persistent: false, defaults: defaults)
+    store.set(true, forKey: key)
+
+    XCTAssertTrue(store.bool(forKey: key), "the write is visible to this launch")
+    XCTAssertFalse(defaults.bool(forKey: key), "nothing written by a non-persistent launch reaches UserDefaults")
+  }
+
+  /// A persistent launch writes straight to `UserDefaults`, as before R7.
+  func testPreferenceWritesReachDiskWhenPersistent() throws {
+    let suite = UUID().uuidString
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let key = PreferenceKey.hasCompletedFirstRun
+
+    AppServices.preferenceStore(persistent: true, defaults: defaults).set(true, forKey: key)
+
+    XCTAssertTrue(defaults.bool(forKey: key))
+  }
+
   // MARK: - ReadThroughKeyValueStore (c3, preferences)
 
   /// A key never written here reads through to the base.

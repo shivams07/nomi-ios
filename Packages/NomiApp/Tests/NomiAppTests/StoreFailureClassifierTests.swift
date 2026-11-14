@@ -1,5 +1,6 @@
 import Foundation
 import NomiCore
+import SQLite3
 import SwiftData
 import XCTest
 
@@ -142,6 +143,39 @@ final class StoreFailureClassifierTests: XCTestCase {
 
     XCTAssertEqual(before, after, "neither the store nor its WAL is written by the probe")
     withExtendedLifetime(container) {}
+  }
+
+  /// Rule 6: the copy cannot be opened for a reason that is not corruption. The
+  /// file sits under a directory that does not exist, so SQLite reports
+  /// CANTOPEN. That is a retry, not a move. (Mutant: rule 6's retry returns
+  /// `.corrupt`.)
+  func testAnOpenFailureOnTheCopyIsRetry() {
+    let unopenable = directory.appendingPathComponent("no-such-dir", isDirectory: true)
+      .appendingPathComponent("copy.store")
+    XCTAssertEqual(NomiModelContainer.integrityProbe(of: unopenable), .retryLater(.sqliteOpenFailed))
+  }
+
+  /// Rule 7: the integrity check cannot run because another connection holds an
+  /// exclusive lock on the file. SQLite reports BUSY, which is neither corruption
+  /// nor a clean answer, so it is inconclusive. A retry, never a move. (Mutant:
+  /// the prepare-stage inconclusive retry returns `.corrupt`.)
+  func testAnExclusivelyLockedStoreIsInconclusive() throws {
+    let lockedURL = directory.appendingPathComponent("locked.store")
+
+    var writer: OpaquePointer?
+    XCTAssertEqual(sqlite3_open_v2(lockedURL.path, &writer, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil), SQLITE_OK)
+    defer { sqlite3_close_v2(writer) }
+    XCTAssertEqual(sqlite3_exec(writer, "CREATE TABLE t(x); INSERT INTO t VALUES (1);", nil, nil, nil), SQLITE_OK)
+
+    var holder: OpaquePointer?
+    XCTAssertEqual(sqlite3_open_v2(lockedURL.path, &holder, SQLITE_OPEN_READWRITE, nil), SQLITE_OK)
+    defer {
+      sqlite3_exec(holder, "ROLLBACK;", nil, nil, nil)
+      sqlite3_close_v2(holder)
+    }
+    XCTAssertEqual(sqlite3_exec(holder, "BEGIN EXCLUSIVE;", nil, nil, nil), SQLITE_OK)
+
+    XCTAssertEqual(NomiModelContainer.integrityProbe(of: lockedURL), .retryLater(.integrityCheckInconclusive))
   }
 
   /// Size and modification date for each file, in a comparable form.

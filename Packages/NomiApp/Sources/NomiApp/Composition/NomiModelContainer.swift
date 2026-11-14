@@ -348,12 +348,8 @@ public enum NomiModelContainer {
     let walName = storeName + "-wal"
     let walURL = storeURL.deletingLastPathComponent().appendingPathComponent(walName)
 
-    var db: OpaquePointer?
-    var stmt: OpaquePointer?
-    // Every path after this point finalises, closes and removes the probe.
+    // Every path after this point removes the probe directory.
     defer {
-      sqlite3_finalize(stmt)
-      sqlite3_close_v2(db)
       try? fileManager.removeItem(at: probe)
     }
 
@@ -366,9 +362,23 @@ public enum NomiModelContainer {
     } catch {
       return .retryLater(.probeCopyFailed)
     }
-    let copy = probe.appendingPathComponent(storeName)
+    // 6 and 7 run on the copy, in `integrityProbe`.
+    return integrityProbe(of: probe.appendingPathComponent(storeName))
+  }
 
-    // 6. Open the copy. No CREATE: a missing file must not become an empty db.
+  /// Rules 6 and 7 of `classifyUnopenableStore`, on a file the caller has
+  /// already copied. Internal so a test can point it at a file it has made
+  /// unopenable or locked. The file is opened without CREATE, so a missing
+  /// file is never turned into an empty database.
+  static func integrityProbe(of copy: URL) -> StoreFailureVerdict {
+    var db: OpaquePointer?
+    var stmt: OpaquePointer?
+    defer {
+      sqlite3_finalize(stmt)
+      sqlite3_close_v2(db)
+    }
+
+    // 6. Open the copy. No CREATE.
     let openCode = sqlite3_open_v2(copy.path, &db, SQLITE_OPEN_READWRITE, nil) & 0xFF
     if openCode == sqlitePrimaryCorrupt || openCode == sqlitePrimaryNotADatabase {
       return .corrupt(.integrityCheckFailed)
