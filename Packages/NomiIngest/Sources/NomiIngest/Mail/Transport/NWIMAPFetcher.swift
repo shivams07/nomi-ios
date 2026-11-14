@@ -442,15 +442,57 @@ public actor NWIMAPFetcher: MailFetching {
   /// One `UID FETCH` for the set it was given. **No re-chunking** — the engine
   /// already bounded this to `MailSyncEngine.fetchBatchSize` so only one batch
   /// of message bodies exists at a time (§2.17).
+  ///
+  /// R5c: each body is capped at `IMAPCommand.bodyByteCap`, so a message past
+  /// 256 KB arrives truncated rather than whole.
   public func fetch(uids: [UInt32], in mailbox: String) async throws -> [MailMessage] {
     await acquire()
     defer { release() }
 
+    return try await fetchMessages(uids: uids, in: mailbox) {
+      .uidFetchBodyPeek(tag: $0, uids: uids)
+    }
+  }
+
+  /// R5c. The sender of each message, with nil bodies. `supportsHeaderFirstFetch`
+  /// is what tells the engine this is a real header-only fetch.
+  public nonisolated var supportsHeaderFirstFetch: Bool { true }
+
+  public func fetchHeaders(uids: [UInt32], in mailbox: String) async throws -> [MailMessage] {
+    await acquire()
+    defer { release() }
+
+    // `RFC822Message` reads an empty body as "" rather than nil. A header-only
+    // message has no body at all, so drop both here (I-1: nil bodies).
+    return try await fetchMessages(uids: uids, in: mailbox) {
+      .uidFetchHeaders(tag: $0, uids: uids)
+    }.map {
+      MailMessage(
+        uid: $0.uid,
+        uidValidity: $0.uidValidity,
+        mailboxName: $0.mailboxName,
+        fromRaw: $0.fromRaw,
+        subject: $0.subject,
+        headerDate: $0.headerDate,
+        htmlBody: nil,
+        textBody: nil,
+        authenticationResultsRaw: $0.authenticationResultsRaw
+      )
+    }
+  }
+
+  /// The shared path for both fetches: one command, one tagged read, the same
+  /// sequencer and RFC 822 parse. Callers hold the mutex.
+  private func fetchMessages(
+    uids: [UInt32],
+    in mailbox: String,
+    command makeCommand: (String) -> IMAPCommand
+  ) async throws -> [MailMessage] {
     guard !uids.isEmpty else { return [] }
     try await examine(mailbox, force: false)
 
     let tag = nextTag()
-    try await send(.uidFetchBodyPeek(tag: tag, uids: uids))
+    try await send(makeCommand(tag))
     let events = try await readUntilComplete(tag: tag)
 
     var sequencer = IMAPFetchSequencer(tag: tag)
@@ -595,7 +637,23 @@ public actor NWIMAPFetcher: MailFetching {
         throw IMAPTransportError.serverClosedMidCommand(tag: tag, text: "\(error)")
       }
 
-      for event in try reader.consume(chunk) {
+      let events: [IMAPServerEvent]
+      do {
+        events = try reader.consume(chunk)
+      } catch {
+        // A response the reader cannot parse leaves it holding a half-read
+        // buffer, and the stream position is unknowable from here. Reset the
+        // reader, drop the socket, and let the next command reconnect on a clean
+        // state (R5c). Without this the connection still reports itself up and
+        // the next read starts mid-response.
+        pendingTag = nil
+        reader.reset()
+        markDisconnected()
+        await channel.close()
+        throw error
+      }
+
+      for event in events {
         collected.append(event)
 
         switch event {

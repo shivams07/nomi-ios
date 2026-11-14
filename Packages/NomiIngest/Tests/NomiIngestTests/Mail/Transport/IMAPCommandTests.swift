@@ -17,9 +17,32 @@ final class IMAPCommandTests: XCTestCase {
   func testUIDFetchUsesBodyPeekAndNeverBareBody() {
     let command = IMAPCommand.uidFetchBodyPeek(tag: "a004", uids: [4389, 4390, 4391])
 
-    XCTAssertEqual(command.wireText, "a004 UID FETCH 4389:4391 (UID BODY.PEEK[])\r\n")
+    XCTAssertEqual(
+      command.wireText, "a004 UID FETCH 4389:4391 (UID BODY.PEEK[]<0.262144>)\r\n")
     XCTAssertTrue(command.body.contains("BODY.PEEK["))
     XCTAssertFalse(command.body.contains(" BODY["))
+  }
+
+  // MARK: - R5c: header-first and the 256 KB cap
+
+  /// The sender only: nothing else of the header block is requested, and PEEK
+  /// keeps `\Seen` off the mail the engine scans.
+  func testHeaderFetchPeeksOnlyTheFromField() {
+    let command = IMAPCommand.uidFetchHeaders(tag: "a004", uids: [4389, 4390, 4391])
+
+    XCTAssertEqual(
+      command.wireText,
+      "a004 UID FETCH 4389:4391 (UID BODY.PEEK[HEADER.FIELDS (FROM)])\r\n")
+    XCTAssertFalse(command.body.contains("BODY[HEADER"))
+  }
+
+  /// Each body is capped at 256 KB (262 144 bytes), and the body fetch still PEEKs.
+  func testBodyFetchIsCappedAt256KB() {
+    XCTAssertEqual(IMAPCommand.bodyByteCap, 262_144)
+
+    let command = IMAPCommand.uidFetchBodyPeek(tag: "a005", uids: [7])
+
+    XCTAssertEqual(command.wireText, "a005 UID FETCH 7 (UID BODY.PEEK[]<0.262144>)\r\n")
   }
 
   /// Every command this type can produce, swept for a bare `BODY[`. A future
@@ -34,6 +57,7 @@ final class IMAPCommandTests: XCTestCase {
         since: Date(timeIntervalSince1970: 1_786_000_000),
         before: Date(timeIntervalSince1970: 1_787_000_000)),
       .uidSearchAfter(tag: "a004", uid: 4388),
+      .uidFetchHeaders(tag: "a004h", uids: [1]),
       .uidFetchBodyPeek(tag: "a005", uids: [1]),
       .idle(tag: "a006"),
       .logout(tag: "a007"),

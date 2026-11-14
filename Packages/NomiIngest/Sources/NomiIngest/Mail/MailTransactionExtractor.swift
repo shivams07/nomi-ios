@@ -54,6 +54,13 @@ public struct MailTransactionExtractor: TransactionExtractor {
     outcome(for: message).draft
   }
 
+  /// The sender gate, as `outcome(for:)` applies it first (R5c). `false` means
+  /// `outcome(for:)` would return `.notACandidate` whatever the body said, so the
+  /// engine can skip the body fetch for it without changing any count.
+  public func admitsSender(of message: MailMessage) -> Bool {
+    preFilter.admitsSender(of: message)
+  }
+
   /// The reporting form. `MailSyncEngine` uses this so it can count
   /// `packMatched` vs `heuristicMatched` (§1.5) without a second extraction.
   public func outcome(for message: MailMessage) -> ExtractionOutcome {

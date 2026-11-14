@@ -85,9 +85,31 @@ public struct IMAPCommand: Equatable, Sendable {
   /// app does not own. `IMAPCommandTests` asserts the literal absence of a bare
   /// `BODY[` in every command this type can produce, because this is the one
   /// mistake here that a user would notice and could not undo.
+  ///
+  /// **Partial (R5c):** `BODY.PEEK[]<0.262144>` returns at most the first
+  /// `bodyByteCap` bytes of each message. `PEEK` still stops the server setting
+  /// `\Seen`; the `<origin.count>` suffix only limits the bytes sent, and a message
+  /// past the cap arrives truncated.
   public static func uidFetchBodyPeek(tag: String, uids: [UInt32]) -> IMAPCommand {
-    IMAPCommand(tag: tag, body: "UID FETCH \(uidSet(uids)) (UID BODY.PEEK[])")
+    IMAPCommand(
+      tag: tag, body: "UID FETCH \(uidSet(uids)) (UID BODY.PEEK[]<0.\(bodyByteCap)>)")
   }
+
+  /// `UID FETCH <set> (UID BODY.PEEK[HEADER.FIELDS (FROM)])` — the sender of each
+  /// message and nothing else (R5c). The engine asks for this first, so a message
+  /// whose sender can never pass the domain gate is never downloaded in full.
+  ///
+  /// `PEEK` for the same reason as the body fetch: without it a header fetch
+  /// would set `\Seen` on everything the engine scans.
+  public static func uidFetchHeaders(tag: String, uids: [UInt32]) -> IMAPCommand {
+    IMAPCommand(
+      tag: tag, body: "UID FETCH \(uidSet(uids)) (UID BODY.PEEK[HEADER.FIELDS (FROM)])")
+  }
+
+  /// The most of one message's body a `UID FETCH` asks for: 256 KB (R5c). It bounds
+  /// what one batch can hold in memory. It is not a size messages are expected to
+  /// fit under.
+  public static let bodyByteCap = 262_144
 
   /// IDLE while foregrounded (§1.3). Terminated by the literal line `DONE`,
   /// which carries no tag — that is the protocol, not an omission.
