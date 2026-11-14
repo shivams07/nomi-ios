@@ -3,6 +3,10 @@ import NomiCore
 import NomiUI
 import SwiftUI
 
+#if os(iOS)
+  import UserNotifications
+#endif
+
 /// Process-wide services.
 ///
 /// A global is the right shape here and only here. `BGTaskScheduler.register`
@@ -49,6 +53,11 @@ public struct NomiAppScene: Scene {
   public init() {
     // Before the app finishes launching, as `BGTaskScheduler` requires.
     _ = AppServices.registerBackgroundTasks
+    // R10. Without a delegate, iOS hides a budget alert raised while the app is
+    // in the foreground. The delegate presents it as a banner.
+    #if os(iOS)
+      UNUserNotificationCenter.current().delegate = NotificationPresentationDelegate.shared
+    #endif
     // Inter ships as package resources in `NomiUI`'s bundle. `UIAppFonts` covers
     // only the *app* bundle, and App/Info.plist does not declare it (U18), so
     // `registerIfNeeded` is what puts these faces on the process font table.

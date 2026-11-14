@@ -73,13 +73,24 @@ public final class NotificationSettingsStore: ObservableObject {
     )
   }
 
+  /// True while the permission prompt is up for an off -> on transition.
+  @Published public private(set) var isRequestingPermission = false
+
   public func update(_ newValue: NotificationSettings) {
-    let previous = settings
+    // Off -> on is not written yet. Permission has not been granted, so the
+    // value is held until `requestPermissionAndEnable` resolves it. Until then
+    // the toggle keeps reading the previous value. Persisting "on" first would
+    // leave a stored promise the OS has not agreed to, and an app killed during
+    // the prompt would relaunch with alerts on and no permission.
+    if NotificationEnablePolicy.isEnablingTransition(from: settings, to: newValue) {
+      isRequestingPermission = true
+      Task { await requestPermissionAndEnable(newValue) }
+      return
+    }
+
+    // Every other change, including turning alerts off, persists at once.
     settings = newValue
     persist()
-
-    guard NotificationEnablePolicy.isEnablingTransition(from: previous, to: newValue) else { return }
-    Task { await requestPermissionAndEnable(newValue) }
   }
 
   /// `internal`, not `private`, so `NotificationSettingsStoreTests` can drive
@@ -90,13 +101,15 @@ public final class NotificationSettingsStore: ObservableObject {
     let granted = try? await scheduler.requestAuthorization()
     let resolved = NotificationEnablePolicy.settings(after: requested, granted: granted)
 
-    // Only write back if the answer changed the outcome. Reassigning an
-    // identical value would still publish, and republishing while Settings is
-    // on screen makes the toggle visibly flicker for no reason.
+    // The resolved value is assigned and persisted only now. A denial persists
+    // "off", so the stored setting and the toggle agree on what the OS allowed.
+    // Assigning only on a change still avoids republishing while Settings is on
+    // screen, which would make the toggle flicker for no reason.
     if resolved != settings {
       settings = resolved
-      persist()
     }
+    persist()
+    isRequestingPermission = false
 
     guard resolved.budgetAlertsEnabled else { return }
     await onAlertsEnabled?()

@@ -13,8 +13,18 @@ public protocol BudgetNotificationScheduling: Sendable {
   /// toggle back off with visible copy when it is `false` — is U8's, not this
   /// wrapper's.
   @discardableResult func requestAuthorization() async throws -> Bool
+  /// Whether the centre will present an alert right now. `BudgetAlertObserver`
+  /// asks before it records anything, so an alert raised while permission is
+  /// missing is left unrecorded and can still fire on a later commit.
+  func isAuthorized() async -> Bool
   /// Presents one alert. Suppressed alerts must never reach here.
   func schedule(_ alert: BudgetAlert) async throws
+}
+
+extension BudgetNotificationScheduling {
+  /// Conformers that never model permission (test fakes that predate this) count
+  /// as authorised, so only the real scheduler and fakes that opt in change.
+  public func isAuthorized() async -> Bool { true }
 }
 
 public enum BudgetNotificationError: Error, Sendable, Equatable {
@@ -45,6 +55,20 @@ public struct BudgetNotificationScheduler: BudgetNotificationScheduling {
         .requestAuthorization(options: [.alert, .sound, .badge])
     #else
       throw BudgetNotificationError.unavailableOnThisPlatform
+    #endif
+  }
+
+  public func isAuthorized() async -> Bool {
+    #if canImport(UserNotifications)
+      let settings = await UNUserNotificationCenter.current().notificationSettings()
+      switch settings.authorizationStatus {
+      case .authorized, .provisional, .ephemeral:
+        return true
+      default:
+        return false
+      }
+    #else
+      return false
     #endif
   }
 

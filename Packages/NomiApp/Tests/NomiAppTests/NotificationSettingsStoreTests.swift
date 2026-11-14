@@ -1,3 +1,4 @@
+import Combine
 import NomiCore
 import XCTest
 
@@ -85,11 +86,14 @@ final class NotificationSettingsStoreTests: XCTestCase {
     XCTAssertFalse(store.settings.budgetAlertsEnabled)
   }
 
-  func testSettingsSurviveARelaunch() {
+  /// Off -> on is persisted only once permission resolves, so the test awaits
+  /// `requestPermissionAndEnable` rather than racing the detached task `update` starts.
+  func testSettingsSurviveARelaunch() async {
     let preferences = InMemoryKeyValueStore()
     let first = NotificationSettingsStore(store: preferences, scheduler: StubScheduler())
 
-    first.update(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.75))
+    await first.requestPermissionAndEnable(
+      NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.75))
 
     let second = NotificationSettingsStore(store: preferences, scheduler: StubScheduler())
     XCTAssertTrue(second.settings.budgetAlertsEnabled)
@@ -193,6 +197,71 @@ final class NotificationSettingsStoreTests: XCTestCase {
     )
     XCTAssertFalse(deniedFlag.isSet)
   }
+
+  /// The toggle does not persist "on" before the OS answers. Otherwise a user
+  /// who is asked and then force-quits would relaunch with alerts on and no
+  /// permission. The prompt is held open with `GatedScheduler`, so the state
+  /// during the prompt is observed, not guessed.
+  func testEnablingPersistsNothingUntilGranted() async {
+    let preferences = InMemoryKeyValueStore()
+    let scheduler = GatedScheduler()
+    let store = NotificationSettingsStore(store: preferences, scheduler: scheduler)
+
+    store.update(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9))
+    await scheduler.prompted.wait()
+
+    XCTAssertTrue(store.isRequestingPermission)
+    XCTAssertFalse(
+      store.settings.budgetAlertsEnabled,
+      "the toggle keeps its old value during the prompt")
+    XCTAssertNil(preferences.data(forKey: PreferenceKey.notificationSettings))
+
+    await scheduler.answer.open()
+    // The flag clears after the resolved value is assigned, so waiting on it is
+    // waiting for the outcome, with no sleep.
+    for await isRequesting in store.$isRequestingPermission.values where !isRequesting {
+      break
+    }
+
+    XCTAssertTrue(store.settings.budgetAlertsEnabled)
+    XCTAssertEqual(persistedSettings(in: preferences)?.budgetAlertsEnabled, true)
+  }
+
+  func testDeniedLeavesItOffAndPersistedOff() async {
+    let preferences = InMemoryKeyValueStore()
+    let scheduler = StubScheduler()
+    scheduler.authorizationAnswer = .success(false)
+    let store = NotificationSettingsStore(store: preferences, scheduler: scheduler)
+
+    await store.requestPermissionAndEnable(
+      NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9)
+    )
+
+    XCTAssertFalse(store.isRequestingPermission)
+    XCTAssertFalse(store.settings.budgetAlertsEnabled)
+    XCTAssertEqual(persistedSettings(in: preferences)?.budgetAlertsEnabled, false)
+  }
+
+  private func persistedSettings(in preferences: InMemoryKeyValueStore) -> NotificationSettings? {
+    guard let data = preferences.data(forKey: PreferenceKey.notificationSettings) else { return nil }
+    return try? JSONDecoder().decode(NotificationSettings.self, from: data)
+  }
+}
+
+/// A scheduler whose permission prompt stays up until the test answers it.
+/// `prompted` opens when the request has started; `answer` lets it return `true`.
+private final class GatedScheduler: BudgetNotificationScheduling, @unchecked Sendable {
+  let prompted = StartSignal()
+  let answer = StartSignal()
+
+  @discardableResult
+  func requestAuthorization() async throws -> Bool {
+    await prompted.open()
+    await answer.wait()
+    return true
+  }
+
+  func schedule(_ alert: BudgetAlert) async throws {}
 }
 
 /// A reference box rather than a captured `var`. `onAlertsEnabled` is an
