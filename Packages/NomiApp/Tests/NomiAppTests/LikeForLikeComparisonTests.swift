@@ -45,9 +45,19 @@ final class LikeForLikeComparisonTests: XCTestCase {
     }
   }
 
-  /// Mid-month, the Home comparison is the first two days of October against
-  /// the first two days of November. The 10 October spend is outside it. The
-  /// figure comes from the store, so it proves the cut is what the store reads.
+  /// The 29 February edge. February 2028 has 29 days, so January is cut to 29
+  /// days: 1 January plus 29 is 30 January. The window is 1 Jan..<30 Jan.
+  func testALeapDayCutsJanuaryToTwentyNineDays() {
+    let now = date(2028, 2, 29, 10, 0)
+    XCTAssertEqual(
+      InsightsAggregator.priorRange(for: .month(year: 2028, month: 2), calendar: calendar, now: now),
+      date(2028, 1, 1)..<date(2028, 1, 30))
+  }
+
+  /// Mid-month, the Home comparison is the first three days of October against
+  /// the first three days of November (1 to 3 November). The 10 October spend
+  /// is outside it. The figure comes from the store, so it proves the cut is
+  /// what the store reads.
   func testHomeComparisonUsesTheCutPrior() throws {
     let context = try makeContext()
     let now = date(2026, 11, 3, 15, 0)
