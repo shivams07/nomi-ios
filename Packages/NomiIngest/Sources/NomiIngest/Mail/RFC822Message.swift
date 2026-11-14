@@ -126,9 +126,12 @@ public enum RFC822Message {
       guard !trimmed.isEmpty else { continue }
 
       let (partHeaders, partBody) = splitHeadersAndBody(trimmed)
-      let partType = (partHeaders["content-type"] ?? "text/plain").lowercased()
+      // The raw value keeps the boundary's case (RFC 2046 §5.1.1). Lowercased
+      // only for the type tests below.
+      let rawPartType = partHeaders["content-type"] ?? "text/plain"
+      let partType = rawPartType.lowercased()
 
-      if let nested = parameter("boundary", in: partType) {
+      if let nested = parameter("boundary", in: rawPartType) {
         let inner = walkMultipart(partBody, boundary: nested)
         html = html ?? inner.html
         text = text ?? inner.text
@@ -138,7 +141,7 @@ public enum RFC822Message {
       let decoded = decodeTransfer(
         partBody,
         encoding: partHeaders["content-transfer-encoding"],
-        charset: parameter("charset", in: partType))
+        charset: parameter("charset", in: rawPartType))
       if partType.contains("text/html") {
         html = html ?? decoded
       } else if partType.contains("text/plain") {
@@ -163,26 +166,35 @@ public enum RFC822Message {
   /// sequence is valid Latin-1. That makes it a real floor rather than another
   /// maybe, and mojibake in a flagged row beats a transaction that vanished.
   ///
-  /// Quoted-printable is deliberately NOT routed through `charset` here - it
-  /// still assumes UTF-8, which is the same latent bug in a rarer encoding.
-  /// Out of this unit's scope; named so it is not mistaken for handled.
+  /// Quoted-printable takes the same three-step decode (X5/Y12): a quoted-printable
+  /// part declared `windows-1252` or `ISO-8859-1` now decodes through its charset
+  /// instead of failing to UTF-8 replacement characters.
   static func decodeTransfer(_ body: String, encoding: String?, charset: String? = nil) -> String {
     switch (encoding ?? "7bit").lowercased().trimmingCharacters(in: .whitespaces) {
     case "quoted-printable":
-      return decodeQuotedPrintable(body)
+      return decodeQuotedPrintable(body, charset: charset)
     case "base64":
       let joined = body.components(separatedBy: .whitespacesAndNewlines).joined()
       guard let data = Data(base64Encoded: joined, options: [.ignoreUnknownCharacters])
       else { return body }
-      if let utf8 = String(data: data, encoding: .utf8) { return utf8 }
-      if let declared = charset.flatMap({ stringEncoding(forCharset: $0) }),
-        declared != .utf8,
-        let decoded = String(data: data, encoding: declared)
-      { return decoded }
-      return String(data: data, encoding: .isoLatin1) ?? body
+      return decodeBytes(data, charset: charset)
     default:
       return body
     }
+  }
+
+  /// The three-step decode shared by every transfer encoding: UTF-8 if the bytes
+  /// are valid, else the declared `charset`, else ISO-8859-1. The last step cannot
+  /// fail, so this always returns a String.
+  private static func decodeBytes(_ data: Data, charset: String?) -> String {
+    if let utf8 = String(data: data, encoding: .utf8) { return utf8 }
+    if let declared = charset.flatMap({ stringEncoding(forCharset: $0) }),
+      declared != .utf8,
+      let decoded = String(data: data, encoding: declared)
+    {
+      return decoded
+    }
+    return String(data: data, encoding: .isoLatin1) ?? String(decoding: data, as: UTF8.self)
   }
 
   /// An IANA charset name to a `String.Encoding`, via CoreFoundation's table
@@ -197,7 +209,7 @@ public enum RFC822Message {
     return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(cfEncoding))
   }
 
-  static func decodeQuotedPrintable(_ raw: String) -> String {
+  static func decodeQuotedPrintable(_ raw: String, charset: String? = nil) -> String {
     // Soft line breaks first, or "=\n" splits a multi-byte UTF-8 sequence and
     // the rupee sign comes out as three replacement characters.
     let unwrapped = raw.replacingOccurrences(of: "=\r\n", with: "")
@@ -222,7 +234,7 @@ public enum RFC822Message {
       bytes.append(contentsOf: Array(String(character).utf8))
       index = unwrapped.index(after: index)
     }
-    return String(decoding: bytes, as: UTF8.self)
+    return decodeBytes(Data(bytes), charset: charset)
   }
 
   // MARK: -
@@ -241,17 +253,20 @@ public enum RFC822Message {
     // ones still to be replaced.
     for match in matches.reversed() {
       guard let whole = Range(match.range, in: result),
+        let charsetRange = Range(match.range(at: 1), in: raw),
         let kindRange = Range(match.range(at: 2), in: raw),
         let payloadRange = Range(match.range(at: 3), in: raw)
       else { continue }
 
+      let charset = String(raw[charsetRange])
       let payload = String(raw[payloadRange])
       let decoded: String?
       if raw[kindRange].lowercased() == "b" {
         decoded = Data(base64Encoded: payload, options: [.ignoreUnknownCharacters])
-          .flatMap { String(data: $0, encoding: .utf8) }
+          .map { decodeBytes($0, charset: charset) }
       } else {
-        decoded = decodeQuotedPrintable(payload.replacingOccurrences(of: "_", with: " "))
+        decoded = decodeQuotedPrintable(
+          payload.replacingOccurrences(of: "_", with: " "), charset: charset)
       }
       if let decoded {
         result.replaceSubrange(whole, with: decoded)
@@ -260,16 +275,24 @@ public enum RFC822Message {
     return result
   }
 
+  /// A `name=value` parameter. A quoted value may hold spaces (`boundary="a b c"`);
+  /// an unquoted one ends at `;` or whitespace. The name is matched
+  /// case-insensitively, the value is returned exactly as written.
   private static func parameter(_ name: String, in headerValue: String) -> String? {
     guard
       let regex = try? NSRegularExpression(
-        pattern: name + #"\s*=\s*"?([^";\s]+)"?"#, options: [.caseInsensitive]),
+        pattern: #"(?:^|;)\s*"# + name + #"\s*=\s*(?:"([^"]*)"|([^";\s]+))"#,
+        options: [.caseInsensitive]),
       let match = regex.firstMatch(
         in: headerValue,
-        range: NSRange(headerValue.startIndex..<headerValue.endIndex, in: headerValue)),
-      match.numberOfRanges > 1,
-      let range = Range(match.range(at: 1), in: headerValue)
+        range: NSRange(headerValue.startIndex..<headerValue.endIndex, in: headerValue))
     else { return nil }
-    return String(headerValue[range])
+    for group in 1...2 where match.range(at: group).location != NSNotFound {
+      guard let range = Range(match.range(at: group), in: headerValue) else { return nil }
+      let value = String(headerValue[range])
+      // An empty quoted value is no value at all.
+      return value.isEmpty ? nil : value
+    }
+    return nil
   }
 }
