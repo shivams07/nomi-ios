@@ -12,19 +12,10 @@ import SwiftData
 /// that only `IngestPipeline.reconcile()` can collapse) and of R16 (duplicate
 /// budget notifications). Those are accepted costs, not oversights.
 public enum NomiModelContainer {
-  /// Matches `NomiCore.InMemoryModelContainer.shared` exactly. A model missing
-  /// from one and present in the other is a store that opens in the app and
-  /// traps in a preview, or the reverse.
-  public static let schema = Schema([
-    Transaction.self,
-    NomiCore.Category.self,
-    Budget.self,
-    BudgetAlertLog.self,
-    Rule.self,
-    Account.self,
-    AccountBinding.self,
-    ColumnMappingRecord.self,
-  ])
+  /// The app's schema, versioned (I-6). Its model list is `NomiSchemaV1.models`,
+  /// the same list `NomiCore.InMemoryModelContainer.shared` reads, so a model
+  /// cannot be present in one store and missing from the other.
+  public static let schema = Schema(versionedSchema: NomiSchemaV1.self)
 
   /// The identifier in `App/Nomi.entitlements`. Named explicitly rather than
   /// left to `.automatic` so a mismatch between code and entitlement is a
@@ -34,6 +25,7 @@ public enum NomiModelContainer {
   public static func makeCloudKit() throws -> ModelContainer {
     try ModelContainer(
       for: schema,
+      migrationPlan: NomiMigrationPlan.self,
       configurations: [
         ModelConfiguration(
           schema: schema,
@@ -48,7 +40,36 @@ public enum NomiModelContainer {
   public static func makeLocal() throws -> ModelContainer {
     try ModelContainer(
       for: schema,
+      migrationPlan: NomiMigrationPlan.self,
       configurations: [ModelConfiguration(schema: schema, cloudKitDatabase: .none)]
+    )
+  }
+
+  /// Local-only, at an explicit file. Tests use it to open a store they wrote
+  /// themselves, and the recovery path uses it through the `local` parameter of
+  /// `makeWithLocalFallback`.
+  public static func makeLocal(at url: URL) throws -> ModelContainer {
+    try ModelContainer(
+      for: schema,
+      migrationPlan: NomiMigrationPlan.self,
+      configurations: [ModelConfiguration(schema: schema, url: url, cloudKitDatabase: .none)]
+    )
+  }
+
+  /// Where the local store lives by default. This is the path `makeLocal()`
+  /// opens, so recovery moves the file the app would otherwise reopen.
+  public static var defaultStoreURL: URL {
+    ModelConfiguration(schema: schema, cloudKitDatabase: .none).url
+  }
+
+  /// Scratch storage for the last-resort case. Used only when neither the
+  /// CloudKit nor the local store could be opened, and nothing is kept.
+  static func makeInMemory() throws -> ModelContainer {
+    try ModelContainer(
+      for: schema,
+      configurations: [
+        ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+      ]
     )
   }
 
@@ -64,7 +85,13 @@ public enum NomiModelContainer {
   /// launch that does reach CloudKit reads the same local store and begins
   /// syncing it.
   ///
-  /// Only the second failure is fatal, and by then there is nothing to run on.
+  /// **A store that will not open is moved aside, not deleted (R7).** The local
+  /// store is the only one that can be unopenable on disk; CloudKit failing
+  /// alone moves nothing. When both fail, the file is moved into `Recovered/`
+  /// with a timestamped name, a `StoreRecoveryNotice` is saved, and a fresh
+  /// store is opened. If that also fails, the app runs on an in-memory store
+  /// and says so. Only a failure to create even an in-memory store is fatal,
+  /// and by then there is nothing left to run on.
   ///
   /// **Returns the mode as well as the container (B11).** It used to `print`
   /// and return only the container, so the one person who could see that the
@@ -109,13 +136,66 @@ public enum NomiModelContainer {
   public static func makeWithLocalFallback(
     cloudKit: () throws -> ModelContainer = makeCloudKit,
     isSimulatorDebugBuild: Bool = currentBuildIsSimulatorDebug,
-    forceCloudKit: Bool = currentForceCloudKitRequested
+    forceCloudKit: Bool = currentForceCloudKitRequested,
+    local: () throws -> ModelContainer = makeLocal,
+    storeURL: URL = defaultStoreURL,
+    recoveryDefaults: UserDefaults = .standard,
+    fileManager: FileManager = .default,
+    now: () -> Date = Date.init
   ) -> (container: ModelContainer, mode: StorageMode) {
+    do {
+      return try openStore(
+        cloudKit: cloudKit, isSimulatorDebugBuild: isSimulatorDebugBuild,
+        forceCloudKit: forceCloudKit, local: local)
+    } catch {
+      // Only the type name is logged. The error text can carry a file path or a
+      // store description, and this line must be safe to read in a sysdiagnose.
+      logger.error(
+        "Store could not be opened (\(String(describing: type(of: error)), privacy: .public)); moving it aside"
+      )
+    }
+
+    // Recovery. Reaching here means CloudKit and the local store both failed,
+    // so the file on disk is the suspect. Move it, do not delete it.
+    let stamp = now()
+    let moved: String?
+    do {
+      moved = try moveStoreAside(at: storeURL, stamp: stamp, fileManager: fileManager)
+    } catch {
+      logger.error(
+        "Store could not be moved aside (\(String(describing: type(of: error)), privacy: .public))")
+      return inMemoryFallback()
+    }
+    if let moved {
+      StoreRecoveryRecord.save(
+        StoreRecoveryNotice(movedAt: stamp, fileName: moved), to: recoveryDefaults)
+      logger.notice("Moved an unopenable store aside to Recovered/")
+    }
+
+    do {
+      return try openStore(
+        cloudKit: cloudKit, isSimulatorDebugBuild: isSimulatorDebugBuild,
+        forceCloudKit: forceCloudKit, local: local)
+    } catch {
+      logger.error(
+        "Fresh store could not be opened (\(String(describing: type(of: error)), privacy: .public))")
+      return inMemoryFallback()
+    }
+  }
+
+  /// The open path without recovery. Throws only when the local store fails,
+  /// because a CloudKit failure is answered by the local store here.
+  private static func openStore(
+    cloudKit: () throws -> ModelContainer,
+    isSimulatorDebugBuild: Bool,
+    forceCloudKit: Bool,
+    local: () throws -> ModelContainer
+  ) throws -> (container: ModelContainer, mode: StorageMode) {
     if let reason = simulatorLocalOnlyReason(
       isSimulatorDebugBuild: isSimulatorDebugBuild, forceCloudKit: forceCloudKit)
     {
       logger.notice("Opening local storage without CloudKit: \(reason, privacy: .public)")
-      return (try! makeLocal(), .localOnly(reason: reason))
+      return (try local(), .localOnly(reason: reason))
     }
     do {
       return (try cloudKit(), .cloudKit)
@@ -126,8 +206,78 @@ public enum NomiModelContainer {
       // reported, so it has to survive leaving the debugger.
       logger.error(
         "CloudKit container unavailable, falling back to local storage: \(error, privacy: .public)")
-      return (try! makeLocal(), .localOnly(reason: String(describing: error)))
+      return (try local(), .localOnly(reason: String(describing: error)))
     }
+  }
+
+  /// The last resort: an in-memory store, so the app launches and nothing is
+  /// kept. The reason is shown to the user in Settings.
+  private static func inMemoryFallback() -> (container: ModelContainer, mode: StorageMode) {
+    do {
+      return (
+        try makeInMemory(),
+        .localOnly(
+          reason:
+            "Nomi could not open storage on this device, so nothing you add will be kept after you close the app."
+        )
+      )
+    } catch {
+      fatalError(
+        "Nomi could not open any store, not even in memory (\(String(describing: type(of: error))))"
+      )
+    }
+  }
+
+  /// Moves the store, its `-shm` and `-wal` sidecars and its support directory
+  /// into `Recovered/` beside it. Each name is stamped with the UTC time, so a
+  /// second recovery never overwrites the first.
+  ///
+  /// Returns the main file's stamped name when the main store file itself was
+  /// moved; that name is what a `StoreRecoveryNotice` records. Returns nil when
+  /// the main file did not exist. An orphan `-wal`, `-shm` or support directory
+  /// is still moved out of the way (it would be replayed into the next store),
+  /// but it is not reported as a recovery and records nothing.
+  static func moveStoreAside(
+    at storeURL: URL, stamp: Date, fileManager: FileManager
+  ) throws -> String? {
+    let directory = storeURL.deletingLastPathComponent()
+    let base = storeURL.deletingPathExtension().lastPathComponent
+    let ext = storeURL.pathExtension
+    let recovered = directory.appendingPathComponent("Recovered", isDirectory: true)
+    let timestamp = recoveryStamp(stamp)
+
+    var moves: [(from: URL, to: URL)] = []
+    var mainExisted = false
+    for suffix in ["", "-shm", "-wal"] {
+      let from = directory.appendingPathComponent("\(base).\(ext)\(suffix)")
+      if fileManager.fileExists(atPath: from.path) {
+        if suffix.isEmpty { mainExisted = true }
+        moves.append((from, recovered.appendingPathComponent("\(base)-\(timestamp).\(ext)\(suffix)")))
+      }
+    }
+    // The support directory keeps the same stamp under a dotted name, so it
+    // sits beside the stamped store files in Recovered/.
+    let support = directory.appendingPathComponent(".\(base)_SUPPORT", isDirectory: true)
+    if fileManager.fileExists(atPath: support.path) {
+      moves.append(
+        (support, recovered.appendingPathComponent(".\(base)-\(timestamp)_SUPPORT", isDirectory: true)))
+    }
+    guard !moves.isEmpty else { return nil }
+
+    try fileManager.createDirectory(at: recovered, withIntermediateDirectories: true)
+    for move in moves {
+      try fileManager.moveItem(at: move.from, to: move.to)
+    }
+    return mainExisted ? "\(base)-\(timestamp).\(ext)" : nil
+  }
+
+  /// `yyyyMMdd'T'HHmmss` in UTC, for names in `Recovered/`.
+  static func recoveryStamp(_ date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(identifier: "UTC")
+    formatter.dateFormat = "yyyyMMdd'T'HHmmss"
+    return formatter.string(from: date)
   }
 
   /// The SIM1 decision, pure so it can be tested without a CloudKit container.
