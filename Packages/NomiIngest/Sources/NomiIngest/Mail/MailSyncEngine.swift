@@ -18,6 +18,7 @@ public actor MailSyncEngine {
   private let pipeline: any DraftIngesting
   private let mailboxName: String
   private let now: @Sendable () -> Date
+  private let onCursorAdvanced: (@Sendable (MailSyncCursor) -> Void)?
 
   /// UIDs per `UID FETCH`.
   ///
@@ -37,13 +38,19 @@ public actor MailSyncEngine {
   /// they are sliced. That sort is load-bearing.
   public private(set) var cursor: MailSyncCursor?
 
+  /// Called synchronously with the new value every time `cursor` is assigned
+  /// inside `process`, including the empty-run assignment. It is how the cursor
+  /// reaches disk after each completed batch rather than only at the end of a
+  /// sync (R5a). The sink runs on the engine actor, so it must be quick and must
+  /// not call back into the engine.
   public init(
     fetcher: any MailFetching,
     pipeline: any DraftIngesting,
     extractor: MailTransactionExtractor = MailTransactionExtractor(),
     mailboxName: String = "INBOX",
     cursor: MailSyncCursor? = nil,
-    now: @escaping @Sendable () -> Date = { Date() }
+    now: @escaping @Sendable () -> Date = { Date() },
+    onCursorAdvanced: (@Sendable (MailSyncCursor) -> Void)? = nil
   ) {
     self.fetcher = fetcher
     self.pipeline = pipeline
@@ -51,6 +58,7 @@ public actor MailSyncEngine {
     self.mailboxName = mailboxName
     self.cursor = cursor
     self.now = now
+    self.onCursorAdvanced = onCursorAdvanced
   }
 
   /// The horizon of a sync that has no cursor to work from. Six months, which is
@@ -123,6 +131,7 @@ public actor MailSyncEngine {
   private func windowedSearch(months: Int) async throws -> [UInt32] {
     var found = Set<UInt32>()
     for window in Self.monthlyWindows(months: months, endingAt: now()) {
+      try Task.checkCancellation()
       let uids = try await fetcher.uids(
         since: window.since, before: window.before, in: mailboxName)
       found.formUnion(uids)
@@ -205,6 +214,13 @@ public actor MailSyncEngine {
     state: MailboxState,
     onProgress: (@Sendable (BackfillProgress) -> Void)?
   ) async throws -> SyncSummary {
+    // The floor the cursor may not drop below. A cursor from another UIDVALIDITY
+    // (or mailbox) names UIDs that mean nothing now, so the new validity starts
+    // from 0 and the old UID is not carried over (X4).
+    let base: UInt32 =
+      (cursor?.uidValidity == state.uidValidity && cursor?.mailbox == mailboxName)
+      ? (cursor?.lastSeenUID ?? 0) : 0
+
     // Sorted here rather than trusted from the caller: the cursor advances to
     // the end of each completed batch, which is only correct if the batches are
     // in ascending order. A server is free to return SEARCH results in any
@@ -212,9 +228,10 @@ public actor MailSyncEngine {
     let ordered = uids.sorted()
 
     guard !ordered.isEmpty else {
-      cursor = MailSyncCursor(
-        mailbox: mailboxName, uidValidity: state.uidValidity,
-        lastSeenUID: cursor?.lastSeenUID ?? 0)
+      let next = MailSyncCursor(
+        mailbox: mailboxName, uidValidity: state.uidValidity, lastSeenUID: base)
+      cursor = next
+      onCursorAdvanced?(next)
       onProgress?(BackfillProgress(scanned: 0, total: 0, created: 0))
       return Self.emptySummary
     }
@@ -224,6 +241,9 @@ public actor MailSyncEngine {
     var totals = Totals()
 
     for batch in ordered.slices(of: Self.fetchBatchSize) {
+      // Checked before the fetch, so a cancelled backfill costs at most the batch
+      // already in flight. The fetch itself is not interrupted.
+      try Task.checkCancellation()
       let messages = try await fetcher.fetch(uids: batch, in: mailboxName)
       let outcome = classify(messages)
 
@@ -235,11 +255,13 @@ public actor MailSyncEngine {
 
       // Only now, and only to the end of this batch. Everything above it in
       // `ordered` is still unfetched.
-      cursor = MailSyncCursor(
+      let next = MailSyncCursor(
         mailbox: mailboxName,
         uidValidity: state.uidValidity,
-        lastSeenUID: max(batch.last ?? 0, cursor?.lastSeenUID ?? 0)
+        lastSeenUID: max(batch.last ?? 0, base)
       )
+      cursor = next
+      onCursorAdvanced?(next)
 
       // `attempted`, not `scanned`: a UID can vanish between the SEARCH and the
       // FETCH, and a progress bar that stops at 94% because four messages were

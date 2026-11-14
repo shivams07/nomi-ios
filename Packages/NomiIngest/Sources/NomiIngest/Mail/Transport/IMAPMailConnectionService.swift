@@ -133,7 +133,7 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
       stateContinuation.yield(.connected(address: address, lastSync: currentLastSync()))
       return summary
     } catch {
-      stateContinuation.yield(.failed(mailError(from: error)))
+      yieldStateAfterFailure(error, address: address)
       throw error
     }
   }
@@ -164,12 +164,24 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
       stateContinuation.yield(.connected(address: address, lastSync: currentLastSync()))
       return summary
     } catch {
-      stateContinuation.yield(.failed(mailError(from: error)))
+      yieldStateAfterFailure(error, address: address)
       throw error
     }
   }
 
   // MARK: -
+
+  /// A cancelled run is not a failure. The engine stopped at a batch boundary,
+  /// and the socket is as good as it was before the run started, so the state
+  /// goes back to `.connected` rather than `.failed` (R5a). Every other error
+  /// is reported as before.
+  private func yieldStateAfterFailure(_ error: Error, address: String) {
+    if error is CancellationError {
+      stateContinuation.yield(.connected(address: address, lastSync: currentLastSync()))
+    } else {
+      stateContinuation.yield(.failed(mailError(from: error)))
+    }
+  }
 
   /// Runs `work`; if it fails because the socket is gone, reloads the stored
   /// credential, reconnects and runs it exactly once more.
