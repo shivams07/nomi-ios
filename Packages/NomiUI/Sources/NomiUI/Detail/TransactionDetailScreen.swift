@@ -63,7 +63,6 @@ public struct TransactionDetailScreen: View {
   @State private var detent: PresentationDetent = .medium
   @State private var isEditing = false
 
-  @State private var pendingCategorySelection: UUID?
   @State private var isCategoryPickerPresented = false
   @State private var isAccountPickerPresented = false
   @State private var isDatePickerPresented = false
@@ -199,7 +198,7 @@ public struct TransactionDetailScreen: View {
       Button("Cancel", role: .cancel) {}
     }
     .sheet(isPresented: $isCategoryPickerPresented) {
-      CategoryPickerSheet(categoryStore: categoryStore, selection: $pendingCategorySelection)
+      CategoryPickerSheet(categoryStore: categoryStore, selection: categorySelection)
     }
     .sheet(isPresented: $isAccountPickerPresented) {
       AccountPickerSheet(accountStore: accountStore, selection: transaction?.accountID) { newAccountID in
@@ -208,10 +207,6 @@ public struct TransactionDetailScreen: View {
     }
     .sheet(isPresented: $isDatePickerPresented, onDismiss: commitPickedDate) {
       DatePickerSheet(date: $pickedDate)
-    }
-    .onChange(of: pendingCategorySelection) { _, newValue in
-      guard let newValue else { return }
-      updateCategory(to: newValue)
     }
     .alert(
       "Something went wrong",
@@ -424,7 +419,6 @@ public struct TransactionDetailScreen: View {
 
   private func changeCategoryButton(_ transaction: NomiCore.Transaction) -> some View {
     Button("Change category") {
-      pendingCategorySelection = transaction.categoryID
       isCategoryPickerPresented = true
     }
     .buttonStyle(NomiSecondaryButtonStyle())
@@ -455,7 +449,6 @@ public struct TransactionDetailScreen: View {
     let name = categoryName(for: transaction) ?? "Uncategorized"
     let category = categoryFor(transaction)
     return Button {
-      pendingCategorySelection = transaction.categoryID
       isCategoryPickerPresented = true
     } label: {
       HStack(spacing: NomiSpacing.xs) {
@@ -749,6 +742,20 @@ public struct TransactionDetailScreen: View {
     } catch {
       suggestion = nil
     }
+  }
+
+  /// What the category picker reads and writes. The current category is read
+  /// live from the row, so presenting the picker writes nothing, and only a
+  /// different pick reaches `updateCategory` (see `CategoryPickCommit`).
+  private var categorySelection: Binding<UUID?> {
+    Binding(
+      get: { transaction?.categoryID },
+      set: { picked in
+        if CategoryPickCommit.shouldWrite(picked: picked, current: transaction?.categoryID), let picked {
+          updateCategory(to: picked)
+        }
+      }
+    )
   }
 
   private func updateCategory(to categoryID: UUID) {
