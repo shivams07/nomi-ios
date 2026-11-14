@@ -14,6 +14,15 @@ enum RulesReorder {
   }
 }
 
+/// The confirmation a swipe-delete on a user rule shows first (Y7). The message
+/// says what `RuleStore.delete` does: it clears the rule's applied id and keeps
+/// every category already set, so the copy must not promise they revert.
+enum RuleDeleteConfirmation {
+  static let title = "Delete this rule?"
+  static let message = "Transactions it already categorised keep their category. New transactions won’t be matched by it."
+  static let confirm = "Delete"
+}
+
 /// The rule editor's Save gate: a pattern and a category are both required,
 /// and the "Only when" range — if the user set both bounds — has to admit at
 /// least one amount. `RuleScope.isValidRange` already answers that (and is

@@ -26,6 +26,9 @@ public struct RulesScreen: View {
   @Query(sort: \NomiCore.Rule.priority) private var rules: [NomiCore.Rule]
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
   @State private var editingRule: NomiCore.Rule?
+  /// The rule a swipe-delete has asked about. Nothing is deleted until the
+  /// confirmation's Delete is tapped (Y7).
+  @State private var pendingDelete: NomiCore.Rule?
   @State private var isCreating = false
   @State private var actionError = false
   #if os(iOS)
@@ -79,6 +82,22 @@ public struct RulesScreen: View {
     }
     .alert("Couldn't update rules", isPresented: $actionError) {
       Button("OK", role: .cancel) {}
+    }
+    .confirmationDialog(
+      RuleDeleteConfirmation.title,
+      isPresented: Binding(
+        get: { pendingDelete != nil },
+        set: { if !$0 { pendingDelete = nil } }
+      ),
+      titleVisibility: .visible,
+      presenting: pendingDelete
+    ) { rule in
+      Button(RuleDeleteConfirmation.confirm, role: .destructive) {
+        delete(rule)
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: { _ in
+      Text(RuleDeleteConfirmation.message)
     }
   }
 
@@ -193,7 +212,7 @@ public struct RulesScreen: View {
     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
       if RuleRowActions.offered(isSystem: rule.isSystem).contains(.delete) {
         Button(role: .destructive) {
-          delete(rule)
+          pendingDelete = rule
         } label: {
           Label("Delete", systemImage: "trash")
         }
