@@ -47,6 +47,10 @@ public actor AppSyncCoordinator {
   private(set) var remoteChangeTask: Task<Void, Never>?
   private var lastReconcileAt: Date?
   private let onRemoteChangeSettled: (@MainActor @Sendable () -> Void)?
+  /// Reconnects from the Keychain when a background task finds no mailbox. A
+  /// cold launch by background refresh runs without `bootstrap()`, so nothing
+  /// else has connected yet.
+  private let ensureMailConnected: @Sendable () async -> Void
 
   /// `referenceData` is optional only so the coordinator tests that never touch
   /// reference rows need no container. `AppEnvironment` always passes one.
@@ -72,7 +76,8 @@ public actor AppSyncCoordinator {
     sleep: @escaping @Sendable (TimeInterval) async throws -> Void = {
       try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000))
     },
-    onRemoteChangeSettled: (@MainActor @Sendable () -> Void)? = nil
+    onRemoteChangeSettled: (@MainActor @Sendable () -> Void)? = nil,
+    ensureMailConnected: @escaping @Sendable () async -> Void = {}
   ) {
     self.mail = mail
     self.pipeline = pipeline
@@ -81,6 +86,7 @@ public actor AppSyncCoordinator {
     self.now = now
     self.pause = sleep
     self.onRemoteChangeSettled = onRemoteChangeSettled
+    self.ensureMailConnected = ensureMailConnected
   }
 
   // MARK: - Reconcile
@@ -256,11 +262,23 @@ public actor AppSyncCoordinator {
   /// persisted the cursor while `service.startBackfill` did not — two doors with
   /// different behaviour. It was deleted rather than fixed, so this is the same
   /// call `BackfillScreen` makes.
-  private func backfillIfIdle() async {
-    guard !isSyncing else { return }
+  ///
+  /// Reports the same `SyncAttempt` as `syncIfIdle()`, so a background backfill
+  /// that finds no mailbox is owed rather than failed, and is retried after a
+  /// reconnect exactly as a refresh is.
+  private func backfillIfIdle() async -> SyncAttempt {
+    guard !isSyncing else { return .alreadyRunning }
     isSyncing = true
     defer { isSyncing = false }
-    try? await mail.service.startBackfill(months: Self.backfillMonths)
+
+    do {
+      try await mail.service.startBackfill(months: Self.backfillMonths)
+      return .ran
+    } catch let error as IMAPTransportError where error == .notConnected {
+      return .noMailboxConnected
+    } catch {
+      return .failed
+    }
   }
 
   // MARK: - BGTaskScheduler
@@ -316,9 +334,9 @@ public actor AppSyncCoordinator {
     // than lucky: `Task {}` written inside an actor's method inherits this
     // actor's executor, so its body cannot begin until `run(_:)` suspends, and
     // `run(_:)` does not suspend between here and `setExpirationHandler`.
-    let task = Task { [weak self] in
-      guard let self else { return }
-      await self.perform(work.kind)
+    let task = Task<Bool, Never> { [weak self] in
+      guard let self else { return false }
+      return await self.perform(work.kind)
     }
 
     // The work `run(_:)` is actually awaiting. This used to cancel
@@ -330,7 +348,7 @@ public actor AppSyncCoordinator {
     // `setCompleted` contract is protecting.
     work.setExpirationHandler { task.cancel() }
 
-    await task.value
+    let performSucceeded = await task.value
 
     if work.kind == .refresh {
       scheduleBackgroundRefresh()
@@ -344,8 +362,9 @@ public actor AppSyncCoordinator {
 
     // Exactly once, on every path including expiration: the handler above only
     // cancels, it never completes. `success` is false when the work was cut
-    // short, because it was.
-    work.setCompleted(success: !task.isCancelled)
+    // short, or when the sync itself failed. iOS counts an unsuccessful task
+    // against the app's scheduling budget, so a failure is reported as one.
+    work.setCompleted(success: !task.isCancelled && performSucceeded)
   }
 
   /// Routes by `kind`.
@@ -356,14 +375,37 @@ public actor AppSyncCoordinator {
   /// from the cursor, which returns nothing the interrupted backfill had not
   /// already passed. The months it never reached would have stayed unfetched
   /// forever.
-  private func perform(_ kind: BackgroundWork.Kind) async {
+  ///
+  /// Returns whether the work succeeded. A sync that found no mailbox after one
+  /// reconnect attempt is still success: nothing was saved and nothing is owed,
+  /// because the user never connected mail. Only `.failed` is a failure.
+  private func perform(_ kind: BackgroundWork.Kind) async -> Bool {
     await reconcile()
 
+    var attempt = await runSync(kind)
+    if attempt == .noMailboxConnected {
+      // A cold background launch has not run `bootstrap()`, so the mailbox
+      // may simply not be connected yet. Connect from the Keychain and try once
+      // more. Without this, the refresh finds no mailbox, reports nothing, and
+      // the user's mail stays stale until the app is opened by hand.
+      await ensureMailConnected()
+      attempt = await runSync(kind)
+    }
+
+    switch attempt {
+    case .ran, .alreadyRunning, .noMailboxConnected:
+      return true
+    case .failed:
+      return false
+    }
+  }
+
+  private func runSync(_ kind: BackgroundWork.Kind) async -> SyncAttempt {
     switch kind {
     case .refresh:
-      await syncIfIdle()
+      return await syncIfIdle()
     case .backfill:
-      await backfillIfIdle()
+      return await backfillIfIdle()
     }
   }
 }

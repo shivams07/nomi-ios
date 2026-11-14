@@ -139,11 +139,16 @@ public final class AppEnvironment: ObservableObject {
     // reconcile removed nothing: the import itself changed rows the cache had
     // already answered for. `cache.invalidate()`, not `coordinator.didWrite()`,
     // so the budget observer does not run for a change another device made.
+    // R10. A background refresh on a cold launch has not run `bootstrap()`, so
+    // the mailbox may not be connected. This reconnects from the Keychain.
     self.sync = AppSyncCoordinator(
       mail: mail,
       pipeline: pipeline,
       referenceData: referenceData,
-      onRemoteChangeSettled: { [cache] in cache.invalidate() }
+      onRemoteChangeSettled: { [cache] in cache.invalidate() },
+      ensureMailConnected: { [mail, credentials] in
+        await mail.reconnectFromKeychain(credentials)
+      }
     )
 
     // File import writes through the same pipeline mail does. U3b (#17) closed
