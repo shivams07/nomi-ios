@@ -1,9 +1,8 @@
 // clt-harness: include
 import SwiftUI
 
-/// Nomi colour tokens: the approved light navy-ocean system (F1 of
-/// nomi-ios-build-plan, I-1; SIMP §1 and §5). Light only. Every value comes
-/// from `NomiHex`.
+/// Nomi colour tokens: the Moss light system (wave 1 F1; plan I-9). Light only.
+/// Every value comes from `NomiHex`.
 ///
 /// Existing names keep compiling so every screen follows the new values
 /// without being rewritten. Deprecated aliases are removed once no caller
@@ -47,9 +46,9 @@ public enum NomiColor {
   /// Back chevron, nav "+", links, switch on, selected chip and segment fill,
   /// chart marks, progress bar fill.
   public static let navy = Color(hex: NomiHex.navy)
-  /// Top stop of the hero gradient.
+  /// moss900. Text on the hero above `NomiHeroGradient.darkTextCeiling`.
   public static let navyDeep = Color(hex: NomiHex.navyDeep)
-  /// Middle stop of the hero gradient.
+  /// moss500. Not a hero stop: the hero ramp uses `NomiHex.heroRamp0...4`.
   public static let blueMid = Color(hex: NomiHex.blueMid)
   /// Progress and ring track, hero tail.
   public static let track = Color(hex: NomiHex.track)
@@ -59,8 +58,14 @@ public enum NomiColor {
   public static let iconGlyph = Color(hex: NomiHex.iconGlyph)
   /// Insights donut slice 3 (artboard #8DB3EA). Chart fill only.
   public static let chartTintMid = Color(hex: NomiHex.chartTintMid)
-  /// Insights donut slice 4 (artboard #BBD3EE). Chart fill only.
+  /// Insights donut slice 4 (moss100). Chart fill only.
   public static let chartTintLight = Color(hex: NomiHex.chartTintLight)
+  /// Non-highlighted daily and monthly bars on the Insights card (moss500).
+  /// Solid, not an alpha of `navy`, so the bars clear 3:1 on card and against
+  /// `chartHighlight`. Chart fill only.
+  public static let chartMuted = Color(hex: NomiHex.blueMid)
+  /// The highlighted bar on the Insights card (moss900). Chart fill only.
+  public static let chartHighlight = Color(hex: NomiHex.navyDeep)
 
   // MARK: - Controls
 
@@ -68,8 +73,6 @@ public enum NomiColor {
   public static let primary = Color(hex: NomiHex.primary)
   /// Text and glyphs on `primary`, `navy` and `error` fills.
   public static let onPrimary = Color(hex: NomiHex.onPrimary)
-  /// Switch track when off.
-  public static let switchOff = Color(hex: NomiHex.switchOff)
 
   // MARK: - Error
 
@@ -79,12 +82,19 @@ public enum NomiColor {
   /// Error card and icon tile fill.
   public static let errorTint = Color(hex: NomiHex.errorTint)
 
-  // MARK: - Separators and scrim
+  // MARK: - Warning
+
+  /// Warning text: the "close to budget" tag and note text.
+  public static let warning = Color(hex: NomiHex.warning)
+  /// Close-to-budget bar fill. Non-text: always paired with the `warning` tag.
+  public static let warningFill = Color(hex: NomiHex.warningFill)
+  /// Warning tag and note ground.
+  public static let warningTint = Color(hex: NomiHex.warningTint)
+
+  // MARK: - Separators
 
   /// Card hairline and row divider: deep ink at 8%.
   public static let separator = Color(hex: NomiHex.inkDeep, opacity: 0.08)
-  /// Reserved. Native sheets use system dimming; no iOS 17 API colours it.
-  public static let scrim = Color(hex: NomiHex.navyDeep, opacity: 0.40)
 
   // MARK: - Decimals (SIMP §1 rule 4)
 
@@ -93,10 +103,11 @@ public enum NomiColor {
   /// Amount decimals on the hero: white at 60%.
   public static let decimalOpacityHero: Double = 0.60
 
-  // MARK: - Hero (above y 264 only, SIMP §1 rule 2)
+  // MARK: - Hero (white text to artboard y 299, white 90% to y 264; see NomiHeroGradient)
 
   public static let heroText = Color(hex: NomiHex.white)
-  public static let heroTextSecondary = Color(hex: NomiHex.white, opacity: 0.80)
+  /// White at 90%. At or above 4.5:1 on the ramp for y ≤ 264 (plan I-9).
+  public static let heroTextSecondary = Color(hex: NomiHex.white, opacity: 0.90)
   /// Dark glass on the hero: `heroGlassTint` at 52%, fitted to the artboard
   /// (see `NomiHex.heroGlassTint`).
   public static let heroGlassFill = Color(hex: NomiHex.heroGlassTint, opacity: 0.52)
