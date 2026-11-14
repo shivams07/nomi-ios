@@ -7,8 +7,11 @@ import NomiIngest
 ///
 /// `MailSyncEngine.cursor` is `public private(set)` and settable only at init —
 /// U2's `MailFetching` doc says in as many words that it is "persisted by U8;
-/// U2 only reads and returns it". Nothing calls back when it moves, so the
-/// cursor is read and written around each sync from here.
+/// U2 only reads and returns it". The engine calls back each time it moves
+/// (`onCursorAdvanced`, R5a), so the cursor is written after every completed
+/// batch. `CursorPersistingMailConnectionService` still writes it once more
+/// after each sync, which is harmless and covers a sync that threw before its
+/// first batch.
 ///
 /// **Around each sync means every sync, and until §D1 it did not.** The
 /// persisting wrapper was `MailStack.syncNow()`, while `MailStack.service` —
@@ -55,7 +58,10 @@ public actor MailStack {
       fetcher: fetcher,
       pipeline: pipeline,
       extractor: MailTransactionExtractor(bindings: bindings),
-      cursor: Self.loadCursor(from: preferences)
+      cursor: Self.loadCursor(from: preferences),
+      onCursorAdvanced: { [preferences] cursor in
+        preferences.set(try? JSONEncoder().encode(cursor), forKey: PreferenceKey.mailSyncCursor)
+      }
     )
 
     let connectionService = IMAPMailConnectionService(
@@ -216,14 +222,15 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   /// `false` for the exact case it exists to catch.
   ///
   /// **A backfill the user cancelled and one iOS interrupted are the same event
-  /// here.** `MailConnectionService` has no cancel/resume — `BackfillScreen`
-  /// says so in its own comment and wraps this call in a `Task` it cancels
-  /// instead — so both arrive as a thrown `CancellationError` and both leave the
-  /// flag set. The consequence is that pressing Cancel does not stop the
-  /// background task from later resuming the scan. Re-ingesting is a no-op in
-  /// U4, so the cost is bandwidth rather than duplicate rows, but it is a
-  /// behaviour change and telling the two apart needs a contract this unit does
-  /// not have.
+  /// here, and both leave the flag set.** `MailConnectionService` has no
+  /// cancel/resume — `BackfillScreen` wraps this call in a `Task` it cancels
+  /// instead — so both arrive as a thrown `CancellationError`. A cancel is a
+  /// pause, not a stop: `BackfillScreen` offers Resume, and the background task
+  /// may finish the scan. R5a changed what cancelling does to the scan itself:
+  /// it now stops at the next batch boundary (the engine checks before each
+  /// fetch), so pressing Cancel no longer keeps fetching in the background.
+  /// What it still does not do is tell a pause from an interruption; that
+  /// needs a contract this unit does not have.
   @discardableResult
   func startBackfill(months: Int) async throws -> SyncSummary {
     let wasUnfinished = backfillIsUnfinished
