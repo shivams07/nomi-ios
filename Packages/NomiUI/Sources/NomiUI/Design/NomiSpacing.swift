@@ -2,9 +2,8 @@
 import CoreGraphics
 
 /// Strict 8pt scale: 4, 8, 16, 24, 32, 40, 48, with 4 as the only half-step.
-/// The scale is unchanged by the light restyle. Layout values follow I-2 of
-/// nomi-ios-build-plan. The screen gutter is the one value off the scale: 20,
-/// because every approved artboard uses 20.
+/// Layout values follow I-2 of nomi-ios-build-plan, except the screen gutter,
+/// which is 16 under Moss (plan I-9; it was 20 on every earlier artboard).
 public enum NomiSpacing {
   public static let xxs: CGFloat = 4
   public static let xs: CGFloat = 8
@@ -14,8 +13,8 @@ public enum NomiSpacing {
   public static let xl: CGFloat = 40
   public static let xxl: CGFloat = 48
 
-  /// Screen side gutter (was `md`, 24).
-  public static let screenGutter: CGFloat = 20
+  /// Screen side gutter (was 20, and `md` before that).
+  public static let screenGutter: CGFloat = 16
   public static let cardPadding = sm
   public static let cardToCard = sm
   public static let sectionGap = lg

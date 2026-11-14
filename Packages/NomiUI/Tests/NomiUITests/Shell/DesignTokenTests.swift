@@ -6,10 +6,9 @@ import XCTest
 final class DesignTokenTests: XCTestCase {
   func testSurfaceStepsMatchTheApprovedLightScale() {
     let environment = EnvironmentValues()
-    // Light navy-ocean surfaces (F1 of nomi-ios-build-plan, I-1). Secondary
-    // fill -> #EDF1F8.
+    // Moss surfaces (wave 1 F1, plan I-9). Secondary fill -> #EEF3E8.
     let steps: [(Color, UInt32)] = [
-      (NomiColor.surface, 0xEDF1F8),
+      (NomiColor.surface, 0xEEF3E8),
     ]
     for (actual, hex) in steps {
       assertResolves(actual, toHex: hex, environment: environment)
@@ -19,20 +18,20 @@ final class DesignTokenTests: XCTestCase {
   func testNamedColourTokensResolveToTheirHexValues() {
     let environment = EnvironmentValues()
     let tokens: [(Color, UInt32)] = [
-      (NomiColor.ground, 0xF3F6FB),
+      (NomiColor.ground, 0xF3F5F0),
       (NomiColor.card, 0xFFFFFF),
-      (NomiColor.ink, 0x0E1424),
-      (NomiColor.inkDeep, 0x0A2150),
-      (NomiColor.inkSecondary, 0x53607A),
-      (NomiColor.inkTab, 0x3A4660),
-      (NomiColor.navy, 0x023571),
-      (NomiColor.navyDeep, 0x04174B),
-      (NomiColor.track, 0xDCE8F5),
-      (NomiColor.primary, 0x06080F),
+      (NomiColor.ink, 0x111411),
+      (NomiColor.inkDeep, 0x1F3320),
+      (NomiColor.inkSecondary, 0x566055),
+      (NomiColor.inkTab, 0x1F2A1F),
+      (NomiColor.navy, 0x3C5A38),
+      (NomiColor.navyDeep, 0x1F3320),
+      (NomiColor.track, 0xDDE8D3),
+      (NomiColor.primary, 0x0C0F0C),
       (NomiColor.error, 0xB42318),
       (NomiColor.errorTint, 0xFDECEA),
-      (NomiColor.switchOff, 0xC5CEDE),
-      (NomiColor.heroGlassSolid, 0x0E3972),
+      (NomiColor.warning, 0x8A5300),
+      (NomiColor.heroGlassSolid, 0x34543A),
     ]
     for (actual, hex) in tokens {
       assertResolves(actual, toHex: hex, environment: environment)
@@ -103,8 +102,8 @@ final class DesignTokenTests: XCTestCase {
     XCTAssertEqual(NomiSpacing.xxl, 48)
   }
 
-  func testScreenGutterIsTwentyAcrossEveryArtboard() {
-    XCTAssertEqual(NomiSpacing.screenGutter, 20)
+  func testScreenGutterIsSixteen() {
+    XCTAssertEqual(NomiSpacing.screenGutter, 16)
   }
 
   func testRadiusFloorIsRespectedForNamedTokens() {
@@ -113,10 +112,10 @@ final class DesignTokenTests: XCTestCase {
     XCTAssertGreaterThanOrEqual(NomiRadius.sheet, 8)
   }
 
-  func testCardRadiusIsTwentyFourAndInsetIsSixteen() {
-    // Concentric: card 24 -> inset 16 -> tile 8.
-    XCTAssertEqual(NomiRadius.card, 24)
-    XCTAssertEqual(NomiRadius.inset, 16)
+  func testCardRadiusIsTwentyEightAndInsetIsEighteen() {
+    // Concentric: card 28 -> inset 18 -> tile 8.
+    XCTAssertEqual(NomiRadius.card, 28)
+    XCTAssertEqual(NomiRadius.inset, 18)
     XCTAssertEqual(NomiRadius.tile, 8)
   }
 
