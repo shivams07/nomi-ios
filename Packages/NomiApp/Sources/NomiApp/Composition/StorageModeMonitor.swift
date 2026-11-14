@@ -46,6 +46,7 @@ public struct CKAccountProbe: CloudKitAccountProbing {
         return .couldNotDetermine("Unrecognized iCloud account status (\(status.rawValue)).")
       }
     } catch {
+      NomiLog.store.notice("iCloud account status failed: \(NomiLog.describe(error), privacy: .public)")
       return .couldNotDetermine(String(describing: error))
     }
   }

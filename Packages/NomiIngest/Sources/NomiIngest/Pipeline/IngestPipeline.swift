@@ -168,6 +168,7 @@ public actor IngestPipeline {
     do {
       return try await performMarkTransfers(touching: rows, at: timestamp)
     } catch {
+      NomiLog.ingest.error("transfer marking failed: \(NomiLog.describe(error), privacy: .public)")
       return []
     }
   }

@@ -75,9 +75,14 @@ public struct KeychainCredentialStore: MailCredentialStoring {
       let status = SecItemCopyMatching(query as CFDictionary, &item)
       if status == errSecItemNotFound { return nil }
       guard status == errSecSuccess else { throw MailCredentialError.keychain(status) }
-      guard let data = item as? Data,
-        let stored = try? JSONDecoder().decode(StoredCredentials.self, from: data)
-      else { throw MailCredentialError.malformedStoredItem }
+      guard let data = item as? Data else { throw MailCredentialError.malformedStoredItem }
+      let stored: StoredCredentials
+      do {
+        stored = try JSONDecoder().decode(StoredCredentials.self, from: data)
+      } catch {
+        NomiLog.sync.error("stored mail credential unreadable: \(NomiLog.describe(error), privacy: .public)")
+        throw MailCredentialError.malformedStoredItem
+      }
       return stored.credentials
     #else
       throw MailCredentialError.unavailableOnThisPlatform

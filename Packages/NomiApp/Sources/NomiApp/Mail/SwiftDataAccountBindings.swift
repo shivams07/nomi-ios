@@ -44,7 +44,14 @@ public final class SwiftDataAccountBindings: AccountBindingResolving, @unchecked
           $0.senderDomain == domain && $0.cardFragment == fragment
         }
       )
-      guard let rows = try? context.fetch(descriptor), !rows.isEmpty else { return nil }
+      let rows: [AccountBinding]
+      do {
+        rows = try context.fetch(descriptor)
+      } catch {
+        NomiLog.store.error("account binding fetch failed: \(NomiLog.describe(error), privacy: .public)")
+        return nil
+      }
+      guard !rows.isEmpty else { return nil }
       // CloudKit forbids unique constraints (R5), so two devices can each write
       // a binding for the same key. Lowest id wins - an arbitrary rule, but a
       // *stable* one, so both devices resolve to the same account rather than
