@@ -21,6 +21,7 @@ enum RuleDeleteConfirmation {
   static let title = "Delete this rule?"
   static let message = "Transactions it already categorised keep their category. New transactions won’t be matched by it."
   static let confirm = "Delete"
+  static let cancel = "Cancel"
 }
 
 /// The rule editor's Save gate: a pattern and a category are both required,

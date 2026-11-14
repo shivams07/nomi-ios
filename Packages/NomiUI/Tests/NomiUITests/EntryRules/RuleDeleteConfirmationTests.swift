@@ -19,4 +19,9 @@ final class RuleDeleteConfirmationTests: XCTestCase {
   func testConfirmButtonTitle() {
     XCTAssertEqual(RuleDeleteConfirmation.confirm, "Delete")
   }
+
+  /// The back-out. The alert must always carry a visible Cancel (R9b).
+  func testCancelButtonTitle() {
+    XCTAssertEqual(RuleDeleteConfirmation.cancel, "Cancel")
+  }
 }
