@@ -7,7 +7,10 @@
 # "C: " lines are exactly what the client must put on the wire, minus the CRLF.
 # "S: " lines are the server's reply. Blank lines and "#" comments are ignored.
 #
-# The one line that matters most is the UID FETCH: BODY.PEEK[], never BODY[].
+# The one line that matters most is the UID FETCH: BODY.PEEK[]<0.262144>, never
+# BODY[]. PEEK keeps the user's mail unread; the cap keeps one message's body to
+# 256 KB (R5c). The header-first exchange (UID BODY.PEEK[HEADER.FIELDS (FROM)]) is
+# covered by byte-exact tests in IMAPCommandTests and NWIMAPFetcherTests, not here.
 # BODY[] marks the user's real mail as read as a side effect of scanning it (R4).
 
 S: * OK Gimap ready for requests
@@ -27,8 +30,8 @@ C: a003 UID SEARCH UID 4388:*
 S: * SEARCH 4388 4389 4390 4391
 S: a003 OK SEARCH completed
 
-C: a004 UID FETCH 4389:4391 (UID BODY.PEEK[])
-S: * 4211 FETCH (UID 4389 BODY[] {115}
+C: a004 UID FETCH 4389:4391 (UID BODY.PEEK[]<0.262144>)
+S: * 4211 FETCH (UID 4389 BODY[]<0> {115}
 S: From: <alerts@hdfcbank.net>
 S: Subject: Transaction alert
 S:

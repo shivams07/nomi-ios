@@ -244,14 +244,30 @@ public actor MailSyncEngine {
       // Checked before the fetch, so a cancelled backfill costs at most the batch
       // already in flight. The fetch itself is not interrupted.
       try Task.checkCancellation()
-      let messages = try await fetcher.fetch(uids: batch, in: mailboxName)
+
+      // R5c. A transport that can fetch headers asks for a body only when the
+      // sender passes the first gate, which `outcome(for:)` applies before
+      // anything else, so no other message could have produced a draft and every
+      // count is the same as the body-first path. Scanned is the number of
+      // messages examined, which is the header count.
+      let messages: [MailMessage]
+      let examined: Int
+      if fetcher.supportsHeaderFirstFetch {
+        let heads = try await fetcher.fetchHeaders(uids: batch, in: mailboxName)
+        let wanted = heads.filter { extractor.admitsSender(of: $0) }.map(\.uid)
+        messages = wanted.isEmpty ? [] : try await fetcher.fetch(uids: wanted, in: mailboxName)
+        examined = heads.count
+      } else {
+        messages = try await fetcher.fetch(uids: batch, in: mailboxName)
+        examined = messages.count
+      }
       let outcome = classify(messages)
 
       let ingested = outcome.drafts.isEmpty
         ? IngestBatchResult.empty
         : try await pipeline.ingest(outcome.drafts)
 
-      totals.add(messages: messages.count, outcome: outcome, ingested: ingested)
+      totals.add(messages: examined, outcome: outcome, ingested: ingested)
 
       // Only now, and only to the end of this batch. Everything above it in
       // `ordered` is still unfetched.

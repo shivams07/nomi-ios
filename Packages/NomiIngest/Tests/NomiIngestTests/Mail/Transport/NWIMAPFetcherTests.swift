@@ -416,8 +416,73 @@ final class NWIMAPFetcherTests: XCTestCase {
     _ = try await fetcher.fetch(uids: [4, 5, 6, 9], in: "INBOX")
 
     XCTAssertTrue(
-      channel.sentText.contains("a003 UID FETCH 4:6,9 (UID BODY.PEEK[])\r\n"), channel.sentText)
+      channel.sentText.contains("a003 UID FETCH 4:6,9 (UID BODY.PEEK[]<0.262144>)\r\n"),
+      channel.sentText)
     XCTAssertFalse(channel.sentText.contains("BODY[]"), "a bare BODY[] would set \\Seen")
+  }
+
+  // MARK: - R5c: header-first
+
+  func testSupportsHeaderFirstFetchIsTrue() async {
+    let fetcher = NWIMAPFetcher(channel: ScriptedChannel(replies: []))
+    XCTAssertTrue(fetcher.supportsHeaderFirstFetch)
+  }
+
+  /// The header command is written with PEEK, and the reply yields the sender with
+  /// no body. `RFC822Message` reads the header block alone, so `fromRaw` is set and
+  /// both bodies are nil.
+  func testFetchHeadersParsesFromOnly() async throws {
+    let headerReply =
+      "* 1 FETCH (UID 4389 BODY[HEADER.FIELDS (FROM)] {31}\r\n"
+      + "From: <alerts@hdfcbank.net>\r\n\r\n)\r\n"
+      + "a003 OK FETCH completed\r\n"
+    let (fetcher, channel) = try await connected(replies: [examineOK, headerReply])
+
+    let heads = try await fetcher.fetchHeaders(uids: [4389], in: "INBOX")
+
+    XCTAssertTrue(
+      channel.sentText.contains(
+        "a003 UID FETCH 4389 (UID BODY.PEEK[HEADER.FIELDS (FROM)])\r\n"), channel.sentText)
+    XCTAssertFalse(channel.sentText.contains("BODY[HEADER"))
+    XCTAssertFalse(channel.sentText.contains("BODY.PEEK[]"))
+    let head = try XCTUnwrap(heads.first)
+    XCTAssertEqual(heads.count, 1)
+    XCTAssertEqual(head.uid, 4389)
+    XCTAssertEqual(head.fromRaw, "<alerts@hdfcbank.net>")
+    XCTAssertEqual(head.senderDomain, "hdfcbank.net")
+    XCTAssertNil(head.htmlBody)
+    XCTAssertNil(head.textBody)
+  }
+
+  func testAnEmptyHeaderBatchIssuesNoCommandAtAll() async throws {
+    let (fetcher, channel) = try await connected(replies: [])
+
+    let heads = try await fetcher.fetchHeaders(uids: [], in: "INBOX")
+
+    XCTAssertTrue(heads.isEmpty)
+    XCTAssertFalse(channel.sentText.contains("FETCH"))
+  }
+
+  /// A response the reader cannot parse must not leave the connection looking up.
+  /// The reader is reset, the socket is closed, and the next connect starts clean.
+  func testAMalformedResponseResetsTheReaderAndDisconnects() async throws {
+    let (fetcher, channel) = try await connected(replies: [
+      examineOK,
+      "* GARBAGE (((\r\n",
+    ])
+
+    do {
+      _ = try await fetcher.fetch(uids: [4389], in: "INBOX")
+      XCTFail("a malformed response must throw")
+    } catch let error as IMAPTransportError {
+      guard case .malformedResponse = error else {
+        return XCTFail("expected malformedResponse, got \(error)")
+      }
+    }
+
+    let stillConnected = await fetcher.isConnected
+    XCTAssertFalse(stillConnected)
+    XCTAssertTrue(channel.operations.contains(.close))
   }
 
   /// The engine bounds a batch so only one batch of bodies is resident (§2.17).
