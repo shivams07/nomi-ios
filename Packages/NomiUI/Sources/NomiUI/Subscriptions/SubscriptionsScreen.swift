@@ -95,10 +95,9 @@ public struct SubscriptionsScreen: View {
   /// since this caption already supplies its own "next:" label.
   private func headerCaption(for items: [RecurringSeries]) -> String {
     guard let next = SubscriptionsSummary.next(items) else { return "" }
-    let plural = items.count == 1 ? "subscription" : "subscriptions"
     let charge = SubscriptionRowText.nextCharge(nextExpected: next.nextExpected, now: now)
     let phrase = charge.hasPrefix("next ") ? String(charge.dropFirst("next ".count)) : charge
-    return "\(items.count) \(plural) · next: \(next.label) \(phrase)"
+    return "\(SubscriptionsSummary.countText(items.count)) · next: \(next.label) \(phrase)"
   }
 
   private func rows(for items: [RecurringSeries]) -> some View {
