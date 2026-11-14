@@ -97,15 +97,13 @@ public struct NeedsYouCard: View {
 /// when nothing needs review. Both counts zero is the caught-up row, which
 /// never asks for a line.
 enum NeedsYouText {
+  /// Each sentence is one catalog key, so its plural variations are selected
+  /// by the count and a translation can reorder the whole line.
   static func line(needsReviewCount: Int, uncategorizedCount: Int) -> String {
     if needsReviewCount > 0 {
-      return "\(needsReviewCount) \(noun(needsReviewCount)) to review"
+      return String(localized: "\(needsReviewCount) transactions to review", bundle: .module)
     }
-    return "\(uncategorizedCount) uncategorized \(noun(uncategorizedCount))"
-  }
-
-  private static func noun(_ count: Int) -> String {
-    count == 1 ? "transaction" : "transactions"
+    return String(localized: "\(uncategorizedCount) uncategorized transactions", bundle: .module)
   }
 }
 

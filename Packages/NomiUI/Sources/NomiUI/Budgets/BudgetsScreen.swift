@@ -153,7 +153,7 @@ public struct BudgetsScreen: View {
           Text("Days left")
             .nomiTextStyle(.caption)
             .foregroundStyle(NomiColor.inkSecondary)
-          Text("\(daysLeft) days")
+          Text(BudgetPeriodText.daysLeft(daysLeft))
             .nomiTextStyle(.rowTitle)
             .foregroundStyle(NomiColor.ink)
         }
@@ -316,6 +316,11 @@ enum BudgetPeriodText {
       let lastDay = calendar.date(byAdding: DateComponents(day: -1), to: interval.end)
     else { return "" }
     return "\(NomiFormatters.dayMonth.string(from: interval.start)) – \(NomiFormatters.dayMonth.string(from: lastDay))"
+  }
+
+  /// "1 day", "2 days", "0 days": the gauge card's days-left caption.
+  static func daysLeft(_ days: Int) -> String {
+    String(localized: "\(days) days", bundle: .module)
   }
 }
 
