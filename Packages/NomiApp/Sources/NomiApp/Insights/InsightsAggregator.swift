@@ -177,6 +177,10 @@ public enum InsightsAggregator {
   /// is exactly where a second implementation would disagree. `.trailingMonths`
   /// is the one case with no prior *period* to name, so its window is the same
   /// length taken back from the current window's start.
+  ///
+  /// Like for like (R12a, I-5): while `period` contains `now`, the prior period
+  /// is cut to the days elapsed in the current one, so a mid-month figure is
+  /// set against the same days of the prior month and not the whole of it.
   public static func priorRange(
     for period: InsightPeriod,
     calendar: Calendar = .current,
@@ -186,10 +190,14 @@ public enum InsightsAggregator {
     case .month(let year, let month):
       let priorMonth = month == 1 ? 12 : month - 1
       let priorYear = month == 1 ? year - 1 : year
-      return dateRange(for: .month(year: priorYear, month: priorMonth), calendar: calendar, now: now)
+      let prior = dateRange(for: .month(year: priorYear, month: priorMonth), calendar: calendar, now: now)
+      let current = dateRange(for: period, calendar: calendar, now: now)
+      return likeForLike(current: current, prior: prior, calendar: calendar, now: now)
 
     case .financialYear(let startingYear):
-      return dateRange(for: .financialYear(startingYear: startingYear - 1), calendar: calendar, now: now)
+      let prior = dateRange(for: .financialYear(startingYear: startingYear - 1), calendar: calendar, now: now)
+      let current = dateRange(for: period, calendar: calendar, now: now)
+      return likeForLike(current: current, prior: prior, calendar: calendar, now: now)
 
     case .trailingMonths(let count):
       let current = dateRange(for: .trailingMonths(count), calendar: calendar, now: now)
@@ -201,6 +209,22 @@ public enum InsightsAggregator {
     case .allTime:
       return nil
     }
+  }
+
+  /// `prior` cut to as many days as `current` has elapsed by `now`, when
+  /// `current` contains `now`. Otherwise the whole of `prior`. `elapsed` counts
+  /// the day of `now` itself, so on the 3rd, three days of each are compared.
+  private static func likeForLike(
+    current: Range<Date>,
+    prior: Range<Date>,
+    calendar: Calendar,
+    now: Date
+  ) -> Range<Date> {
+    guard current.contains(now) else { return prior }
+    let today = calendar.startOfDay(for: now)
+    let daysSinceStart = calendar.dateComponents([.day], from: current.lowerBound, to: today).day ?? 0
+    let cutoff = calendar.date(byAdding: .day, value: daysSinceStart + 1, to: prior.lowerBound) ?? prior.upperBound
+    return prior.lowerBound..<min(cutoff, prior.upperBound)
   }
 
   // MARK: - Insights
@@ -386,6 +410,59 @@ public enum InsightsAggregator {
     return totals
       .map { MonthBucket(id: $0.key, debitMinor: $0.value.debit, creditMinor: $0.value.credit) }
       .sorted { $0.id < $1.id }
+  }
+
+  /// The month starts `InsightsStore.monthlyTrend(for:)` returns, ascending
+  /// (R12a, I-4). A month that starts after `now` is dropped. `.allTime` has no
+  /// months. A `.trailingMonths` count below 1 is read as 1, as `dateRange` does.
+  public static func trendMonths(for period: InsightPeriod, calendar: Calendar, now: Date) -> [Date] {
+    let first: Int
+    let count: Int
+    switch period {
+    case .month(let year, let month):
+      first = monthIndex(year: year, month: month) - 5
+      count = 6
+
+    case .financialYear(let startingYear):
+      first = monthIndex(year: startingYear, month: 4)
+      count = 12
+
+    case .trailingMonths(let months):
+      count = max(months, 1)
+      let thisMonth = monthIndex(of: now, calendar: calendar)
+      first = thisMonth - (count - 1)
+
+    case .allTime:
+      return []
+    }
+
+    return (first..<(first + count)).compactMap { index -> Date? in
+      guard let start = calendar.date(from: DateComponents(year: index / 12, month: index % 12 + 1, day: 1)) else {
+        return nil
+      }
+      return start <= now ? start : nil
+    }
+  }
+
+  /// One bucket per entry of `months`, in that order. A month that `buckets`
+  /// holds keeps its values; any other month is zero in both directions.
+  public static func zeroFilledMonths(_ buckets: [MonthBucket], months: [Date]) -> [MonthBucket] {
+    var byMonth: [Date: MonthBucket] = [:]
+    for bucket in buckets {
+      byMonth[bucket.id] = bucket
+    }
+    return months.map { byMonth[$0] ?? MonthBucket(id: $0, debitMinor: 0, creditMinor: 0) }
+  }
+
+  /// Months since year 0, so that consecutive months differ by one. Used for
+  /// window arithmetic that must not depend on the calendar's own month maths.
+  private static func monthIndex(year: Int, month: Int) -> Int {
+    year * 12 + (month - 1)
+  }
+
+  private static func monthIndex(of date: Date, calendar: Calendar) -> Int {
+    let parts = calendar.dateComponents([.year, .month], from: date)
+    return monthIndex(year: parts.year ?? 0, month: parts.month ?? 1)
   }
 
   // MARK: - Accounts

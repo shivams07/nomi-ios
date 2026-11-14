@@ -114,6 +114,65 @@ public final class FakeInsightsStore: InsightsStore {
       .sorted { $0.id < $1.id }
   }
 
+  /// R12a. Same contract as `SwiftDataInsightsStore.monthlyTrend(for:)`. This
+  /// target depends on NomiCore only, so `InsightsAggregator` is not visible
+  /// here, and the month list and the zero-fill are written out again below.
+  /// INR and non-transfer rows only, as the real trend counts them.
+  public func monthlyTrend(for period: InsightPeriod) throws -> [MonthBucket] {
+    let now = Date()
+    let months = fakeTrendMonths(for: period, now: now)
+    guard let first = months.first, let last = months.last else { return [] }
+    let endOfLast = calendar.date(byAdding: .month, value: 1, to: last) ?? last
+    let startOfTomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? endOfLast
+    let upper = min(endOfLast, startOfTomorrow)
+    let rows = transactions.filter {
+      $0.date >= first && $0.date < upper && !$0.isTransfer && $0.currencyCode == "INR"
+    }
+    var byMonth: [Date: (debit: Int, credit: Int)] = [:]
+    for row in rows {
+      guard let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: row.date)) else {
+        continue
+      }
+      var entry = byMonth[monthStart] ?? (0, 0)
+      if row.directionRaw == Direction.debit.rawValue {
+        entry.debit += row.amountMinor
+      } else {
+        entry.credit += row.amountMinor
+      }
+      byMonth[monthStart] = entry
+    }
+    return months.map { month in
+      let entry = byMonth[month] ?? (0, 0)
+      return MonthBucket(id: month, debitMinor: entry.debit, creditMinor: entry.credit)
+    }
+  }
+
+  /// The month starts for `period`, as `InsightsAggregator.trendMonths` gives them.
+  private func fakeTrendMonths(for period: InsightPeriod, now: Date) -> [Date] {
+    let first: Int
+    let count: Int
+    switch period {
+    case .month(let year, let month):
+      first = year * 12 + month - 1 - 5
+      count = 6
+    case .financialYear(let startingYear):
+      first = startingYear * 12 + 3
+      count = 12
+    case .trailingMonths(let months):
+      count = max(months, 1)
+      let parts = calendar.dateComponents([.year, .month], from: now)
+      first = (parts.year ?? 0) * 12 + (parts.month ?? 1) - 1 - (count - 1)
+    case .allTime:
+      return []
+    }
+    return (first..<(first + count)).compactMap { index -> Date? in
+      guard let start = calendar.date(from: DateComponents(year: index / 12, month: index % 12 + 1, day: 1)) else {
+        return nil
+      }
+      return start <= now ? start : nil
+    }
+  }
+
   public func accountSummaries(includeArchived: Bool) throws -> [AccountSummary] {
     accounts
       .filter { includeArchived || !$0.isArchived }

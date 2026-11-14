@@ -64,4 +64,35 @@ struct PeriodRangeTests {
     #expect(range.lowerBound == calendar.date(from: start)!)
     #expect(range.upperBound == calendar.date(from: end)!)
   }
+
+  // MARK: - R12a: trailing windows are whole calendar months
+
+  /// A wall-clock moment in the test calendar, so each expectation reads as
+  /// the IST date it names.
+  private func ist(_ year: Int, _ month: Int, _ day: Int, _ hour: Int = 0, _ minute: Int = 0) -> Date {
+    calendar.date(from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute))!
+  }
+
+  /// 14 Nov 2026, 09:00 IST: six months is June through November, and the
+  /// window ends at the start of tomorrow.
+  @Test func trailingSixMonthsStartsOnTheFirstOfTheMonthSixBack() {
+    let now = ist(2026, 11, 14, 9)
+    let range = dateRange(for: .trailingMonths(6), calendar: calendar, now: now)
+    #expect(range == ist(2026, 6, 1)..<ist(2026, 11, 15))
+  }
+
+  /// `.trailingMonths(1)` is the current month so far, not the last thirty days.
+  @Test func trailingOneMonthIsThisMonthSoFar() {
+    let now = ist(2026, 11, 14, 9)
+    let range = dateRange(for: .trailingMonths(1), calendar: calendar, now: now)
+    #expect(range == ist(2026, 11, 1)..<ist(2026, 11, 15))
+  }
+
+  /// The window ends at the start of tomorrow whatever the hour of `now`, so
+  /// a row dated later today is inside it.
+  @Test func trailingWindowEndsAtTheStartOfTomorrowAtAnyHour() {
+    let late = ist(2026, 11, 14, 23, 59)
+    let range = dateRange(for: .trailingMonths(1), calendar: calendar, now: late)
+    #expect(range.upperBound == ist(2026, 11, 15))
+  }
 }

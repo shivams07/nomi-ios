@@ -110,6 +110,13 @@ public protocol InsightsStore: AnyObject {
   func budgetProgress(year: Int, month: Int) throws -> [BudgetProgress]
   func transactions(in period: InsightPeriod) throws -> [Transaction]
 
+  /// One bucket per calendar month of the window `period` implies, ascending,
+  /// zero-filled, never including a month that starts after now.
+  /// `.month(y, m)`: the six months ending with m. `.financialYear(s)`: April s
+  /// to March s+1. `.trailingMonths(n)`: the n months ending with the current
+  /// month. `.allTime`: no buckets.
+  func monthlyTrend(for period: InsightPeriod) throws -> [MonthBucket]
+
   /// Newest first, at most `limit`. The dashboard's "recent" card (F2).
   ///
   /// It replaces `transactions(in: .allTime)` there, which materialised the
@@ -149,6 +156,11 @@ extension InsightsStore {
   public func needsReviewCountAllTime() throws -> Int {
     try transactions(in: .allTime).filter { $0.needsReview }.count
   }
+
+  /// R12a. Default for stubs, as `recentTransactions` is. A stub that does not
+  /// override it has no monthly trend to show, so it reports none. Every store
+  /// that holds data overrides it.
+  public func monthlyTrend(for period: InsightPeriod) throws -> [MonthBucket] { [] }
 }
 
 @MainActor
