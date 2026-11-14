@@ -22,25 +22,24 @@ enum BudgetRowEmphasis {
   }
 }
 
-/// What saving the amount sheet should do. Setting 0 is presented as removal,
-/// never as a zero budget the user would then read as "infinitely over" —
-/// this is the one place that decision is made, so the sheet's Save button
-/// and its confirmation copy can't drift from each other.
+/// What saving the amount sheet should do. Save only ever sets a budget. Zero and
+/// out-of-range amounts are `.invalid`, never a removal: removing a budget is the
+/// editor's Remove row, which asks first (R8, X13). This is the one place that
+/// decision is made.
 enum BudgetSaveIntent: Equatable {
-  case remove
+  case invalid
   case set(amountMinor: Int)
 
   static func resolve(amountMinor: Int) -> BudgetSaveIntent {
-    amountMinor == 0 ? .remove : .set(amountMinor: amountMinor)
+    AmountRules.isValidTransactionAmount(amountMinor) ? .set(amountMinor: amountMinor) : .invalid
   }
 }
 
-/// The budget editor's Save gate. Amount has no lower bound beyond zero —
-/// zero is a valid, meaningful input (remove) — so only a category selection
-/// is required, unlike `EntrySaveGate` which requires a positive amount.
+/// The budget editor's Save gate: a category, and an amount that is a valid
+/// transaction amount. Zero is not a budget, so it does not pass.
 enum BudgetFormGate {
-  static func isValid(categoryID: UUID?) -> Bool {
-    categoryID != nil
+  static func isValid(categoryID: UUID?, amountMinor: Int) -> Bool {
+    categoryID != nil && AmountRules.isValidTransactionAmount(amountMinor)
   }
 }
 

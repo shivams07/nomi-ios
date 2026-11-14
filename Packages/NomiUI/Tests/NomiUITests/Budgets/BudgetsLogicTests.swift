@@ -36,17 +36,33 @@ final class BudgetsLogicTests: XCTestCase {
     XCTAssertFalse(BudgetRowEmphasis.isAtOrAboveThreshold(progress(fraction: 0)))
   }
 
-  func testSaveIntentIsRemoveAtZeroAmount() {
-    XCTAssertEqual(BudgetSaveIntent.resolve(amountMinor: 0), .remove)
+  /// R8, X13. Zero is never a removal. Removal is the editor's Remove row only.
+  func testThreeDecimalsNeverResolvesToRemove() {
+    XCTAssertEqual(BudgetSaveIntent.resolve(amountMinor: 0), .invalid)
+    XCTAssertEqual(BudgetSaveIntent.resolve(amountMinor: -500), .invalid)
   }
 
   func testSaveIntentIsSetForPositiveAmount() {
     XCTAssertEqual(BudgetSaveIntent.resolve(amountMinor: 5000_00), .set(amountMinor: 5000_00))
   }
 
+  func testSaveIntentIsInvalidAboveTheMaximum() {
+    XCTAssertEqual(BudgetSaveIntent.resolve(amountMinor: 100_000_000_001), .invalid)
+  }
+
   func testFormGateRequiresACategory() {
-    XCTAssertFalse(BudgetFormGate.isValid(categoryID: nil))
-    XCTAssertTrue(BudgetFormGate.isValid(categoryID: UUID()))
+    XCTAssertFalse(BudgetFormGate.isValid(categoryID: nil, amountMinor: 5000_00))
+    XCTAssertTrue(BudgetFormGate.isValid(categoryID: UUID(), amountMinor: 5000_00))
+  }
+
+  /// R8. Save needs a valid amount as well as a category: zero, negative and
+  /// above-maximum amounts all keep Save disabled.
+  func testGateNeedsAValidAmount() {
+    let category: UUID? = UUID()
+    XCTAssertFalse(BudgetFormGate.isValid(categoryID: category, amountMinor: 0))
+    XCTAssertFalse(BudgetFormGate.isValid(categoryID: category, amountMinor: -1))
+    XCTAssertFalse(BudgetFormGate.isValid(categoryID: category, amountMinor: 100_000_000_001))
+    XCTAssertTrue(BudgetFormGate.isValid(categoryID: category, amountMinor: 1))
   }
 
   private var sampleProgress: [BudgetProgress] {
