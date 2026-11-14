@@ -79,6 +79,7 @@ public final class ReferenceDataReconciler: ReferenceDataReconciling {
       }
       return removed
     } catch {
+      NomiLog.store.error("reference data reconcile failed: \(NomiLog.describe(error), privacy: .public)")
       context.rollback()
       throw error
     }

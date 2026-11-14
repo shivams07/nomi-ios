@@ -26,6 +26,9 @@ public struct RulesScreen: View {
   @Query(sort: \NomiCore.Rule.priority) private var rules: [NomiCore.Rule]
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
   @State private var editingRule: NomiCore.Rule?
+  /// The rule a swipe-delete has asked about. Nothing is deleted until the
+  /// confirmation's Delete is tapped (Y7).
+  @State private var pendingDelete: NomiCore.Rule?
   @State private var isCreating = false
   @State private var actionError = false
   #if os(iOS)
@@ -117,6 +120,25 @@ public struct RulesScreen: View {
     .listStyle(.insetGrouped)
     .environment(\.editMode, $editMode)
     #endif
+    // An alert, not a confirmationDialog: on iPhone a dialog anchored to the
+    // swipe row renders as a popover with no Cancel. An alert is always a
+    // centred modal with its own Cancel. It sits on the List, not beside the
+    // error alert on the body, so the two presentations never share a node.
+    .alert(
+      RuleDeleteConfirmation.title,
+      isPresented: Binding(
+        get: { pendingDelete != nil },
+        set: { if !$0 { pendingDelete = nil } }
+      ),
+      presenting: pendingDelete
+    ) { rule in
+      Button(RuleDeleteConfirmation.confirm, role: .destructive) {
+        delete(rule)
+      }
+      Button(RuleDeleteConfirmation.cancel, role: .cancel) {}
+    } message: { _ in
+      Text(RuleDeleteConfirmation.message)
+    }
   }
 
   /// 44 high: the caption on the left, the Reorder/Done text button (44 hit) on
@@ -193,7 +215,7 @@ public struct RulesScreen: View {
     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
       if RuleRowActions.offered(isSystem: rule.isSystem).contains(.delete) {
         Button(role: .destructive) {
-          delete(rule)
+          pendingDelete = rule
         } label: {
           Label("Delete", systemImage: "trash")
         }

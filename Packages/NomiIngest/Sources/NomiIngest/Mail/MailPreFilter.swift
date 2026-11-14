@@ -111,6 +111,14 @@ public struct MailPreFilter: Sendable {
     verdict(for: message) == .candidate
   }
 
+  /// The first gate, on its own (R5c). A message this rejects can never become a
+  /// draft, so the engine need not download its body. Only the sender is read, so
+  /// it works on a header-only `MailMessage`. A message this admits may still fail
+  /// the later gates, which read the body.
+  public func admitsSender(of message: MailMessage) -> Bool {
+    isCandidateDomain(message.senderDomain)
+  }
+
   /// Three widening rings, and the widest one is load-bearing.
   ///
   /// A gate limited to pack domains would drop every sender the pack does not

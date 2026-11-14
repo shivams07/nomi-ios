@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
   name: "NomiUI",
+  defaultLocalization: "en",
   platforms: [.iOS(.v17), .macOS(.v14)],
   products: [
     .library(name: "NomiUI", targets: ["NomiUI"])
@@ -20,6 +21,7 @@ let package = Package(
         .copy("Resources/Fonts/Inter-Medium.otf"),
         .copy("Resources/Fonts/Inter-SemiBold.otf"),
         .copy("Resources/Fonts/OFL-Inter.txt"),
+        .process("Resources/Localizable.xcstrings"),
       ],
       swiftSettings: [.enableExperimentalFeature("StrictConcurrency=targeted")]
     ),

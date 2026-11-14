@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ui-gates.sh: grep gates for the blue/light restyle. Prints one line per gate,
-# "G<n> <count>", for G1-G8. Patterns and baselines come from the build plan
+# "G<n> <count>", for G1-G9. Patterns and baselines come from the build plan
 # (nomi-ios-build-plan.md, "Grep gates"), measured on 626debe. G8 comes from
 # DEC-07 (nomi-ios-decisions.md): a drift guard that fails when networking code
 # appears in a Sources file, so the About privacy sentence gets re-read.
@@ -104,10 +104,14 @@ gate_hits() {
         -- "${sc[@]}" | grep -vE "$DOC_LINE" || true ;;
     G8)
       git grep -n -E 'URLSession|URLRequest' -- "${sc[@]}" || true ;;
+    G9)
+      # Hand-built plurals in NomiUI. NomiApp is excluded on purpose: its Siri
+      # copy is spoken and already correct. Ignores --files on purpose.
+      git grep -nE '== 1 \? "' -- 'Packages/NomiUI/Sources' || true ;;
   esac
 }
 
-GATES="G1 G2 G3 G4 G5 G6 G7 G8"
+GATES="G1 G2 G3 G4 G5 G6 G7 G8 G9"
 COUNTS=""
 for g in $GATES; do
   n="$(gate_hits "$g" | grep -c '' || true)"

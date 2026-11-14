@@ -172,6 +172,19 @@ public enum TransactionDetailLogic {
   }
 }
 
+/// When the category picker may write. Opening or cancelling the picker reports
+/// no pick, and picking the category the row already has is not a change, so
+/// neither writes. The screen used to pre-seed the picker and write on that
+/// seed, which stamped `.manual` on a row the user had only looked at and so
+/// overrode the rule that set it; `TransactionDetailScreen.categorySelection`
+/// no longer does. Pulled out as a pure function over plain `UUID`s, the same
+/// reason as `RulesReorder`.
+enum CategoryPickCommit {
+  static func shouldWrite(picked: UUID?, current: UUID?) -> Bool {
+    picked != nil && picked != current
+  }
+}
+
 /// M6: the detail screen's "UPI" section prose. Full words, unlike
 /// `TransactionRow.upiKindCapsuleText`'s row-width "P2P"/"Merchant" capsule —
 /// the two are different presentations of the same raw value, not one

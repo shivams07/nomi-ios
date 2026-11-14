@@ -163,6 +163,7 @@ public actor SwiftDataPipelineStore: PipelineStore {
       if let transferSaveFailure { throw transferSaveFailure }
       try modelContext.save()
     } catch {
+      NomiLog.store.error("transfer pair save failed: \(NomiLog.describe(error), privacy: .public)")
       modelContext.rollback()
       throw error
     }

@@ -14,9 +14,13 @@ private actor RecordingHarness: BudgetAlertContextProviding, BudgetNotificationS
 
   private(set) var events: [Event] = []
   private let context: BudgetAlertContext
+  private let authorized: Bool
+  private let failsToSchedule: Bool
 
-  init(context: BudgetAlertContext) {
+  init(context: BudgetAlertContext, authorized: Bool = true, failsToSchedule: Bool = false) {
     self.context = context
+    self.authorized = authorized
+    self.failsToSchedule = failsToSchedule
   }
 
   func currentContext() async -> BudgetAlertContext {
@@ -30,7 +34,12 @@ private actor RecordingHarness: BudgetAlertContextProviding, BudgetNotificationS
 
   func requestAuthorization() async throws -> Bool { true }
 
+  func isAuthorized() async -> Bool { authorized }
+
+  struct Refused: Error {}
+
   func schedule(_ alert: BudgetAlert) async throws {
+    if failsToSchedule { throw Refused() }
     events.append(.scheduled(alert.logKey))
   }
 }
@@ -59,26 +68,55 @@ struct BudgetAlertObserverTests {
   private func harness(
     _ progress: [BudgetProgress],
     firedKeys: Set<String> = [],
-    enabled: Bool = true
+    enabled: Bool = true,
+    authorized: Bool = true,
+    failsToSchedule: Bool = false
   ) -> RecordingHarness {
     RecordingHarness(
       context: BudgetAlertContext(
         progress: progress,
         firedKeys: firedKeys,
         settings: NotificationSettings(budgetAlertsEnabled: enabled, thresholdFraction: 0.9)
-      )
+      ),
+      authorized: authorized,
+      failsToSchedule: failsToSchedule
     )
   }
 
-  @Test func logsBeforeItSchedules() async {
-    let fake = harness([progress(groceries, name: "Groceries", spentMinor: 920_000)])
+  /// Recording happens after the centre accepts the alert. The old order
+  /// recorded first, so a refused alert still closed the category for the month.
+  @Test func recordsOnlyAfterSchedulingSucceeds() async {
+    let key = BudgetAlertEvaluator.logKey(categoryID: groceries, periodKey: "2026-08")
+
+    let accepted = harness([progress(groceries, name: "Groceries", spentMinor: 920_000)])
+    await BudgetAlertObserver(context: accepted, scheduler: accepted)
+      .didCommit(affectedCategoryIDs: [groceries])
+    let acceptedEvents = await accepted.events
+    #expect(acceptedEvents == [.readContext, .scheduled(key), .recorded([key])])
+
+    let refused = harness(
+      [progress(groceries, name: "Groceries", spentMinor: 920_000)],
+      failsToSchedule: true
+    )
+    await BudgetAlertObserver(context: refused, scheduler: refused)
+      .didCommit(affectedCategoryIDs: [groceries])
+    let refusedEvents = await refused.events
+    #expect(refusedEvents == [.readContext, .recorded([])])
+  }
+
+  /// No permission means no notification and no log row. The alert stays open
+  /// for the month and fires on a later commit once permission exists.
+  @Test func unauthorisedRecordsNothingAndSchedulesNothing() async {
+    let fake = harness(
+      [progress(groceries, name: "Groceries", spentMinor: 920_000)],
+      authorized: false
+    )
     let observer = BudgetAlertObserver(context: fake, scheduler: fake)
 
     await observer.didCommit(affectedCategoryIDs: [groceries])
 
-    let key = BudgetAlertEvaluator.logKey(categoryID: groceries, periodKey: "2026-08")
     let events = await fake.events
-    #expect(events == [.readContext, .recorded([key]), .scheduled(key)])
+    #expect(events == [.readContext])
   }
 
   @Test func onlyCategoriesTouchedByTheCommitAreConsidered() async {
@@ -92,7 +130,7 @@ struct BudgetAlertObserverTests {
 
     let rentKey = BudgetAlertEvaluator.logKey(categoryID: rent, periodKey: "2026-08")
     let events = await fake.events
-    #expect(events == [.readContext, .recorded([rentKey]), .scheduled(rentKey)])
+    #expect(events == [.readContext, .scheduled(rentKey), .recorded([rentKey])])
   }
 
   @Test func anEmptyCommitBatchDoesNotEvenReadTheContext() async {

@@ -31,7 +31,7 @@ public extension View {
     Text("HDFC Savings")
       .nomiTextStyle(.rowTitle)
       .foregroundStyle(NomiColor.ink)
-    Text("HDFC ••4471 · 42 txns")
+    Text("HDFC ••4471 · 42 transactions")
       .nomiTextStyle(.footnote)
       .foregroundStyle(NomiColor.inkSecondary)
   }
@@ -47,7 +47,7 @@ public extension View {
     Text("HDFC Savings")
       .nomiTextStyle(.rowTitle)
       .foregroundStyle(NomiColor.ink)
-    Text("HDFC ••4471 · 42 txns")
+    Text("HDFC ••4471 · 42 transactions")
       .nomiTextStyle(.footnote)
       .foregroundStyle(NomiColor.inkSecondary)
   }

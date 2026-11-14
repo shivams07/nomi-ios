@@ -360,4 +360,20 @@ final class TransactionDetailLogicTests: XCTestCase {
     XCTAssertEqual(TransactionDetailLogic.signedMinor(amountMinor: -68_00, direction: .debit), -68_00)
     XCTAssertEqual(TransactionDetailLogic.signedMinor(amountMinor: -68_00, direction: .credit), 68_00)
   }
+
+  // MARK: - X12: category picker commit
+
+  func testPickerCommitTruthTable() {
+    let a = UUID()
+    let b = UUID()
+    // Cancel or a dismissed picker reports no pick: nothing is written.
+    XCTAssertFalse(CategoryPickCommit.shouldWrite(picked: nil, current: a))
+    XCTAssertFalse(CategoryPickCommit.shouldWrite(picked: nil, current: nil))
+    // Picking the category the row already has is not a change.
+    XCTAssertFalse(CategoryPickCommit.shouldWrite(picked: a, current: a))
+    // A different pick is a change.
+    XCTAssertTrue(CategoryPickCommit.shouldWrite(picked: b, current: a))
+    // An uncategorised row takes its first pick.
+    XCTAssertTrue(CategoryPickCommit.shouldWrite(picked: a, current: nil))
+  }
 }

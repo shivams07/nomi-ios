@@ -21,6 +21,12 @@ enum SubscriptionsSummary {
   static func next(_ series: [RecurringSeries]) -> RecurringSeries? {
     series.min { $0.nextExpected < $1.nextExpected }
   }
+
+  /// "1 subscription", "2 subscriptions". The noun goes through the catalog's
+  /// plural variations, so a count never hand-picks its own singular.
+  static func countText(_ count: Int) -> String {
+    String(localized: "\(count) subscriptions", bundle: .module)
+  }
 }
 
 /// Buckets a series list by the calendar day of `nextExpected`, preserving
@@ -72,8 +78,8 @@ enum SubscriptionRowText {
     let startOfNext = calendar.startOfDay(for: nextExpected)
     let startOfNow = calendar.startOfDay(for: now)
     let days = calendar.dateComponents([.day], from: startOfNow, to: startOfNext).day ?? 0
-    if days > 0 { return "next in \(days) day\(days == 1 ? "" : "s")" }
-    if days < 0 { return "expected \(-days) day\(-days == 1 ? "" : "s") ago" }
+    if days > 0 { return String(localized: "next in \(days) days", bundle: .module) }
+    if days < 0 { return String(localized: "expected \(-days) days ago", bundle: .module) }
     return "next today"
   }
 }

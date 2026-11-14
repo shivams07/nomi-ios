@@ -28,18 +28,28 @@ public struct BudgetAlertContext: Sendable {
 public protocol BudgetAlertContextProviding: AnyObject, Sendable {
   func currentContext() async -> BudgetAlertContext
   /// Persist one `BudgetAlertLog` row per alert, carrying its `wasSuppressed`.
-  /// Called *before* anything is presented — see `BudgetAlertObserver`.
+  /// Called *after* each unsuppressed alert was handed to an authorised centre
+  /// without error, with the suppressed ones alongside — see `BudgetAlertObserver`.
+  /// An alert the centre refused is not in the list, so it is retried.
   func recordFired(_ alerts: [BudgetAlert]) async
 }
 
 /// Joins the evaluator to the scheduler on U4's commit hook. U4 must not know
 /// budgets exist; U8 registers this.
 ///
-/// Ordering is deliberate: the log rows are written **before** the notification
-/// is scheduled. Backwards, a scheduling failure would leave no row and the
-/// alert would fire again on the next commit — and "exactly one notification per
-/// category per month" is the acceptance criterion, whereas a notification lost
-/// to a scheduler error is a soft failure.
+/// Ordering is deliberate, and it is the reverse of what this type used to do.
+/// An alert is recorded as fired only after the centre has accepted it: the log
+/// row is written once `schedule` has returned without throwing. Recording first
+/// meant a centre that refused the alert (permission revoked, or `add` throwing)
+/// still silenced the category for the rest of the month, so the user was never
+/// told. The cost of this order is that a failed alert can fire again on the next
+/// commit, which is a repeat rather than a loss. The request identifier is the
+/// alert's `logKey`, so the centre replaces a repeat rather than stacking it.
+///
+/// The centre gives no delivery receipt, so "accepted" means `add` returned
+/// without throwing to a centre that reported itself authorised. An unauthorised
+/// centre records nothing at all, so the alert can still fire once permission
+/// exists within the same period.
 public final class BudgetAlertObserver: PostCommitObserver {
   private let context: any BudgetAlertContextProviding
   private let scheduler: any BudgetNotificationScheduling
@@ -69,10 +79,26 @@ public final class BudgetAlertObserver: PostCommitObserver {
 
     guard !alerts.isEmpty else { return }
 
-    await context.recordFired(alerts)
+    let suppressed = alerts.filter(\.wasSuppressed)
+    let pending = alerts.filter { !$0.wasSuppressed }
 
-    for alert in alerts where !alert.wasSuppressed {
-      try? await scheduler.schedule(alert)
+    // Without permission nothing is shown, so nothing is recorded either: the
+    // alert stays open for the rest of the period and fires on a later commit
+    // once the user has granted it.
+    if !pending.isEmpty {
+      guard await scheduler.isAuthorized() else { return }
     }
+
+    var delivered: [BudgetAlert] = []
+    for alert in pending {
+      do {
+        try await scheduler.schedule(alert)
+        delivered.append(alert)
+      } catch {
+        // Not recorded, so the next commit in this period retries it.
+      }
+    }
+
+    await context.recordFired(suppressed + delivered)
   }
 }

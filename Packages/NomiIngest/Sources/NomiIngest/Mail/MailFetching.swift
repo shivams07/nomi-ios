@@ -81,7 +81,28 @@ public protocol MailFetching: Sendable {
   /// was given and must not re-chunk, coalesce or prefetch. The whole point of
   /// the bound is that only one batch of message bodies exists at once (§2.17);
   /// a transport that helpfully reads ahead puts it straight back.
+  ///
+  /// **Capped (R5c):** `NWIMAPFetcher` asks for `BODY.PEEK[]<0.262144>`, so each
+  /// message carries at most its first 256 KB. A larger message arrives truncated;
+  /// its text parts normally come first, and `RFC822Message` decides what a cut
+  /// part is worth.
   func fetch(uids: [UInt32], in mailbox: String) async throws -> [MailMessage]
+
+  /// True when `fetchHeaders` is a real header-only fetch. The engine fetches
+  /// headers first only when this is true; otherwise it uses `fetch` exactly as before.
+  var supportsHeaderFirstFetch: Bool { get }
+
+  /// `UID FETCH <set> (UID BODY.PEEK[HEADER.FIELDS (FROM)])`. Messages carry
+  /// `fromRaw` and nil bodies. Same throwing contract as `fetch`.
+  func fetchHeaders(uids: [UInt32], in mailbox: String) async throws -> [MailMessage]
+}
+
+extension MailFetching {
+  public var supportsHeaderFirstFetch: Bool { false }
+
+  public func fetchHeaders(uids: [UInt32], in mailbox: String) async throws -> [MailMessage] {
+    try await fetch(uids: uids, in: mailbox)
+  }
 }
 
 /// Where the incremental sync left off. Persisted by U8; U2 only reads and
