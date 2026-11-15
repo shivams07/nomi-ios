@@ -28,10 +28,12 @@ private enum LedgerMetrics {
 /// reserved space, so the block centres between the pill row and the bar's top.
 /// Pure, so `LedgerFirstRunBandTests` pins the arithmetic.
 enum LedgerFirstRunBand {
-  /// The tab bar's bottom reserve on the artboards: the bar (62 pt) plus its 22 pt
-  /// bottom margin. Fixed, because the bar's measured height reads 0 on this runtime
-  /// (`NomiTabBarHeightKey` never reaches `RootView`), so it cannot be measured here.
-  static let tabBarReserve: CGFloat = 86
+  /// The tab bar's bottom reserve: the bar's height plus its offset from the physical
+  /// bottom (F3a, I-16), 68 + 26 = 94 pt. The band is measured from the safe-area edge,
+  /// which sits 34 pt above the physical bottom on Face ID phones, so the bar's real top
+  /// is 60 pt above that edge. 94 overstates that by the safe area, so the block always
+  /// clears the bar. Fixed, not measured, so it is a pure constant.
+  static let tabBarReserve: CGFloat = NomiTabBarMetrics.barHeight + NomiTabBarMetrics.bottomOffset
 
   static func height(containerHeight: CGFloat, tabBottomReserve: CGFloat) -> CGFloat {
     guard containerHeight.isFinite, tabBottomReserve.isFinite else { return 0 }
