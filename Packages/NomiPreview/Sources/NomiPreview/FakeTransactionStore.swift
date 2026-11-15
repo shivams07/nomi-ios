@@ -48,12 +48,16 @@ public final class FakeTransactionStore: TransactionStore {
     }
     guard fromAccountID != toAccountID else { throw TransactionStoreError.sameAccount }
 
-    let group = UUID()
+    // Mirrors the real store: both ids first, then the group from them (I-11 Amendment 1).
+    let debitID = UUID()
+    let creditID = UUID()
+    let group = TransferGroupID.make(debitID, creditID)
     let stored = Self.storedNote(note)
     let descriptionText = "Transfer"
     let normalized = normalizeDescription(descriptionText)
-    func leg(_ direction: Direction, accountID: UUID) -> Transaction {
+    func leg(id: UUID, _ direction: Direction, accountID: UUID) -> Transaction {
       Transaction(
+        id: id,
         date: date,
         descriptionText: descriptionText,
         normalizedDescription: normalized,
@@ -73,8 +77,8 @@ public final class FakeTransactionStore: TransactionStore {
         transferSourceRaw: TransferSource.manual.rawValue
       )
     }
-    let debit = leg(.debit, accountID: fromAccountID)
-    let credit = leg(.credit, accountID: toAccountID)
+    let debit = leg(id: debitID, .debit, accountID: fromAccountID)
+    let credit = leg(id: creditID, .credit, accountID: toAccountID)
     transactions.append(contentsOf: [debit, credit])
     return (debit, credit)
   }

@@ -145,9 +145,9 @@ public final class SwiftDataTransactionStore: TransactionStore {
   /// Neither leg is `needsReview`, and `RuleEngine` is not run: a transfer is not categorised, and
   /// a rule that claimed it would put a category on a leg that must never carry one.
   ///
-  /// The group id is a fresh UUID: one transfer is created once, on one device, so there is no pair
-  /// for two devices to agree on. (`setTransfer`'s marked pairs use `TransferGroupID.make` because
-  /// two devices can mark the same pair.)
+  /// The group is `TransferGroupID.make(debit.id, credit.id)`, derived from the two leg ids (I-11
+  /// Amendment 1, PR #202). Both ids are generated before either row is built, so the group is the same
+  /// whichever order the pair is read in. It is the same derivation `setTransfer` uses for marked pairs.
   public func addTransfer(
     amountMinor: Int,
     date: Date,
@@ -162,13 +162,16 @@ public final class SwiftDataTransactionStore: TransactionStore {
     guard fromAccountID != toAccountID else { throw TransactionStoreError.sameAccount }
 
     let timestamp = now()
-    let group = UUID()
+    // Both ids first, so the group is a function of the two legs (I-11 Amendment 1).
+    let debitID = UUID()
+    let creditID = UUID()
+    let group = TransferGroupID.make(debitID, creditID)
     let storedNote = Self.storedNote(note)
     let debit = makeTransferLeg(
-      .debit, amountMinor: amountMinor, date: date, accountID: fromAccountID,
+      id: debitID, .debit, amountMinor: amountMinor, date: date, accountID: fromAccountID,
       group: group, note: storedNote, timestamp: timestamp)
     let credit = makeTransferLeg(
-      .credit, amountMinor: amountMinor, date: date, accountID: toAccountID,
+      id: creditID, .credit, amountMinor: amountMinor, date: date, accountID: toAccountID,
       group: group, note: storedNote, timestamp: timestamp)
     context.insert(debit)
     context.insert(credit)
@@ -186,6 +189,7 @@ public final class SwiftDataTransactionStore: TransactionStore {
   }
 
   private func makeTransferLeg(
+    id: UUID,
     _ direction: Direction,
     amountMinor: Int,
     date: Date,
@@ -197,6 +201,7 @@ public final class SwiftDataTransactionStore: TransactionStore {
     let descriptionText = "Transfer"
     let normalized = normalizeDescription(descriptionText)
     return Transaction(
+      id: id,
       date: date,
       descriptionText: descriptionText,
       normalizedDescription: normalized,

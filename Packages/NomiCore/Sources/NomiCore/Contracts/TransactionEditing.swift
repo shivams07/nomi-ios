@@ -10,10 +10,19 @@ import Foundation
 public protocol TransactionEditing: AnyObject {
   /// Rewrites the user-editable facts on any row, whatever its source.
   /// Re-derives `normalizedDescription` and `dedupeKey` from the new
-  /// amount/date/description — the same two NomiCore functions the pipeline
-  /// and the manual store use, so the key stays byte-identical across
-  /// writers. `note` (U24) is stored as-is and, per `Transaction.note`'s own
-  /// doc, deliberately feeds neither derivation. `needsReview`, `categoryID`,
+  /// amount/date/description, with the NomiCore functions the pipeline uses.
+  ///
+  /// The key follows the edited-key rule (I-11 Amendment 1). A manual row keeps the
+  /// natural key, the same one the pipeline would derive, so a manual row and
+  /// a bank alert with equal fields still pair up under reconcile. Any other
+  /// source (email, file) gets a key salted with its own id, so no other row can
+  /// share it. Reconcile groups rows by equal key and deletes all but one, so a
+  /// user-edited email or file row must never be grouped with another row by
+  /// accident. Rows edited before this rule keep their natural keys; no
+  /// migration.
+  ///
+  /// `note` (U24) is stored as-is and, per `Transaction.note`'s own doc,
+  /// deliberately feeds neither derivation. `needsReview`, `categoryID`,
   /// `accountID`, `sourceRefs` and `mergedCount` are untouched.
   func update(_ id: UUID, amountMinor: Int, date: Date, descriptionText: String, note: String?) throws
 
@@ -26,7 +35,7 @@ public protocol TransactionEditing: AnyObject {
   func setTransfer(_ id: UUID, isTransfer: Bool) throws
 
   /// Flips direction. Throws `TransactionEditError.transferLeg` when the row `isTransfer` (unmark first).
-  /// Re-derives `dedupeKey` (direction is part of it). Reports the row's category to `didWrite`.
+  /// Re-derives `dedupeKey` by the edited-key rule (I-11 Amendment 1; direction is part of it). Reports the row's category to `didWrite`.
   /// No default: every conformer implements it, so none can silently drop the flip.
   func setDirection(_ id: UUID, to direction: Direction) throws
 }

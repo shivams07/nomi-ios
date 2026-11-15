@@ -123,6 +123,18 @@ final class ManualTransferTests: XCTestCase {
     XCTAssertNotEqual(debit.dedupeKey, credit.dedupeKey)
   }
 
+  /// I-11 Amendment 1. The group is derived from the two leg ids, so it is the same however the pair
+  /// is read back: it is `TransferGroupID.make` over the debit and credit ids, in either order.
+  func testTransferGroupIsDeterministic() throws {
+    let f = try makeFixture()
+    let (debit, credit) = try f.transactions.addTransfer(
+      amountMinor: 50_000, date: day, fromAccountID: UUID(), toAccountID: UUID(), note: nil)
+
+    let group = try XCTUnwrap(debit.transferGroupID)
+    XCTAssertEqual(group, TransferGroupID.make(debit.id, credit.id))
+    XCTAssertEqual(group, TransferGroupID.make(credit.id, debit.id))
+  }
+
   // MARK: - Refusals
 
   func testFromAndToTheSameAccountIsRefusedAndNothingIsWritten() throws {

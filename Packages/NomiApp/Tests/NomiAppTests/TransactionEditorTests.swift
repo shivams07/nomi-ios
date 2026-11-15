@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import NomiCore
 import SwiftData
@@ -61,13 +62,18 @@ final class TransactionEditorTests: XCTestCase {
     XCTAssertEqual(refetched.descriptionText, "NEW DESCRIPTION")
     XCTAssertEqual(refetched.normalizedDescription, normalizeDescription("NEW DESCRIPTION"))
 
-    let expectedKey = makeDedupeKey(
+    // I-11 Amendment 1. The row is an email row, so its edited key is salted with its id. A manual row
+    // keeps the natural key (see ReconcileAfterEditTests).
+    let natural = makeDedupeKey(
       date: newDate,
       amountMinor: 45_00,
       directionRaw: Direction.debit.rawValue,
       normalizedDescription: normalizeDescription("NEW DESCRIPTION")
     )
-    XCTAssertEqual(refetched.dedupeKey, expectedKey, "the key must be byte-identical to a fresh computation")
+    let salted = natural + "|edited|" + id.uuidString.lowercased()
+    let expectedKey = SHA256.hash(data: Data(salted.utf8)).map { String(format: "%02x", $0) }.joined()
+    XCTAssertEqual(refetched.dedupeKey, expectedKey, "an edited email row must carry the salted key")
+    XCTAssertNotEqual(refetched.dedupeKey, natural, "an edited email row kept the natural key")
 
     XCTAssertTrue(refetched.needsReview, "editing amount/date/description is not a review dismissal")
     XCTAssertEqual(refetched.categoryID, categoryID)

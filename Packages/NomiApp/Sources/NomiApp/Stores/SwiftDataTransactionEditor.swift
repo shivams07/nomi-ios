@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import NomiCore
 import SwiftData
@@ -55,12 +56,7 @@ public final class SwiftDataTransactionEditor: TransactionEditing {
     // No `calendar:` argument — this editor inherits whichever default
     // `makeDedupeKey` has when `park/dedupe-key-ist` merges, same as every
     // other call site the fix plan didn't touch.
-    row.dedupeKey = makeDedupeKey(
-      date: date,
-      amountMinor: amountMinor,
-      directionRaw: row.directionRaw,
-      normalizedDescription: normalized
-    )
+    row.dedupeKey = editedDedupeKey(for: row)
     // U24: stored as-is, same as every other field here — `note` never
     // feeds `dedupeKey`/`normalizedDescription` (see `Transaction.note`'s
     // doc: two devices' notes on the same row must not split it in two).
@@ -200,16 +196,29 @@ public final class SwiftDataTransactionEditor: TransactionEditing {
 
     let timestamp = now()
     row.directionRaw = direction.rawValue
-    row.dedupeKey = makeDedupeKey(
-      date: row.date,
-      amountMinor: row.amountMinor,
-      directionRaw: direction.rawValue,
-      normalizedDescription: row.normalizedDescription
-    )
+    row.dedupeKey = editedDedupeKey(for: row)
     row.updatedAt = timestamp
 
     do { try saveEdit(context) } catch { context.rollback(); throw error }
     coordinator.didWrite(affectedCategoryIDs: Set([row.categoryID].compactMap { $0 }))
+  }
+
+  /// I-11 Amendment 1. The key a user edit writes. A manual row keeps the natural key that
+  /// `makeDedupeKey` derives from its fields, so it still pairs with an alert that has the same
+  /// fields. Any other source gets `sha256(natural + "|edited|" + id)`, which no other row can have,
+  /// so reconcile never groups an edited email or file row with another row.
+  ///
+  /// Called after the fields are written, so the key reads the values the row now holds.
+  private func editedDedupeKey(for row: Transaction) -> String {
+    let natural = makeDedupeKey(
+      date: row.date,
+      amountMinor: row.amountMinor,
+      directionRaw: row.directionRaw,
+      normalizedDescription: row.normalizedDescription
+    )
+    guard row.sourceRaw != IngestSource.manual.rawValue else { return natural }
+    let salted = natural + "|edited|" + row.id.uuidString.lowercased()
+    return SHA256.hash(data: Data(salted.utf8)).map { String(format: "%02x", $0) }.joined()
   }
 
   private func row(id: UUID) throws -> Transaction? {
