@@ -18,6 +18,17 @@ final class RecurringStoreTests: XCTestCase {
   /// Owns each test's container for the life of the test. See `InMemoryStack`.
   private var stacks: [InMemoryStack] = []
 
+  /// B6. One defaults suite per test, removed afterwards.
+  private var dismissalSuites: [String] = []
+
+  override func tearDownWithError() throws {
+    for name in dismissalSuites {
+      UserDefaults.standard.removePersistentDomain(forName: name)
+    }
+    dismissalSuites = []
+    stacks = []
+  }
+
   func testAMonthlyChargeIsReportedWithItsNextDate() throws {
     let (store, context, _) = try makeStore()
     insertRun(daysAgo: [60, 30, 0], into: context)
@@ -232,11 +243,16 @@ final class RecurringStoreTests: XCTestCase {
     // Copied out rather than captured through `self`: the closure outlives
     // this call and there is no reason for the store to hold the test case.
     let moment = reference
+    // B6. Its own defaults suite, so a dismissal stored by the app (or by another
+    // test) cannot hide a series these tests expect to see.
+    let suiteName = "RecurringStoreTests.\(UUID().uuidString)"
+    dismissalSuites.append(suiteName)
     let store = SwiftDataRecurringStore(
       context: context,
       cache: cache,
       calendar: calendar,
-      now: { moment })
+      now: { moment },
+      dismissals: UserDefaults(suiteName: suiteName)!)
     return (store, context, cache)
   }
 }
