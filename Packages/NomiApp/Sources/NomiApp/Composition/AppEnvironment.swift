@@ -57,6 +57,7 @@ public final class AppEnvironment: ObservableObject {
 
   private let pipeline: IngestPipeline
   private let credentials: any MailCredentialStoring
+  private let scheduler: any BudgetNotificationScheduling
 
   /// `InsightsCache.generation`, republished so `RootView` can hand it to
   /// `DashboardView` and `ReportsScreen` as their `refreshToken`.
@@ -75,6 +76,23 @@ public final class AppEnvironment: ObservableObject {
   @Published public private(set) var insightsGeneration = 0
 
   public var mailConnectionService: any MailConnectionService { mail.service }
+
+  /// B5. Settings calls this to erase everything (S9a). It is `lazy` because its
+  /// storage-mode reader captures `self`, and `self` is not complete until the
+  /// last stored property is set. Nothing else reads it, so nothing is built
+  /// until Settings asks.
+  public private(set) lazy var eraser: any DataErasing = DataEraser(
+    container: container,
+    storageMode: { [unowned self] in self.storageMode },
+    sync: sync,
+    pipeline: pipeline,
+    mail: mailConnectionService,
+    credentials: credentials,
+    notifications: scheduler,
+    preferences: preferences,
+    firstRun: firstRun,
+    writes: coordinator
+  )
 
   /// Every default here is the real implementation; this is the one place that
   /// chooses. `mailFetcher` is U2c's `NWConnection`/TLS transport — until §2.23
@@ -95,6 +113,7 @@ public final class AppEnvironment: ObservableObject {
     self.storageMode = storageMode
     self.storageMonitor = StorageModeMonitor(constructed: storageMode, probe: accountProbe)
     self.credentials = credentials
+    self.scheduler = scheduler
 
     let cache = InsightsCache()
     let coordinator = WriteCoordinator(cache: cache)

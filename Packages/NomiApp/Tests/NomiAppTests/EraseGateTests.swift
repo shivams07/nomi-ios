@@ -160,6 +160,36 @@ final class EraseGateTests: XCTestCase {
     _ = try await withTestTimeout { await sync.value }
   }
 
+  /// Two callers reach `beginErase` together on an idle coordinator. The actor
+  /// admits one, and the other throws `busy` and changes nothing: one holder,
+  /// one busy, and `cancelAll` runs once, for the holder.
+  func testTwoCallersRacingForAnIdleGateGetOneHolderAndOneBusy() async throws {
+    let submitter = EraseSubmitter()
+    let coordinator = makeCoordinator(
+      stack: try await connectedStack(fetcher: OrderRecordingMailFetcher()),
+      submitter: submitter)
+
+    async let first = attemptErase(coordinator)
+    async let second = attemptErase(coordinator)
+    let outcomes = await [first, second]
+
+    let holders = outcomes.compactMap { outcome -> EraseToken? in
+      if case .held(let token) = outcome { return token }
+      return nil
+    }
+    XCTAssertEqual(holders.count, 1, "exactly one caller takes the gate")
+    XCTAssertEqual(outcomes.filter { $0 == .busy }.count, 1, "the other caller is refused as busy")
+    XCTAssertEqual(submitter.cancelAllCount, 1, "cancelAll ran once, for the holder")
+    let closed = await coordinator.isErasing
+    XCTAssertTrue(closed, "the gate is closed while the holder runs")
+
+    for holder in holders {
+      await coordinator.endErase(holder)
+    }
+    let reopened = await coordinator.isErasing
+    XCTAssertFalse(reopened, "the holder's token reopens it")
+  }
+
   /// The holder is the only erase that ends the gate: a second `beginErase`
   /// that was refused changes nothing, and `cancelAll` runs once, for the holder.
   func testTheGateStaysClosedUntilTheHolderEndsAndCancelsOnce() async throws {
@@ -251,6 +281,22 @@ final class EraseGateTests: XCTestCase {
 
     let next = try await withTestTimeout { try await coordinator.beginErase() }
     await coordinator.endErase(next)
+  }
+
+  private enum EraseAttempt: Equatable {
+    case held(EraseToken)
+    case busy
+    case other
+  }
+
+  private func attemptErase(_ coordinator: AppSyncCoordinator) async -> EraseAttempt {
+    do {
+      return .held(try await coordinator.beginErase())
+    } catch CoordinatorEraseError.busy {
+      return .busy
+    } catch {
+      return .other
+    }
   }
 
   /// Polls until the gate is closed, so a test can rely on a holder being in place.
