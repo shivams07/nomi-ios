@@ -341,9 +341,11 @@ private struct EntryForm: View {
   private func detailRow(_ title: String, value: String?, action: @escaping () -> Void) -> some View {
     Button(action: action) {
       HStack(spacing: NomiSpacing.xs) {
+        // The title never breaks mid-word ("Accou/nt" at AX3); the value wraps instead.
         Text(title)
           .nomiTextStyle(.body)
           .foregroundStyle(NomiColor.ink)
+          .fixedSize(horizontal: true, vertical: false)
         Spacer(minLength: NomiSpacing.xs)
         Text(value ?? "Unassigned")
           .nomiTextStyle(.rowTitle)
