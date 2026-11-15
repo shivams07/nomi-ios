@@ -11,14 +11,15 @@ public enum OnboardingRoutes {
   /// same list the connect step offers, so the copy cannot name a provider the
   /// app does not support. The canvas said "Gmail, Yahoo and iCloud Mail"; Yahoo
   /// has no provider here, so it is not named.
-  /// The note is true of the code: the sender gate admits bank-like domains
-  /// (`MailPreFilter.isCandidateDomain`), and the stored description is a
-  /// narration of at most 160 characters (`MailNarration`), not the whole email.
+  /// The note lists every field an email-sourced transaction stores:
+  /// `descriptionText` (a narration of at most 160 characters, `MailNarration`),
+  /// `senderDomain`, `cardFragment` and the `externalID` reference
+  /// (mailbox, UIDVALIDITY and UID). It never says the whole email is kept.
   static func emailRouteNote(providers: [MailProvider] = MailProvider.allCases) -> String {
     let names = providerList(providers)
     return String(
       localized: """
-        Works with \(names). Nomi reads only bank-like senders and keeps each transaction's amount, date and a short description of the alert, not the whole email.
+        Works with \(names). Nomi reads only bank alert emails. For each one it keeps the amount, date, a short description, the sender's domain, the card's last 4 digits and a reference to the email, never the whole email.
         """,
       bundle: .module)
   }

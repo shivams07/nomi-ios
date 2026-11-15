@@ -38,8 +38,18 @@ final class OnboardingRoutesTests: XCTestCase {
     XCTAssertFalse(note.contains("Generic IMAP"), "user wording, not the enum's display name")
     XCTAssertTrue(
       note.hasSuffix(
-        "Nomi reads only bank-like senders and keeps each transaction's amount, date and a short description of the alert, not the whole email."),
+        "Nomi reads only bank alert emails. For each one it keeps the amount, date, a short description, the sender's domain, the card's last 4 digits and a reference to the email, never the whole email."),
       note)
+  }
+
+  /// Every field an email-sourced transaction stores is named: the sender's
+  /// domain, the card's last four digits (`cardFragment`) and the message
+  /// reference (`externalID`). The note must not understate what is kept.
+  func testEmailNoteNamesEveryFieldAnEmailRowKeeps() {
+    let note = OnboardingRoutes.emailRouteNote()
+    for phrase in ["amount", "date", "short description", "sender's domain", "card's last 4 digits", "reference to the email"] {
+      XCTAssertTrue(note.contains(phrase), "missing \"\(phrase)\" in \(note)")
+    }
   }
 
   func testProviderListJoinsWithCommasAndAnd() {
