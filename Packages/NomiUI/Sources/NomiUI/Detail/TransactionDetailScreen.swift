@@ -22,11 +22,13 @@ public struct PresentedTransaction: Identifiable, Hashable, Sendable {
   }
 }
 
-/// The transaction detail sheet. Medium shows the header and the suggested
-/// category; large adds the account, date, "Mark reviewed", the source
-/// details and UPI. Edit swaps the bar to Cancel / Save and shows the amount,
-/// description and note fields, with Delete at the bottom (DT, the Detail and
-/// DetailDeleteConfirm artboards).
+/// The transaction detail sheet, on one `.large` detent (S3a, the Detail
+/// artboard). The read state shows the header (badge, merchant, amount, day and
+/// account), the category card with its "Always use this" rule switch, the
+/// transfer and note card, the bank alert quote, the account and date rows,
+/// source details and UPI, and Delete at the foot. Edit swaps the bar to Cancel /
+/// Save and shows the amount, description and note fields, with Delete at the
+/// bottom (the edit form moves to its own sheet in S3b).
 ///
 /// Presented as a `.sheet(item:)` from `LedgerScreen`, which applies its own
 /// `.modelContainer`, so the `@Query`s below are safe. The detents belong to
@@ -39,8 +41,9 @@ public struct PresentedTransaction: Identifiable, Hashable, Sendable {
 /// in front of it. No store call here uses `try?`: every failure surfaces in
 /// an `.alert`, because this screen can fail in more places (several
 /// independent store calls, not one) and a swallowed failure here means the
-/// user thinks their edit or delete took effect when it didn't. The one
-/// deliberate exception is the suggestion read below.
+/// user thinks their edit or delete took effect when it didn't. The deliberate
+/// exceptions are the suggestion read and the rule's match count, which are
+/// assists: when they cannot be read they are left out.
 public struct TransactionDetailScreen: View {
   public let transactionID: UUID
   public let transactionStore: TransactionStore
@@ -52,16 +55,25 @@ public struct TransactionDetailScreen: View {
   @Query private var matches: [NomiCore.Transaction]
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
   @Query(sort: \NomiCore.Account.displayName) private var accounts: [NomiCore.Account]
+  @Query(sort: \NomiCore.Rule.priority) private var rules: [NomiCore.Rule]
 
   @Environment(\.dismiss) private var dismiss
   /// Read only: the transfer partner is found by the shared group id (DEC-05 T3).
   /// The screen writes through `editor`, never through this context.
   @Environment(\.modelContext) private var modelContext
+  /// "Always use this for <merchant>" writes go through the rule store (S3a).
+  /// Nil hides the rule row.
+  @Environment(\.nomiRuleStore) private var ruleStore
 
-  /// Medium is the opening detent; Edit forces large (the artboard's edit state
-  /// sits at the large top) and Cancel or Save returns to medium.
-  @State private var detent: PresentationDetent = .medium
   @State private var isEditing = false
+  /// The note as the read state's row shows it. Written on submit.
+  @State private var readNote = ""
+  /// How many past rows the pattern matches (`RuleStore.preview`). Nil when it
+  /// cannot be read, and the caption is then left out.
+  @State private var matchCount: Int?
+  /// Set for two seconds after the switch turns a rule on, to show what it
+  /// recategorised in place of the match caption.
+  @State private var appliedCount: Int?
 
   @State private var isCategoryPickerPresented = false
   @State private var isAccountPickerPresented = false
@@ -99,12 +111,6 @@ public struct TransactionDetailScreen: View {
   }
 
   private var transaction: NomiCore.Transaction? { matches.first }
-
-  /// Edit is large only, so the sheet cannot be dragged to medium in the middle
-  /// of an edit.
-  private var sheetDetents: Set<PresentationDetent> {
-    isEditing ? [.large] : [.medium, .large]
-  }
 
   private var editedAmountMinor: Int { EntryAmount.minorUnits(from: amountText) }
 
@@ -147,13 +153,42 @@ public struct TransactionDetailScreen: View {
     categoryFor(transaction)?.name
   }
 
-  private func accountName(for transaction: NomiCore.Transaction) -> String {
-    transaction.accountID.flatMap { id in accounts.first { $0.id == id }?.displayName } ?? "Unassigned"
+  /// The account's name, or nil for a row with no account (the caption leaves it out).
+  private func accountNameIfAssigned(_ transaction: NomiCore.Transaction) -> String? {
+    transaction.accountID.flatMap { id in accounts.first { $0.id == id }?.displayName }
   }
 
+  private func accountName(for transaction: NomiCore.Transaction) -> String {
+    accountNameIfAssigned(transaction) ?? String(localized: "No account assigned", bundle: .module)
+  }
+
+  /// The merchant name, or the bank text when there is none, as the header and
+  /// the delete alert name the row.
+  private func titleText(_ transaction: NomiCore.Transaction) -> String {
+    TransactionRow.title(
+      merchantName: transaction.merchantName, descriptionText: transaction.descriptionText,
+      categoryName: categoryName(for: transaction))
+  }
+
+  /// A transfer leg has no category to suggest, so the panel never shows on one.
   private func isSuggestionShown(for transaction: NomiCore.Transaction) -> Bool {
-    SuggestionRow.isShown(
+    guard !transaction.isTransfer else { return false }
+    return SuggestionRow.isShown(
       suggestion: suggestion, currentCategoryID: transaction.categoryID, categorySource: transaction.categorySource)
+  }
+
+  /// The merchant pattern this row would be ruled by, or nil when there is none.
+  private func rulePattern(for transaction: NomiCore.Transaction) -> String? {
+    MerchantRulePattern.pattern(
+      merchantName: transaction.merchantName, normalizedDescription: transaction.normalizedDescription)
+  }
+
+  /// The alert body: what the delete takes out of every total (States board).
+  private var deleteMessage: String {
+    guard let transaction else { return "" }
+    return TransactionDetailLogic.deleteConfirmationSentence(
+      amountText: NomiFormatters.amountString(minor: transaction.amountMinor, currencyCode: transaction.currencyCode),
+      merchant: titleText(transaction), date: transaction.date, calendar: .current)
   }
 
   public var body: some View {
@@ -174,6 +209,17 @@ public struct TransactionDetailScreen: View {
           }
           .onAppear {
             refreshSuggestion()
+            readNote = transaction.note ?? ""
+            refreshMatchCount(for: transaction)
+          }
+          .onChange(of: transaction.note) { _, newValue in
+            readNote = newValue ?? ""
+          }
+          .task(id: appliedCount) {
+            guard appliedCount != nil else { return }
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            appliedCount = nil
           }
         } else {
           // Reached for a beat after `delete()` dismisses this sheet — the
@@ -190,15 +236,15 @@ public struct TransactionDetailScreen: View {
       #endif
       .navigationTitle(isEditing ? "Edit transaction" : "")
     }
-    .nomiSheet(detents: sheetDetents, selection: $detent)
-    .alert(
-      "Delete this transaction?", isPresented: $isConfirmingDelete
-    ) {
+    .nomiSheet(detents: [.large])
+    .alert("Delete this transaction?", isPresented: $isConfirmingDelete) {
       Button("Delete", role: .destructive) { performDelete() }
       Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(deleteMessage)
     }
     .sheet(isPresented: $isCategoryPickerPresented) {
-      CategoryPickerSheet(categoryStore: categoryStore, selection: categorySelection)
+      CategoryPickerSheet(categoryStore: categoryStore, selection: categorySelection, allowsNone: true)
     }
     .sheet(isPresented: $isAccountPickerPresented) {
       AccountPickerSheet(accountStore: accountStore, selection: transaction?.accountID) { newAccountID in
@@ -219,8 +265,8 @@ public struct TransactionDetailScreen: View {
 
   // MARK: - Toolbar
 
-  /// Read state: close on the leading side, Edit on the trailing side (both
-  /// 44 pt). Edit state: Cancel and Save.
+  /// Read state: Close on the leading side, Edit on the trailing side. Edit
+  /// state: Cancel and Save.
   @ToolbarContentBuilder
   private var toolbarContent: some ToolbarContent {
     if isEditing {
@@ -249,9 +295,10 @@ public struct TransactionDetailScreen: View {
         Button {
           dismiss()
         } label: {
-          NomiNavIcon(systemName: "xmark")
+          Text("Close")
+            .nomiTextStyle(.navAction)
+            .foregroundStyle(NomiColor.navy)
         }
-        .accessibilityLabel("Close")
       }
       ToolbarItem(placement: .primaryAction) {
         Button {
@@ -268,6 +315,9 @@ public struct TransactionDetailScreen: View {
 
   // MARK: - Read state
 
+  /// The read state in artboard order. The suggestion card, when one shows, sits
+  /// above the category card; the primary "Mark reviewed" sits under the category
+  /// card (D7).
   @ViewBuilder
   private func readContent(_ transaction: NomiCore.Transaction) -> some View {
     let showsSuggestion = isSuggestionShown(for: transaction)
@@ -277,59 +327,63 @@ public struct TransactionDetailScreen: View {
     header(transaction)
     if showsSuggestion, let suggestion {
       suggestionCard(transaction: transaction, suggestion: suggestion, primary: primary)
-    } else {
-      categoryRow(transaction)
-      // D7: the no-suggestion primary is drawn here at both detents, not in
-      // `largeDetails`, so the medium sheet shows it and large draws it once.
-      if reviewed == .primaryUnderCategory {
-        markReviewedButton(isPrimary: true)
-      }
     }
-    if detent == .large {
-      largeDetails(transaction, primary: primary)
+    categoryCard(transaction)
+    if transaction.needsReview {
+      Text(TransactionDetailLogic.reviewReasonText(transaction.needsReviewReason))
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.inkSecondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, NomiSpacing.sm)
     }
+    if reviewed == .primaryUnderCategory {
+      markReviewedButton(isPrimary: true)
+    }
+    transferAndNoteCard(transaction)
+    bankAlertInset(transaction)
+    accountAndDateRows(transaction)
+    if reviewed == .secondaryInLargeDetails {
+      markReviewedButton(isPrimary: false)
+    }
+    sourceDetails(transaction)
+    if transaction.upiKindRaw != nil {
+      upiCard(transaction)
+    }
+    deleteButton
   }
 
   private func header(_ transaction: NomiCore.Transaction) -> some View {
-    VStack(spacing: NomiSpacing.xxs) {
+    VStack(spacing: NomiSpacing.xs) {
       let category = categoryFor(transaction)
-      NomiCategoryBadge(symbolName: category?.symbolName ?? "questionmark", paletteSlot: category?.paletteSlot, size: 40)
+      NomiCategoryBadge(symbolName: category?.symbolName ?? "questionmark", paletteSlot: category?.paletteSlot, size: 56)
         .accessibilityHidden(true)
-      Text(
-        TransactionRow.title(
-          merchantName: transaction.merchantName, descriptionText: transaction.descriptionText,
-          categoryName: categoryName(for: transaction))
-      )
-      .nomiTextStyle(.title)
-      .foregroundStyle(NomiColor.ink)
-      .multilineTextAlignment(.center)
+      Text(titleText(transaction))
+        .nomiTextStyle(.headline)
+        .foregroundStyle(NomiColor.ink)
+        .multilineTextAlignment(.center)
       amountLine(transaction)
-      // The note is drawn on large only, as on the artboard. It is still
-      // reached by dragging the sheet up.
-      if detent == .large, let note = transaction.note {
-        Text(note)
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.inkSecondary)
-          .multilineTextAlignment(.center)
-      }
-      flagChips(transaction)
+      Text(
+        TransactionDetailLogic.caption(
+          date: transaction.date, now: Date(), calendar: .current,
+          accountName: accountNameIfAssigned(transaction))
+      )
+      .nomiTextStyle(.caption)
+      .foregroundStyle(NomiColor.inkSecondary)
+      .multilineTextAlignment(.center)
     }
     .frame(maxWidth: .infinity)
   }
 
-  /// The sheet amount, signed and coloured by direction (DEC-03, A-03): debit
-  /// "−" in `ink`, credit "+" in `inkDeep` SemiBold, decimals dimmed. Typeset
-  /// here rather than with `NomiAmountText`, which has no colour parameter and
-  /// cannot draw credit in `inkDeep`. The 40 pt size is the artboard's; I-3 has
-  /// no role at 40, so F1 should add one if this is to become a shared role.
+  /// The sheet amount, signed and coloured by direction (DEC-03, R1): debit "−"
+  /// in `ink`, credit "+" in `navy`, both SemiBold at the 46 pt hero size, the
+  /// decimals dimmed. Typeset here rather than with `NomiAmountText`, which has
+  /// no colour parameter.
   private func amountLine(_ transaction: NomiCore.Transaction) -> some View {
     let isCredit = transaction.direction == .credit
     let signed = TransactionDetailLogic.signedMinor(amountMinor: transaction.amountMinor, direction: transaction.direction)
     let parts = NomiAmountFormat.parts(minor: signed, currencyCode: transaction.currencyCode, showPlus: isCredit)
-    let color = isCredit ? NomiColor.inkDeep : NomiColor.ink
-    let font = isCredit
-      ? Font.custom(NomiFont.interSemiBold, size: 40, relativeTo: .largeTitle)
-      : Font.custom(NomiFont.interRegular, size: 40, relativeTo: .largeTitle)
+    let color = isCredit ? NomiColor.navy : NomiColor.ink
+    let font = NomiTextStyle.heroAmount.font
     let decimalColor = color.opacity(NomiColor.decimalOpacityGround)
     let spoken = (isCredit ? "Credit, " : "Debit, ") + parts.sign + parts.integer + parts.decimals
     return (Text(parts.sign + parts.integer)
@@ -338,46 +392,306 @@ public struct TransactionDetailScreen: View {
       + Text(parts.decimals)
       .font(font)
       .foregroundStyle(decimalColor))
-      .tracking(-0.8)
+      .tracking(-1.4)
       .lineLimit(1)
       .minimumScaleFactor(0.5)
       .accessibilityElement(children: .ignore)
       .accessibilityLabel(spoken)
   }
 
-  /// Read-only flags: "Merged from N sources", "No account assigned", "Transfer",
-  /// and for a flagged row the stored reason (WR-2): "Sender not verified",
-  /// "Not in rupees, not counted", "Date couldn't be read", "Amount couldn't be
-  /// read", "Read from an unfamiliar email"; otherwise "Needs review".
-  /// Inline when they fit, one per line at large text sizes.
-  @ViewBuilder
-  private func flagChips(_ transaction: NomiCore.Transaction) -> some View {
-    let reasons = TransactionDetailLogic.flagReasons(
-      accountID: transaction.accountID, needsReview: transaction.needsReview, mergedCount: transaction.mergedCount,
-      isTransfer: transaction.isTransfer, needsReviewReason: transaction.needsReviewReason)
-    if !reasons.isEmpty {
-      ViewThatFits(in: .horizontal) {
-        HStack(spacing: NomiSpacing.xxs) {
-          ForEach(reasons, id: \.self) { reason in
-            flagChip(reason)
-          }
+  // MARK: - Category card and rule switch
+
+  /// The category card: the Category row with its chip, then the "Always use
+  /// this" switch when the row can take a rule (`TransactionDetailLogic.showsRuleRow`).
+  private func categoryCard(_ transaction: NomiCore.Transaction) -> some View {
+    let pattern = rulePattern(for: transaction)
+    let showsRule = TransactionDetailLogic.showsRuleRow(
+      hasRuleStore: ruleStore != nil, isTransfer: transaction.isTransfer, pattern: pattern)
+    return VStack(spacing: 0) {
+      HStack(spacing: NomiSpacing.xs) {
+        Text("Category")
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(NomiColor.ink)
+        Spacer(minLength: NomiSpacing.xs)
+        categoryChip(transaction)
+      }
+      .frame(minHeight: NomiSpacing.rowMinHeight)
+      if showsRule, let pattern {
+        hairline
+        NomiToggleRow(
+          title: "Always use this for \(MerchantRulePattern.displayName(merchantName: transaction.merchantName, normalizedDescription: transaction.normalizedDescription))",
+          caption: ruleCaption(transaction, pattern: pattern),
+          isOn: ruleBinding(transaction, pattern: pattern)
+        )
+        .disabled(!TransactionDetailLogic.ruleSwitchEnabled(categoryID: transaction.categoryID))
+        .padding(.vertical, NomiSpacing.xs)
+      }
+    }
+    .padding(.horizontal, NomiSpacing.sm)
+    .padding(.vertical, NomiSpacing.xxs)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .nomiCard(padding: EdgeInsets())
+  }
+
+  /// The selected category as a primary-filled chip. It opens the picker, which
+  /// offers None (S13). A transfer leg has no category, so its chip reads
+  /// "Transfer" and does not open.
+  private func categoryChip(_ transaction: NomiCore.Transaction) -> some View {
+    Button {
+      isCategoryPickerPresented = true
+    } label: {
+      HStack(spacing: NomiSpacing.xxs) {
+        Text(
+          TransactionDetailLogic.categoryChipText(
+            isTransfer: transaction.isTransfer, categoryName: categoryName(for: transaction)))
+        Image(systemName: "chevron.down")
+          .accessibilityHidden(true)
+      }
+      .nomiTextStyle(.chipSelected)
+      .foregroundStyle(NomiColor.onPrimary)
+      .padding(.horizontal, NomiSpacing.sm)
+      .frame(minHeight: 36)
+      .background(Capsule().fill(NomiColor.primary))
+    }
+    .buttonStyle(.plain)
+    .disabled(transaction.isTransfer)
+    .opacity(transaction.isTransfer ? 0.4 : 1)
+  }
+
+  private var hairline: some View {
+    Rectangle()
+      .fill(NomiColor.separator)
+      .frame(height: 1)
+  }
+
+  /// The count under the switch: the matches, said as "match" (S10's ruling),
+  /// or the two-second note after a switch-on.
+  private func ruleCaption(_ transaction: NomiCore.Transaction, pattern: String) -> String? {
+    if let appliedCount {
+      return TransactionDetailLogic.appliedText(count: appliedCount)
+    }
+    guard let matchCount else { return nil }
+    return TransactionDetailLogic.matchCountText(
+      count: matchCount, isOn: existingRuleID(for: transaction, pattern: pattern) != nil)
+  }
+
+  /// The user rule this row's switch reads, if one exists for its pattern and category.
+  private func existingRuleID(for transaction: NomiCore.Transaction, pattern: String) -> UUID? {
+    guard let categoryID = transaction.categoryID else { return nil }
+    return TransactionDetailLogic.existingRuleID(
+      among: rules.map {
+        TransactionDetailLogic.RuleRef(id: $0.id, pattern: $0.pattern, categoryID: $0.categoryID, isSystem: $0.isSystem)
+      },
+      pattern: pattern, categoryID: categoryID)
+  }
+
+  private func ruleBinding(_ transaction: NomiCore.Transaction, pattern: String) -> Binding<Bool> {
+    Binding(
+      get: { existingRuleID(for: transaction, pattern: pattern) != nil },
+      set: { isOn in
+        if isOn {
+          turnOnRule(transaction, pattern: pattern)
+        } else {
+          turnOffRule(transaction, pattern: pattern)
         }
-        VStack(spacing: NomiSpacing.xxs) {
-          ForEach(reasons, id: \.self) { reason in
-            flagChip(reason)
+      })
+  }
+
+  /// Turning the switch on creates the rule for this row's pattern and category.
+  /// The store re-applies it across the ledger; the result says how many past
+  /// rows it recategorised.
+  private func turnOnRule(_ transaction: NomiCore.Transaction, pattern: String) {
+    guard let ruleStore, let categoryID = transaction.categoryID else { return }
+    do {
+      let result = try ruleStore.create(pattern: pattern, categoryID: categoryID)
+      appliedCount = result.recategorized
+      refreshMatchCount(for: transaction)
+    } catch {
+      errorMessage = "Could not save this rule."
+    }
+  }
+
+  /// Turning the switch off deletes the rule it made. Rows keep their categories:
+  /// that is the store's existing policy for a deleted rule.
+  private func turnOffRule(_ transaction: NomiCore.Transaction, pattern: String) {
+    guard let ruleStore, let id = existingRuleID(for: transaction, pattern: pattern) else { return }
+    do {
+      try ruleStore.delete(id)
+      appliedCount = nil
+      refreshMatchCount(for: transaction)
+    } catch {
+      errorMessage = "Could not turn this rule off."
+    }
+  }
+
+  /// The past-row count for this row's pattern. A count that cannot be read is
+  /// left out, the same as the suggestion: it is an aid, not an action.
+  private func refreshMatchCount(for transaction: NomiCore.Transaction) {
+    guard let ruleStore, let pattern = rulePattern(for: transaction) else {
+      matchCount = nil
+      return
+    }
+    do {
+      matchCount = try ruleStore.preview(pattern: pattern)
+    } catch {
+      matchCount = nil
+    }
+  }
+
+  // MARK: - Transfer and note card
+
+  /// The transfer row and the note row, on one card (artboard). Marking uses the
+  /// existing `setTransfer` path and its partner copy; the note writes on submit.
+  private func transferAndNoteCard(_ transaction: NomiCore.Transaction) -> some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+      VStack(spacing: 0) {
+        Button {
+          if transaction.isTransfer {
+            unmarkTransfer()
+          } else {
+            markTransfer()
           }
+        } label: {
+          HStack(spacing: NomiSpacing.xs) {
+            VStack(alignment: .leading, spacing: 2) {
+              Text(TransactionDetailLogic.transferButtonTitle(isTransfer: transaction.isTransfer))
+                .nomiTextStyle(.rowTitle)
+                .foregroundStyle(NomiColor.ink)
+              Text(transaction.isTransfer ? TransactionDetailLogic.transferSentence : "Leaves it out of spending totals")
+                .nomiTextStyle(.caption)
+                .foregroundStyle(NomiColor.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: NomiSpacing.xxs)
+            Image(systemName: "chevron.right")
+              .foregroundStyle(NomiColor.inkSecondary)
+              .accessibilityHidden(true)
+          }
+          .padding(.horizontal, NomiSpacing.sm)
+          .padding(.vertical, NomiSpacing.xs)
+          .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+          .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        hairline
+        noteRow(transaction)
+      }
+      .nomiCard(padding: EdgeInsets())
+      if let transferNote {
+        Text(transferNote)
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, NomiSpacing.sm)
       }
     }
   }
 
-  private func flagChip(_ text: String) -> some View {
-    Text(text)
-      .nomiTextStyle(.label)
-      .foregroundStyle(NomiColor.inkDeep)
-      .padding(.horizontal, 10)
-      .frame(minHeight: 26)
-      .background(Capsule().fill(NomiColor.track))
+  private func noteRow(_ transaction: NomiCore.Transaction) -> some View {
+    HStack(spacing: NomiSpacing.xs) {
+      Text("Note")
+        .nomiTextStyle(.rowTitle)
+        .foregroundStyle(NomiColor.ink)
+      TextField("Add a note", text: $readNote)
+        .nomiTextStyle(.body)
+        .foregroundStyle(NomiColor.ink)
+        .multilineTextAlignment(.trailing)
+        .submitLabel(.done)
+        .accessibilityLabel("Note")
+        .onSubmit {
+          saveNote(transaction)
+        }
+    }
+    .padding(.horizontal, NomiSpacing.sm)
+    .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight)
+  }
+
+  /// Writes the note when it changed, through the editor with the row's current
+  /// amount, date and description.
+  private func saveNote(_ transaction: NomiCore.Transaction) {
+    let note = TransactionDetailLogic.noteToSave(from: readNote)
+    guard note != transaction.note else { return }
+    do {
+      try editor.update(
+        transactionID, amountMinor: transaction.amountMinor, date: transaction.date,
+        descriptionText: transaction.descriptionText, note: note)
+    } catch {
+      readNote = transaction.note ?? ""
+      errorMessage = "Could not save the note."
+    }
+  }
+
+  // MARK: - Bank alert, account and date
+
+  /// The stored bank text, quoted under its source heading. The description is
+  /// stored at 160 characters or fewer, so it is shown whole. A manual row has no
+  /// bank text, so it shows no inset. A merged row keeps its "Merged from N sources" line here.
+  @ViewBuilder
+  private func bankAlertInset(_ transaction: NomiCore.Transaction) -> some View {
+    if let heading = sourceHeading(transaction.source) {
+      VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+        Text(heading)
+          .nomiTextStyle(.label)
+          .foregroundStyle(NomiColor.ink)
+        Text("\u{201C}\(transaction.descriptionText)\u{201D}")
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        if transaction.mergedCount > 1 {
+          Text(TransactionDetailLogic.mergedSourcesText(transaction.mergedCount))
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.inkSecondary)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.horizontal, NomiSpacing.sm)
+    }
+  }
+
+  private func sourceHeading(_ source: IngestSource) -> String? {
+    switch source {
+    case .email: return String(localized: "From your bank alert", bundle: .module)
+    case .file: return String(localized: "From your statement", bundle: .module)
+    case .manual: return nil
+    }
+  }
+
+  /// The account and date rows. They are kept from the earlier detail sheet: an
+  /// account can still be assigned and a date corrected from here.
+  private func accountAndDateRows(_ transaction: NomiCore.Transaction) -> some View {
+    VStack(spacing: NomiSpacing.xs) {
+      valueRow(title: "Account", value: accountName(for: transaction)) {
+        isAccountPickerPresented = true
+      }
+      valueRow(title: "Date", value: NomiFormatters.dayMonthYear.string(from: transaction.date)) {
+        pickedDate = transaction.date
+        isDatePickerPresented = true
+      }
+    }
+  }
+
+  /// A label, a value and a chevron on one card row, 52 pt high.
+  private func valueRow(title: String, value: String, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: NomiSpacing.xs) {
+        Text(title)
+          .nomiTextStyle(.rowBody)
+          .foregroundStyle(NomiColor.inkSecondary)
+        Spacer(minLength: NomiSpacing.xs)
+        Text(value)
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(NomiColor.ink)
+          .multilineTextAlignment(.trailing)
+        Image(systemName: "chevron.right")
+          .foregroundStyle(NomiColor.inkSecondary)
+          .accessibilityHidden(true)
+      }
+      .padding(.horizontal, NomiSpacing.sm)
+      .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .nomiCard(padding: EdgeInsets())
   }
 
   // MARK: - Suggestion card
@@ -443,121 +757,7 @@ public struct TransactionDetailScreen: View {
     }
   }
 
-  /// No suggestion is on screen, so the category is a plain row. Without it the
-  /// category could not be changed at all (DT: categorise stays reachable).
-  private func categoryRow(_ transaction: NomiCore.Transaction) -> some View {
-    let name = categoryName(for: transaction) ?? "Uncategorized"
-    let category = categoryFor(transaction)
-    return Button {
-      isCategoryPickerPresented = true
-    } label: {
-      HStack(spacing: NomiSpacing.xs) {
-        NomiCategoryBadge(symbolName: category?.symbolName ?? "questionmark", paletteSlot: category?.paletteSlot, size: 32)
-          .accessibilityHidden(true)
-        Text(name)
-          .nomiTextStyle(.rowTitle)
-          .foregroundStyle(NomiColor.ink)
-        Spacer(minLength: NomiSpacing.xxs)
-        Image(systemName: "chevron.right")
-          .foregroundStyle(NomiColor.inkSecondary)
-          .accessibilityHidden(true)
-      }
-      .padding(.horizontal, NomiSpacing.sm)
-      .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .accessibilityLabel("Category, \(name)")
-    .nomiCard(padding: EdgeInsets())
-  }
-
-  // MARK: - Large detail
-
-  private func largeDetails(_ transaction: NomiCore.Transaction, primary: TransactionDetailLogic.PrimaryAction) -> some View {
-    VStack(spacing: NomiSpacing.xs) {
-      valueRow(title: "Account", value: accountName(for: transaction)) {
-        isAccountPickerPresented = true
-      }
-      valueRow(title: "Date", value: NomiFormatters.dayMonthYear.string(from: transaction.date)) {
-        pickedDate = transaction.date
-        isDatePickerPresented = true
-      }
-      transferSection(transaction)
-      // Only the suggestion case reaches here: the no-suggestion primary sits
-      // under the category row (see `readContent`), so it is not drawn twice.
-      if TransactionDetailLogic.markReviewedPlacement(primary: primary, needsReview: transaction.needsReview)
-        == .secondaryInLargeDetails
-      {
-        markReviewedButton(isPrimary: false)
-          .padding(.top, NomiSpacing.xxs)
-      }
-      sourceDetails(transaction)
-      if transaction.upiKindRaw != nil {
-        upiCard(transaction)
-      }
-    }
-  }
-
-  /// A label, a value and a chevron on one card row, 52 pt high.
-  private func valueRow(title: String, value: String, action: @escaping () -> Void) -> some View {
-    Button(action: action) {
-      HStack(spacing: NomiSpacing.xs) {
-        Text(title)
-          .nomiTextStyle(.rowBody)
-          .foregroundStyle(NomiColor.inkSecondary)
-        Spacer(minLength: NomiSpacing.xs)
-        Text(value)
-          .nomiTextStyle(.rowTitle)
-          .foregroundStyle(NomiColor.ink)
-          .multilineTextAlignment(.trailing)
-        Image(systemName: "chevron.right")
-          .foregroundStyle(NomiColor.inkSecondary)
-          .accessibilityHidden(true)
-      }
-      .padding(.horizontal, NomiSpacing.sm)
-      .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight)
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .nomiCard(padding: EdgeInsets())
-  }
-
-  /// The transfer control and the copy that goes with it (DEC-05 T3). It is a
-  /// secondary action, so it never takes the screen's single primary. The
-  /// sentence stands while the row is a transfer; the note is what the last
-  /// mark or unmark on this screen did.
-  private func transferSection(_ transaction: NomiCore.Transaction) -> some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.xs) {
-      transferButton(isTransfer: transaction.isTransfer)
-      if transaction.isTransfer {
-        Text(TransactionDetailLogic.transferSentence)
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.inkSecondary)
-          .frame(maxWidth: .infinity, alignment: .leading)
-      }
-      if let transferNote {
-        Text(transferNote)
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.inkSecondary)
-          .frame(maxWidth: .infinity, alignment: .leading)
-      }
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.top, NomiSpacing.xxs)
-  }
-
-  private func transferButton(isTransfer: Bool) -> some View {
-    Button(TransactionDetailLogic.transferButtonTitle(isTransfer: isTransfer)) {
-      if isTransfer {
-        unmarkTransfer()
-      } else {
-        markTransfer()
-      }
-    }
-    .buttonStyle(NomiSecondaryButtonStyle())
-    .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight)
-    .background(Capsule().fill(NomiColor.track))
-  }
+  // MARK: - Mark reviewed
 
   /// Primary when `primary == .markReviewed`, else the pale secondary pill.
   @ViewBuilder
@@ -577,6 +777,8 @@ public struct TransactionDetailScreen: View {
     }
   }
 
+  // MARK: - Source details, UPI and delete
+
   /// The mono IDs and the raw narration, collapsed by default (SIMP §3 item 11).
   private func sourceDetails(_ transaction: NomiCore.Transaction) -> some View {
     DisclosureGroup {
@@ -589,9 +791,6 @@ public struct TransactionDetailScreen: View {
             .font(.system(.caption, design: .monospaced))
             .foregroundStyle(NomiColor.inkSecondary)
         }
-        Text(TransactionDetailLogic.mergedSourcesText(transaction.mergedCount))
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.inkSecondary)
         Text(transaction.descriptionText)
           .font(.system(.caption, design: .monospaced))
           .foregroundStyle(NomiColor.inkSecondary)
@@ -637,6 +836,28 @@ public struct TransactionDetailScreen: View {
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .nomiCard(padding: EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16))
+  }
+
+  /// The delete action at the foot of the read state: error text, trash glyph, a
+  /// pill. It asks first, through the same alert the edit state uses.
+  private var deleteButton: some View {
+    Button {
+      isConfirmingDelete = true
+    } label: {
+      HStack(spacing: NomiSpacing.xxs) {
+        Image(systemName: "trash")
+          .accessibilityHidden(true)
+        Text("Delete transaction")
+      }
+      .nomiTextStyle(.button)
+      .foregroundStyle(NomiColor.error)
+      .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget)
+      .background(Capsule().fill(NomiColor.card))
+      .overlay(Capsule().strokeBorder(NomiColor.errorTint, lineWidth: 1))
+      .contentShape(Capsule())
+    }
+    .buttonStyle(.plain)
+    .padding(.top, NomiSpacing.xs)
   }
 
   // MARK: - Edit state
@@ -719,13 +940,11 @@ public struct TransactionDetailScreen: View {
     amountText = String(format: "%.2f", Double(transaction.amountMinor) / 100)
     editedDescription = transaction.descriptionText
     editedNote = transaction.note ?? ""
-    detent = .large
     isEditing = true
   }
 
   private func endEditing() {
     isEditing = false
-    detent = .medium
   }
 
   /// The suggestion read is a `do`/`catch` to `nil` — an assist that fails is
@@ -744,14 +963,20 @@ public struct TransactionDetailScreen: View {
   }
 
   /// What the category picker reads and writes. The current category is read
-  /// live from the row, so presenting the picker writes nothing, and only a
-  /// different pick reaches `updateCategory` (see `CategoryPickCommit`).
+  /// live from the row, so presenting the picker writes nothing. The picker's
+  /// None row reports a nil pick, which clears a categorised row
+  /// (see `CategoryPickCommit`).
   private var categorySelection: Binding<UUID?> {
     Binding(
       get: { transaction?.categoryID },
       set: { picked in
-        if CategoryPickCommit.shouldWrite(picked: picked, current: transaction?.categoryID), let picked {
-          updateCategory(to: picked)
+        switch CategoryPickCommit.decision(picked: picked, current: transaction?.categoryID) {
+        case .keep:
+          break
+        case .set(let categoryID):
+          updateCategory(to: categoryID)
+        case .clear:
+          clearCategory()
         }
       }
     )
@@ -760,6 +985,17 @@ public struct TransactionDetailScreen: View {
   private func updateCategory(to categoryID: UUID) {
     do {
       try transactionStore.setCategory(transactionID, to: categoryID)
+      refreshSuggestion()
+    } catch {
+      errorMessage = "Could not update the category."
+    }
+  }
+
+  /// The picker's None row: the row loses its category, through the same
+  /// `setCategory` write every other pick uses.
+  private func clearCategory() {
+    do {
+      try transactionStore.setCategory(transactionID, to: nil)
       refreshSuggestion()
     } catch {
       errorMessage = "Could not update the category."
@@ -957,7 +1193,7 @@ extension TransactionDetailPreviewFixtures {
   }()
 }
 
-#Preview("Transaction detail — medium, suggestion shown, light") {
+#Preview("Transaction detail — suggestion shown, light") {
   let transaction = PreviewData.transactions.first { $0.categorySource != .manual }!
   let suggested = PreviewData.categories.first { $0.id != transaction.categoryID }!
   TransactionDetailScreen(

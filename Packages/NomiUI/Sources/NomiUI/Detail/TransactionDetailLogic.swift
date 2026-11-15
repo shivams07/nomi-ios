@@ -185,8 +185,22 @@ public enum TransactionDetailLogic {
 /// no longer does. Pulled out as a pure function over plain `UUID`s, the same
 /// reason as `RulesReorder`.
 enum CategoryPickCommit {
-  static func shouldWrite(picked: UUID?, current: UUID?) -> Bool {
-    picked != nil && picked != current
+  /// What the picker's selection means for the row. The picker reports a nil
+  /// pick only when the user taps None (S3a opts in with `allowsNone`), so nil on
+  /// a categorised row clears it. Nil on an uncategorised row is no change.
+  enum Decision: Equatable {
+    case keep
+    case set(UUID)
+    case clear
+  }
+
+  static func decision(picked: UUID?, current: UUID?) -> Decision {
+    switch (picked, current) {
+    case (nil, nil): return .keep
+    case (nil, _): return .clear
+    case (let picked?, let current) where picked == current: return .keep
+    case (let picked?, _): return .set(picked)
+    }
   }
 }
 
@@ -229,5 +243,108 @@ public enum SuggestionRow {
     case .rule:
       return "Matches your rule for \(merchantLabel)"
     }
+  }
+}
+
+// MARK: - S3a detail layout
+
+extension TransactionDetailLogic {
+  /// The line under the amount: "Today, 13 Nov · 9:42 pm · HDFC ••4471". The day
+  /// reads "Today" or "Yesterday" with its day and month, and an older day reads
+  /// its day and month only. The time is `h:mm a`. The account is left out when
+  /// there is none. Formatted in the calendar's own zone, so the day cannot shift
+  /// with the device's zone (see `dateformatter-zone-trap`).
+  public static func caption(date: Date, now: Date, calendar: Calendar, accountName: String?) -> String {
+    let dayMonth = formatter("d MMM", calendar: calendar)
+    let time = formatter("h:mm a", calendar: calendar)
+    // The artboard writes "9:42 pm"; en_IN's own day-period symbols are upper case here.
+    time.amSymbol = "am"
+    time.pmSymbol = "pm"
+    let day: String
+    if calendar.isDate(date, inSameDayAs: now) {
+      day = String(localized: "Today", bundle: .module) + ", " + dayMonth.string(from: date)
+    } else if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+      calendar.isDate(date, inSameDayAs: yesterday)
+    {
+      day = String(localized: "Yesterday", bundle: .module) + ", " + dayMonth.string(from: date)
+    } else {
+      day = dayMonth.string(from: date)
+    }
+    var parts = [day, time.string(from: date)]
+    if let accountName, !accountName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      parts.append(accountName)
+    }
+    return parts.joined(separator: " · ")
+  }
+
+  /// The body of the delete alert: "₹845.00 to Ola on 13 Nov will be removed from
+  /// every total." (States board, Destructive).
+  public static func deleteConfirmationSentence(amountText: String, merchant: String, date: Date, calendar: Calendar) -> String {
+    let day = formatter("d MMM", calendar: calendar).string(from: date)
+    return String(localized: "\(amountText) to \(merchant) on \(day) will be removed from every total.", bundle: .module)
+  }
+
+  /// The rule row is drawn only where a rule store was handed in, the row is not a
+  /// transfer leg (a leg has no category to file), and the row has a pattern.
+  public static func showsRuleRow(hasRuleStore: Bool, isTransfer: Bool, pattern: String?) -> Bool {
+    hasRuleStore && !isTransfer && pattern != nil
+  }
+
+  /// The switch needs a category to file the rule under.
+  public static func ruleSwitchEnabled(categoryID: UUID?) -> Bool {
+    categoryID != nil
+  }
+
+  /// The fields of a `Rule` the "Always use this" switch reads.
+  public struct RuleRef: Equatable, Sendable {
+    public let id: UUID
+    public let pattern: String
+    public let categoryID: UUID
+    public let isSystem: Bool
+
+    public init(id: UUID, pattern: String, categoryID: UUID, isSystem: Bool) {
+      self.id = id
+      self.pattern = pattern
+      self.categoryID = categoryID
+      self.isSystem = isSystem
+    }
+  }
+
+  /// The user rule the switch reads as on: same pattern and same category. A
+  /// system rule is never the switch's rule, since the switch cannot delete it.
+  public static func existingRuleID(among rules: [RuleRef], pattern: String, categoryID: UUID) -> UUID? {
+    rules.first { !$0.isSystem && $0.pattern == pattern && $0.categoryID == categoryID }?.id
+  }
+
+  /// The category chip's words: a transfer leg reads "Transfer", whatever it holds.
+  public static func categoryChipText(isTransfer: Bool, categoryName: String?) -> String {
+    if isTransfer { return String(localized: "Transfer", bundle: .module) }
+    return categoryName ?? String(localized: "Uncategorized", bundle: .module)
+  }
+
+  /// The count under the rule switch. The count is what the pattern matches, so
+  /// it says "match" (S10's ruling), not "applies". The on state also says the
+  /// rule reaches future payments.
+  public static func matchCountText(count: Int, isOn: Bool) -> String {
+    if isOn {
+      return String(localized: "Matches \(count) past transactions and all future ones", bundle: .module)
+    }
+    return String(localized: "Matches \(count) past transactions", bundle: .module)
+  }
+
+  /// The two-second note after a switch-on: how many past rows the new rule
+  /// recategorised (`RuleApplyResult.recategorized`).
+  public static func appliedText(count: Int) -> String {
+    String(localized: "Applied to \(count) transactions", bundle: .module)
+  }
+
+  /// A formatter for the calendar's zone, in en_IN (the app's locale for dates).
+  private static func formatter(_ format: String, calendar: Calendar) -> DateFormatter {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_IN")
+    formatter.calendar = calendar
+    formatter.timeZone = calendar.timeZone
+    formatter.dateFormat = format
+    return formatter
   }
 }
