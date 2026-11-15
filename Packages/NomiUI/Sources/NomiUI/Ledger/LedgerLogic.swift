@@ -307,6 +307,20 @@ enum LedgerSearchRouting {
   }
 }
 
+/// Hands the search prefill out once per screen instance (S2 review, Lim M3). The
+/// first take spends the gate, whatever the request was. A later take, from a
+/// re-appear or a pop back to Activity, gets nothing, so a typed query is not
+/// overwritten. `LedgerScreen` holds one as `@State`.
+struct LedgerPrefillGate {
+  private var spent = false
+
+  mutating func take(_ request: ActivityRequest?) -> String? {
+    guard !spent else { return nil }
+    spent = true
+    return LedgerSearchRouting.prefill(for: request)
+  }
+}
+
 /// U16: the ledger's `@Query` filter, plus the chip/search matching applied
 /// to whatever it fetches.
 ///

@@ -102,7 +102,8 @@ public struct LedgerScreen: View {
   /// The request the Activity stack was opened with (RootView sets it). `.search`
   /// prefills the search box once, in `onAppear`.
   @Environment(\.nomiActivityRequest) private var activityRequest
-  @State private var didPrefillSearch = false
+  /// Spent by the first `onAppear`, so the prefill is written once per screen instance.
+  @State private var prefillGate = LedgerPrefillGate()
 
   /// A sheet does not inherit the root's `modelContainer` — the detail
   /// screen's own `@Query` would trap at runtime (not in CI, which never
@@ -346,9 +347,7 @@ public struct LedgerScreen: View {
     // The Home and Import routes may send a search: its text prefills the box once.
     .onAppear {
       now = Date()
-      guard !didPrefillSearch else { return }
-      didPrefillSearch = true
-      if let text = LedgerSearchRouting.prefill(for: activityRequest) {
+      if let text = prefillGate.take(activityRequest) {
         searchText = text
       }
     }
@@ -614,6 +613,8 @@ private struct LedgerTransactionList: View {
   let onClearFilters: () -> Void
 
   @Query private var periodRows: [NomiCore.Transaction]
+  /// Sizes the day header's totals: at accessibility sizes the label stacks above them.
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Query(
     filter: LedgerFilterPredicate.makeNeedsReview(),
     sort: [SortDescriptor(\NomiCore.Transaction.date, order: .reverse)]
@@ -794,23 +795,48 @@ private struct LedgerTransactionList: View {
   private func dayHeader(_ group: LedgerDayGroup<NomiCore.Transaction>) -> some View {
     let totals = LedgerDayTotals.of(group.rows)
     let totalText = LedgerDayTotalText.string(spentMinor: totals.spentMinor, receivedMinor: totals.receivedMinor)
-    return HStack {
-      Text(LedgerDayHeaderText.string(for: group.day, relativeTo: now))
-        .nomiTextStyle(.label)
-        .foregroundStyle(NomiColor.ink)
-      Spacer(minLength: NomiSpacing.xs)
-      if let totalText {
-        Text(totalText)
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.inkSecondary)
+    let label = Text(LedgerDayHeaderText.string(for: group.day, relativeTo: now))
+      .nomiTextStyle(.label)
+      .foregroundStyle(NomiColor.ink)
+    return Group {
+      if dynamicTypeSize.isAccessibilitySize {
+        // At accessibility sizes the total takes its own line, so it never shares a
+        // row with the label and cannot break across lines.
+        VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+          label
+          if let totalText {
+            dayTotal(totalText)
+          }
+        }
+      } else {
+        HStack {
+          label
+          Spacer(minLength: NomiSpacing.xs)
+          if let totalText {
+            dayTotal(totalText)
+              .layoutPriority(1)
+          }
+        }
       }
     }
-    .frame(minHeight: LedgerMetrics.dayHeaderHeight)
+    .frame(minHeight: LedgerMetrics.dayHeaderHeight, alignment: .leading)
     .padding(.horizontal, NomiSpacing.screenGutter)
     .padding(.top, NomiSpacing.cardGap)
     .padding(.bottom, NomiSpacing.xs)
     .frame(maxWidth: .infinity, alignment: .leading)
+    // Opaque and layered above the card beneath: a pinned header must not show rows
+    // through it, at any Dynamic Type size (Lim PR #212, AX3).
     .background(NomiColor.ground)
+    .zIndex(1)
+  }
+
+  /// A day total on one line. It never wraps mid-amount: it shrinks to fit instead.
+  private func dayTotal(_ text: String) -> some View {
+    Text(text)
+      .nomiTextStyle(.caption)
+      .foregroundStyle(NomiColor.inkSecondary)
+      .lineLimit(1)
+      .minimumScaleFactor(0.5)
   }
 
   // MARK: - Rows

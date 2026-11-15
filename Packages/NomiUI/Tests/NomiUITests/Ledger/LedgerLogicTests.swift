@@ -424,6 +424,43 @@ final class LedgerSearchRoutingTests: XCTestCase {
     XCTAssertNil(LedgerSearchRouting.prefill(for: .uncategorized))
     XCTAssertNil(LedgerSearchRouting.prefill(for: .category(UUID())))
   }
+
+  /// Lim M3 (PR #212): the prefill is handed out once per screen instance. A second
+  /// take, from a re-appear or a pop back to Activity, must not write the text again.
+  func testPrefillGateHandsTheTextOutOnce() {
+    var gate = LedgerPrefillGate()
+    XCTAssertEqual(gate.take(.search("Swiggy")), "Swiggy")
+    XCTAssertNil(gate.take(.search("Swiggy")))
+  }
+
+  /// The gate is spent by the first take even when that request prefills nothing,
+  /// so a later `.search` on the same instance does not write the box.
+  func testPrefillGateStaysSpentAfterANonSearchRequest() {
+    var gate = LedgerPrefillGate()
+    XCTAssertNil(gate.take(.all))
+    XCTAssertNil(gate.take(.search("Swiggy")))
+  }
+}
+
+/// Lim M4b (PR #212): a routed category that no longer exists falls back to All for
+/// every consumer on the screen, not only the chip. The pure part is pinned here.
+final class LedgerRoutedFallbackTests: XCTestCase {
+  private let gone = UUID()
+  private let rows: [StubRow] = [
+    StubRow(label: "food", date: date("2026-08-20"), amountMinor: 100, direction: .debit, categoryID: UUID()),
+    StubRow(label: "other", date: date("2026-08-20"), amountMinor: 200, direction: .debit, categoryID: nil),
+  ]
+
+  func testAMissingRoutedCategoryListsEveryRow() {
+    let applied = LedgerChipRow.effective(.category(gone), categoryNames: [:])
+    XCTAssertEqual(applied, .all)
+    XCTAssertEqual(LedgerFiltering.apply(rows, selection: applied).count, 2)
+  }
+
+  func testTheFallbackKeepsThePeriodScope() {
+    let applied = LedgerChipRow.effective(.category(gone), categoryNames: [:])
+    XCTAssertEqual(LedgerScope.resolve(selection: applied, wholeLedgerSearchActive: false), .period)
+  }
 }
 
 /// The Activity screen's header, search and day rows are one SwiftUI body, so
@@ -477,6 +514,36 @@ final class ActivityScreenWiringTests: XCTestCase {
     let text = try source("Ledger/LedgerScreen.swift")
     XCTAssertFalse(text.contains("LedgerFirstRunBand.tabBarReserve"), "the band takes the environment reserve")
     XCTAssertTrue(text.contains("tabBottomReserve: tabBarReserve"))
+  }
+
+  /// Lim PR #212 M3: the prefill goes through the once-only gate, not a bare write.
+  func testPrefillIsTakenThroughTheOnceOnlyGate() throws {
+    let text = try source("Ledger/LedgerScreen.swift")
+    XCTAssertTrue(text.contains("prefillGate.take(activityRequest)"), "the prefill is handed out by the gate")
+    XCTAssertTrue(text.contains("@State private var prefillGate = LedgerPrefillGate()"))
+  }
+
+  /// Lim PR #212 M4b: every consumer on the screen reads the fallback selection.
+  /// A consumer that reads the raw `selection` filters by a category that is gone.
+  func testEveryConsumerOnTheScreenReadsTheFallbackSelection() throws {
+    let text = try source("Ledger/LedgerScreen.swift")
+    XCTAssertTrue(text.contains("LedgerScope.resolve(selection: activeSelection"))
+    XCTAssertTrue(text.contains("switch activeSelection {"))
+    XCTAssertTrue(text.contains("activeSelection != .all || LedgerSearch"))
+    XCTAssertTrue(text.contains("kind: activeSelection,"))
+    XCTAssertTrue(text.contains("routedTitle(for: activeSelection"))
+    XCTAssertTrue(text.contains("isSelected: activeSelection == .all"))
+    XCTAssertFalse(text.contains("selection: selection"))
+    XCTAssertFalse(text.contains("switch selection {"))
+  }
+
+  /// Lim PR #212 AX3: a day total never breaks an amount, and at accessibility sizes
+  /// the label stacks above the total.
+  func testDayTotalsNeverBreakAnAmountAndStackAtAccessibilitySizes() throws {
+    let text = try source("Ledger/LedgerScreen.swift")
+    XCTAssertTrue(text.contains("@Environment(\\.dynamicTypeSize) private var dynamicTypeSize"))
+    XCTAssertTrue(text.contains("if dynamicTypeSize.isAccessibilitySize {"))
+    XCTAssertTrue(text.contains("minimumScaleFactor("), "an amount scales down rather than wrapping")
   }
 }
 
