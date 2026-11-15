@@ -24,6 +24,7 @@ public struct PlanScreen: View {
   @State private var suggestedCategory: NomiCore.Category?
   @State private var isAddingBudget = false
   @Environment(\.nomiShowLedger) private var showLedger
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   public init(
     budgetStore: BudgetStore,
@@ -279,10 +280,10 @@ public struct PlanScreen: View {
         .padding(.top, NomiSpacing.sm)
       } else if let progress = model.progress {
         LazyVGrid(
-          columns: [
-            GridItem(.flexible(), spacing: NomiSpacing.cardGap),
-            GridItem(.flexible(), spacing: NomiSpacing.cardGap),
-          ],
+          columns: Array(
+            repeating: GridItem(.flexible(), spacing: NomiSpacing.cardGap),
+            count: PlanLogic.budgetColumns(isAccessibilitySize: dynamicTypeSize.isAccessibilitySize)
+          ),
           spacing: NomiSpacing.cardGap
         ) {
           ForEach(progress) { item in

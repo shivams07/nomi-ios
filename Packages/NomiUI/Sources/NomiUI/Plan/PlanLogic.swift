@@ -39,6 +39,12 @@ enum PlanLogic {
   /// budget yet. The average is the three-month total over three, floored in
   /// minor units. The uncategorised sentinel is never suggested, and a category
   /// with no spend is not either. Ties go to whichever the store listed first.
+  /// How many budget tiles sit across the sheet. One at accessibility sizes, so a
+  /// category name never has to break inside a word in a half-width tile.
+  static func budgetColumns(isAccessibilitySize: Bool) -> Int {
+    isAccessibilitySize ? 1 : 2
+  }
+
   static func suggestion(
     byCategory3m: [CategorySlice],
     budgeted: Set<UUID>

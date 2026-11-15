@@ -130,4 +130,15 @@ final class PlanLogicTests: XCTestCase {
   func testSuggestionIgnoresCategoriesWithNoSpend() {
     XCTAssertNil(PlanLogic.suggestion(byCategory3m: [slice("Travel", total: 0)], budgeted: []))
   }
+  // MARK: - Tile layout
+
+  /// Two tiles across at normal sizes; one per row at accessibility sizes, so a name
+  /// like "Shopping" has the sheet's full width and never breaks inside a word.
+  func testBudgetTilesAreTwoAcrossAtNormalSizes() {
+    XCTAssertEqual(PlanLogic.budgetColumns(isAccessibilitySize: false), 2)
+  }
+
+  func testBudgetTilesAreOnePerRowAtAccessibilitySizes() {
+    XCTAssertEqual(PlanLogic.budgetColumns(isAccessibilitySize: true), 1)
+  }
 }
