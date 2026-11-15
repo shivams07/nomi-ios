@@ -112,6 +112,121 @@ final class RowMapperAmountTests: XCTestCase {
     XCTAssertEqual(signed("+1000000000.00")?.amountMinor, AmountRules.maximumMinor)
   }
 
+  // MARK: - Round 3 (Lim FAIL on #209; Andrews rulings)
+
+  private func separate(_ debit: String, _ credit: String) -> ParsedRow? {
+    map(["02/11/2026", "PROBE", debit, credit], separateMapping)
+  }
+
+  /// `expected` is (paise, direction), or nil for a refused row.
+  private func assertSeparate(
+    _ debit: String, _ credit: String, _ expected: (Int, Direction)?, _ note: String = "",
+    file: StaticString = #filePath, line: UInt = #line
+  ) {
+    let label = "debit \"\(debit)\", credit \"\(credit)\" \(note)"
+    let row = separate(debit, credit)
+    if let expected {
+      XCTAssertEqual(row?.amountMinor, expected.0, label, file: file, line: line)
+      XCTAssertEqual(row?.direction, expected.1, label, file: file, line: line)
+    } else {
+      XCTAssertNil(row, label, file: file, line: line)
+    }
+  }
+
+  /// Ruling 1: only a blank cell, "-", "–" or "—" reads as 0 in a separate-column layout.
+  /// Any other non-number refuses the whole row. The other column is never read in its place.
+  func testSeparateColumnNonNumberRefusesTheRowNotTheOtherColumn() {
+    assertSeparate("1.2.3", "100.00", nil)
+    assertSeparate("450 Xr", "100.00", nil, "a suffix that is not on the ruled list")
+    assertSeparate("abc", "100.00", nil)
+    assertSeparate("", "1.2.3", nil)
+  }
+
+  func testOnlyBlankAndDashesReadAsZeroInASeparateColumn() {
+    for placeholder in ["", "-", "–", "—"] {
+      assertSeparate(placeholder, "100.00", (10_000, .credit))
+    }
+  }
+
+  /// Ruling 2, separate columns: the suffix must agree with its column.
+  func testSuffixMustAgreeWithItsColumn() {
+    assertSeparate("450.00 Dr", "", (45_000, .debit))
+    assertSeparate("450.00Dr", "", (45_000, .debit))
+    assertSeparate("450.00 Dr.", "", (45_000, .debit))
+    assertSeparate("450.00 Cr", "", nil)
+    assertSeparate("", "100.00 Cr", (10_000, .credit))
+    assertSeparate("", "100.00 Dr", nil)
+    assertSeparate("450.00 dr", "", nil, "lowercase is not on the ruled list")
+    assertSeparate("Dr", "100.00", nil, "a suffix with no number")
+  }
+
+  /// Ruling 2, signed column: the suffix sets the direction, and a sign that disagrees with it refuses.
+  func testSuffixSetsTheDirectionOnASignedColumn() {
+    XCTAssertEqual(signed("1,000.00 Cr")?.amountMinor, 100_000)
+    XCTAssertEqual(signed("1,000.00 Cr")?.direction, .credit)
+    XCTAssertEqual(signed("450.00 Dr")?.amountMinor, 45_000)
+    XCTAssertEqual(signed("450.00 Dr")?.direction, .debit)
+    XCTAssertEqual(signed("450.00Dr")?.direction, .debit)
+    XCTAssertEqual(signed("450.00 Dr.")?.direction, .debit)
+    XCTAssertEqual(signed("450.00 CR")?.direction, .credit)
+    XCTAssertEqual(signed("-450.00 Dr")?.amountMinor, 45_000, "a sign that agrees is accepted")
+    XCTAssertEqual(signed("-450.00 Dr")?.direction, .debit)
+    XCTAssertEqual(signed("+1,000.00 Cr")?.direction, .credit)
+  }
+
+  func testSignDisagreeingWithSuffixRefusesTheRow() {
+    XCTAssertNil(signed("-450.00 Cr"))
+    XCTAssertNil(signed("+450.00 Dr"))
+    XCTAssertNil(signed("-1,000.00 Cr"))
+  }
+
+  func testSuffixOutsideTheRuledListIsRefused() {
+    XCTAssertNil(signed("450.00 dr"))
+    XCTAssertNil(signed("450.00 Cheque"))
+    XCTAssertNil(signed("Dr"))
+  }
+
+  /// Ruling 2, flag column: the suffix must agree with the direction the flag gives.
+  func testFlagColumnSuffixMustAgreeWithTheFlag() {
+    XCTAssertNil(map(["02/11/2026", "TRANSFER", "450.00 Cr", "DEBIT"], flagMapping))
+    XCTAssertEqual(map(["02/11/2026", "TRANSFER", "450.00 Dr", "DEBIT"], flagMapping)?.direction, .debit)
+  }
+
+  /// Ruling 3: the sign must be adjacent to the number.
+  func testSignMustBeAdjacentToTheNumber() {
+    XCTAssertNil(signed("+ 5"))
+    XCTAssertNil(signed("- 5"))
+    assertSeparate("+ 5", "", nil)
+  }
+
+  /// Probe rows from Lim's FAIL where the rulings define the outcome. Signed column.
+  func testLimSignedProbeRows() {
+    XCTAssertEqual(signed("1 000")?.amountMinor, 100_000, "grouping by space, ruled in")
+    XCTAssertNil(signed("1e3"), "scientific notation is not manual-entry text")
+    XCTAssertEqual(signed("\u{0661}\u{0660}\u{0660}.\u{0660}\u{0660}")?.amountMinor, 10_000, "non-ASCII digits, ruled in")
+    XCTAssertEqual(signed(" 450.00 ")?.amountMinor, 45_000)
+    XCTAssertNil(signed("-+5"))
+    XCTAssertNil(signed("184467440737095516.21"))
+    XCTAssertNil(signed("1.2.3"))
+    XCTAssertNil(signed("450.555"))
+    XCTAssertEqual(signed("+1,000.00")?.amountMinor, 100_000)
+  }
+
+  /// Probe rows from Lim's FAIL, separate columns, where the rulings define the outcome.
+  func testLimSeparateColumnProbeRows() {
+    assertSeparate("450 Dr", "100.00", (45_000, .debit), "Lim: head read the credit; Dr agrees with the debit column")
+    assertSeparate("450.00 Dr", "", (45_000, .debit), "Lim: correct on main, must stay")
+    assertSeparate("", "100.00 Cr", (10_000, .credit))
+    assertSeparate("450", "-", (45_000, .debit))
+    assertSeparate("+1,000.00", "", (100_000, .debit))
+    assertSeparate("(1,000.00)", "", nil)
+    assertSeparate("1000000000.01", "450.00", nil)
+    assertSeparate("2000000000.00", "500.00", nil)
+    assertSeparate("-", "-", nil)
+    assertSeparate("", "", nil)
+    assertSeparate("450.00 Dr", "100.00 Cr", (45_000, .debit))
+  }
+
   // MARK: - The cap, on separate debit and credit columns
 
   /// An over-cap debit refuses the row. It must not fall through to the credit
@@ -241,21 +356,23 @@ final class RowMapperAmountTests: XCTestCase {
       )
 
       let dry = try await service.dryRun(url, mapping: mapping)
-      let imported: Int
-      let skipped: Int
-      do {
-        let summary = try await service.commit(url, mapping: mapping, accountID: nil)
-        imported = summary.created + summary.merged
-        skipped = summary.skipped
-      } catch ImportError.noParseableRows {
-        imported = 0
-        skipped = 1
-      }
-
       XCTAssertEqual(dry.newCount, fixture.accepted ? 1 : 0, "\(fixture.text): dry run new")
       XCTAssertEqual(dry.unreadable.count, fixture.accepted ? 0 : 1, "\(fixture.text): dry run unreadable")
-      XCTAssertEqual(imported, fixture.accepted ? 1 : 0, "\(fixture.text): commit imported")
-      XCTAssertEqual(skipped, fixture.accepted ? 0 : 1, "\(fixture.text): commit skipped")
+
+      // A one-row file with its only row refused has nothing to import, so commit throws
+      // `noParseableRows`; it does not return a summary with `skipped` set.
+      if fixture.accepted {
+        let summary = try await service.commit(url, mapping: mapping, accountID: nil)
+        XCTAssertEqual(summary.created + summary.merged, 1, "\(fixture.text): commit imported")
+        XCTAssertEqual(summary.skipped, 0, "\(fixture.text): commit skipped")
+      } else {
+        do {
+          _ = try await service.commit(url, mapping: mapping, accountID: nil)
+          XCTFail("\(fixture.text): commit must throw noParseableRows for a refused single row")
+        } catch ImportError.noParseableRows {
+          // Expected.
+        }
+      }
     }
   }
 }

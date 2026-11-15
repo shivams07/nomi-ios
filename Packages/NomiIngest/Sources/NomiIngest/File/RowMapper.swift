@@ -110,63 +110,96 @@ enum RowMapper {
   private static func resolveAmount(row: [String], mapping: ColumnMapping) -> (Int, Direction)? {
     switch mapping.directionStrategy {
     case .signedAmount:
-      guard let raw = field(row, mapping.amountColumn), let minor = parseAmountMinor(raw) else {
-        return nil
-      }
-      return (abs(minor), minor < 0 ? .debit : .credit)
+      guard let raw = field(row, mapping.amountColumn), let cell = readCell(raw),
+        let direction = signedDirection(cell)
+      else { return nil }
+      return (abs(cell.minor), direction)
 
     case .separateColumns(let debitIndex, let creditIndex):
-      guard let debit = separateCell(row, debitIndex), let credit = separateCell(row, creditIndex) else {
-        return nil
-      }
+      guard let debit = separateCell(row, debitIndex, column: .debit),
+        let credit = separateCell(row, creditIndex, column: .credit)
+      else { return nil }
       if debit > 0 { return (debit, .debit) }
       if credit > 0 { return (credit, .credit) }
       return nil
 
     case .flagColumn(let index, let debitValues):
-      guard let raw = field(row, mapping.amountColumn), let minor = parseAmountMinor(raw) else {
-        return nil
-      }
+      guard let raw = field(row, mapping.amountColumn), let cell = readCell(raw) else { return nil }
       let flag = field(row, index)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
       let direction: Direction = debitValues.contains(flag) ? .debit : .credit
-      return (abs(minor), direction)
+      // A Dr or Cr on the amount must agree with the flag it is read with.
+      guard cell.suffix == nil || cell.suffix == direction else { return nil }
+      return (abs(cell.minor), direction)
     }
   }
 
-  /// One debit or credit cell of a separate-column row, as signed paise. A blank
-  /// cell, or text that is not a number, reads as 0: bank files leave the column a
-  /// row does not use empty or put a dash in it, and that is not a refusal. A
-  /// number the rule refuses (beyond `AmountRules.maximumMinor`, or with more than
-  /// two decimal places) is nil, so the whole row is refused rather than read from
-  /// its other column.
-  private static func separateCell(_ row: [String], _ index: Int) -> Int? {
+  /// One debit or credit cell of a separate-column row, as signed paise.
+  ///
+  /// B7 ruling: only a blank cell, "-", "–" or "—" reads as 0. Any other cell that
+  /// is not a number refuses the whole row, so the other column is never read in
+  /// its place. A Dr or Cr on the cell must agree with its column, and a sign must
+  /// agree with a suffix. A number the rule refuses is nil for the same reason.
+  private static func separateCell(_ row: [String], _ index: Int, column: Direction) -> Int? {
     guard let raw = field(row, index) else { return 0 }
-    switch parseAmount(raw) {
-    case .success(let minor): return minor
-    case .failure(.notANumber): return 0
-    case .failure(.tooManyFractionDigits), .failure(.outOfRange): return nil
-    }
+    if placeholders.contains(raw.trimmingCharacters(in: .whitespacesAndNewlines)) { return 0 }
+    guard let cell = readCell(raw), signedDirection(cell) != nil else { return nil }
+    guard cell.suffix == nil || cell.suffix == column else { return nil }
+    return cell.minor
   }
 
-  /// A file amount in paise, or nil when it is refused. B7: this is `AmountText`,
-  /// the rule manual entry uses (R8b, I-8), not a `Decimal` conversion. `Decimal`
-  /// read "1.2.3" as 1.2, and its `Int` conversion silently truncated anything
-  /// beyond `Int` (wave-1 Risk 10).
-  private static func parseAmountMinor(_ raw: String) -> Int? {
-    try? parseAmount(raw).get()
+  /// A cell that stands for no amount: blank, a hyphen-minus, an en dash or an em dash.
+  private static let placeholders: Set<String> = ["", "-", "\u{2013}", "\u{2014}"]
+
+  /// One amount cell as the rules read it.
+  private struct Cell {
+    /// The magnitude, negative when the text has a leading "-".
+    let minor: Int
+    /// "-" is a debit, "+" a credit, and nil when the text has no sign.
+    let sign: Direction?
+    /// "Dr" or "Cr" at the end of the text, after optional whitespace.
+    let suffix: Direction?
   }
 
-  /// `AmountText.parse` on the cell, with one leading "+" allowed (B7 ruling):
-  /// some bank exports write credits as "+1,000.00". The plus is removed here, not
-  /// in `AmountText`, so manual entry is unchanged. A "+" followed by another sign
-  /// ("+-5", "++5") is two signs and is refused.
-  private static func parseAmount(_ raw: String) -> Result<Int, AmountTextRejection> {
+  /// The Dr and Cr spellings file import accepts. Other cases, such as "dr", are refused.
+  private static let suffixes: [(text: String, direction: Direction)] = [
+    ("Cr.", .credit), ("CR", .credit), ("Cr", .credit),
+    ("Dr.", .debit), ("DR", .debit), ("Dr", .debit),
+  ]
+
+  /// Reads one amount cell. The Dr or Cr suffix is stripped and the sign removed, and
+  /// what is left goes to `AmountText.parse`, the rule manual entry uses. `AmountText`
+  /// is not changed. Refused (nil) when the rest is not an amount, when a second sign
+  /// follows the first, when a space sits between the sign and the number, or when the
+  /// magnitude is beyond the cap.
+  private static func readCell(_ raw: String) -> Cell? {
     var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-    if text.hasPrefix("+") {
-      text.removeFirst()
-      if text.hasPrefix("+") || text.hasPrefix("-") { return .failure(.notANumber) }
+    var suffix: Direction?
+    if let match = suffixes.first(where: { text.hasSuffix($0.text) }) {
+      text = String(text.dropLast(match.text.count)).trimmingCharacters(in: .whitespaces)
+      suffix = match.direction
     }
-    return AmountText.parse(text, locale: amountLocale, allowNegative: true)
+    var sign: Direction?
+    if let first = text.first, first == "+" || first == "-" {
+      sign = first == "-" ? .debit : .credit
+      text.removeFirst()
+      // The sign is adjacent to the number: a second sign or a space here is refused.
+      if let next = text.first, next == "+" || next == "-" || next.isWhitespace { return nil }
+    }
+    guard case .success(let magnitude) = AmountText.parse(text, locale: amountLocale, allowNegative: false)
+    else { return nil }
+    return Cell(minor: sign == .debit ? -magnitude : magnitude, sign: sign, suffix: suffix)
+  }
+
+  /// The direction a signed-column cell gives. No sign and no suffix is a credit, as it
+  /// always was. Otherwise the sign or the suffix sets it. A sign and a suffix that
+  /// disagree give nil, and the row is refused.
+  private static func signedDirection(_ cell: Cell) -> Direction? {
+    switch (cell.sign, cell.suffix) {
+    case (nil, nil): return .credit
+    case (let sign?, nil): return sign
+    case (nil, let suffix?): return suffix
+    case (let sign?, let suffix?): return sign == suffix ? sign : nil
+    }
   }
 
   /// Pinned to en_US_POSIX so a file reads the same on every device: "." is the
