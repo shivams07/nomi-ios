@@ -63,4 +63,48 @@ final class EntryAccountTests: XCTestCase {
   func testEntrySaveGateSignatureTakesOnlyAmountMinor() {
     XCTAssertTrue(EntrySaveGate.isEnabled(amountMinor: 100))
   }
+
+  // MARK: - Last used first (Andrews ruling, S5)
+
+  /// The last account the user chose opens the next entry, when it is still
+  /// active, even with several accounts to choose from.
+  func testLastUsedWinsWhenItIsActive() {
+    let first = StubAccount(id: UUID(), isArchived: false)
+    let second = StubAccount(id: UUID(), isArchived: false)
+
+    XCTAssertEqual(EntryAccountDefault.initial(lastUsed: second.id, from: [first, second]), second.id)
+  }
+
+  /// With no last-used account, the rule for one active account still applies.
+  func testNilLastUsedFallsBackToTheSingleActiveAccount() {
+    let only = StubAccount(id: UUID(), isArchived: false)
+
+    XCTAssertEqual(EntryAccountDefault.initial(lastUsed: nil, from: [only]), only.id)
+  }
+
+  /// With no last-used account and two active ones, nothing is guessed.
+  func testNilLastUsedWithTwoActiveAccountsPreselectsNothing() {
+    let accounts = [
+      StubAccount(id: UUID(), isArchived: false),
+      StubAccount(id: UUID(), isArchived: false),
+    ]
+
+    XCTAssertNil(EntryAccountDefault.initial(lastUsed: nil, from: accounts))
+  }
+
+  /// An archived last-used account is not offered, so it cannot be the default.
+  func testArchivedLastUsedFallsBackToTheRule() {
+    let active = StubAccount(id: UUID(), isArchived: false)
+    let archived = StubAccount(id: UUID(), isArchived: true)
+
+    XCTAssertEqual(EntryAccountDefault.initial(lastUsed: archived.id, from: [active, archived]), active.id)
+  }
+
+  /// A last-used id that matches no account at all (the account was deleted)
+  /// falls back in the same way.
+  func testUnknownLastUsedFallsBackToTheRule() {
+    let only = StubAccount(id: UUID(), isArchived: false)
+
+    XCTAssertEqual(EntryAccountDefault.initial(lastUsed: UUID(), from: [only]), only.id)
+  }
 }

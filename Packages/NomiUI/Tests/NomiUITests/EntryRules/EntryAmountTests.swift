@@ -79,4 +79,67 @@ final class EntryAmountTests: XCTestCase {
   func testSanitizeIsIdempotentOnCleanInput() {
     XCTAssertEqual(EntryAmount.sanitizeInput("125.50"), "125.50")
   }
+
+  // MARK: - Display model (what the amount field draws)
+
+  /// Fixture: no decimal point typed. The digits are ink and a dimmed ".00"
+  /// follows, the artboard's ₹360.00.
+  func testWholeAmountShowsADimmedPointZeroZeroSuffix() {
+    XCTAssertEqual(
+      EntryAmountDisplay.of("360", locale: Locale(identifier: "en_IN")),
+      EntryAmountDisplay(integer: "360", typedDecimals: "", suffix: ".00")
+    )
+  }
+
+  /// Fixture: "360.5". Only the typed decimal part is dimmed, and no suffix is
+  /// added over what the user typed.
+  func testTypedDecimalsAreDimmedAndNoSuffixIsAdded() {
+    XCTAssertEqual(
+      EntryAmountDisplay.of("360.5", locale: Locale(identifier: "en_IN")),
+      EntryAmountDisplay(integer: "360", typedDecimals: ".5", suffix: "")
+    )
+  }
+
+  /// Fixture: "360." (a separator typed, no digits yet). The separator is dimmed
+  /// and no ".00" is added on top of it.
+  func testATrailingSeparatorIsDimmedWithNoSuffix() {
+    XCTAssertEqual(
+      EntryAmountDisplay.of("360.", locale: Locale(identifier: "en_IN")),
+      EntryAmountDisplay(integer: "360", typedDecimals: ".", suffix: "")
+    )
+  }
+
+  /// Fixture: ".5" (no whole part). The decimals are dimmed and nothing is ink.
+  func testALeadingSeparatorHasNoIntegerPart() {
+    XCTAssertEqual(
+      EntryAmountDisplay.of(".5", locale: Locale(identifier: "en_IN")),
+      EntryAmountDisplay(integer: "", typedDecimals: ".5", suffix: "")
+    )
+  }
+
+  /// An empty field shows nothing here, so the "0" placeholder is not followed by
+  /// a ".00" that would read as a typed amount.
+  func testAnEmptyFieldHasNoSuffix() {
+    XCTAssertEqual(
+      EntryAmountDisplay.of("", locale: Locale(identifier: "en_IN")),
+      EntryAmountDisplay(integer: "", typedDecimals: "", suffix: "")
+    )
+  }
+
+  /// The separator is the device's, so a German keyboard's comma is dimmed like
+  /// the point in en_IN.
+  func testTheSeparatorFollowsTheLocale() {
+    XCTAssertEqual(
+      EntryAmountDisplay.of("12,50", locale: Locale(identifier: "de_DE")),
+      EntryAmountDisplay(integer: "12", typedDecimals: ",50", suffix: "")
+    )
+  }
+
+  /// The decimals dim at the same opacity as NomiAmountText's rule for an amount
+  /// this size (0.5 at 24 pt and above). It is pinned here so the field and the
+  /// amounts elsewhere cannot drift apart.
+  func testDecimalsDimAtTheAmountRuleOpacity() {
+    XCTAssertEqual(EntryAmountDisplay.decimalOpacity, 0.5)
+    XCTAssertEqual(EntryAmountDisplay.decimalOpacity, NomiAmountText.decimalsOpacity(for: .heroAmount))
+  }
 }

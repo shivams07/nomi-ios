@@ -68,4 +68,50 @@ enum EntryAccountDefault {
     guard active.count == 1 else { return nil }
     return active[0].id
   }
+
+  /// The account a new entry opens with (S5, Andrews ruling). The account the
+  /// user last chose wins, when it is still an active account. Otherwise the
+  /// single-active-account rule applies. An archived or deleted last-used
+  /// account is not offered, so it is not used.
+  static func initial<Row: AccountArchivable>(lastUsed: UUID?, from accounts: [Row]) -> UUID? {
+    let active = accounts.filter { !$0.isArchived }
+    if let lastUsed, active.contains(where: { $0.id == lastUsed }) {
+      return lastUsed
+    }
+    return preselection(from: accounts)
+  }
+}
+
+/// What the amount field draws (S5, Andrews ruling). The digits the user typed
+/// are ink. The decimal part they typed is dimmed. When no decimal separator has
+/// been typed, a dimmed ".00" follows the whole part (the artboard's ₹360.00).
+///
+/// Pure, so a test pins the display without a view. The view draws `integer` in
+/// ink, then `typedDecimals` and `suffix` at `decimalOpacity`.
+struct EntryAmountDisplay: Equatable {
+  /// The whole part as typed. Empty while nothing is typed.
+  let integer: String
+  /// The decimal separator and the digits after it, as typed.
+  let typedDecimals: String
+  /// ".00" when a whole part is typed and no separator is. Empty otherwise.
+  let suffix: String
+
+  /// The decimals' opacity: NomiAmountText's rule for an amount this size (0.5
+  /// at 24 pt and above). Kept as the one rule, so the field agrees with the
+  /// amounts elsewhere in the app.
+  static let decimalOpacity: Double = NomiAmountText.decimalsOpacity(for: .heroAmount)
+
+  /// The display for typed text. `text` is already sanitised (digits and the
+  /// first separator only). The separator is the locale's.
+  static func of(_ text: String, locale: Locale = .current) -> EntryAmountDisplay {
+    let separator = locale.decimalSeparator ?? "."
+    if let range = text.range(of: separator) {
+      return EntryAmountDisplay(
+        integer: String(text[..<range.lowerBound]),
+        typedDecimals: String(text[range.lowerBound...]),
+        suffix: ""
+      )
+    }
+    return EntryAmountDisplay(integer: text, typedDecimals: "", suffix: text.isEmpty ? "" : ".00")
+  }
 }
