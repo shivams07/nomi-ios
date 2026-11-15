@@ -16,13 +16,24 @@ protocol SystemFlagged {
 
 extension NomiCore.Category: SystemFlagged {}
 
-/// The category delete rules and copy, shared by the list's swipe accelerator
-/// and the editor's Delete row so the two cannot drift apart.
-enum CategoryDeletion {
-  static func isDeletable<T: SystemFlagged>(_ item: T) -> Bool {
+/// The swipe rule for a category row (S13). A system row has no swipe action at
+/// all: the list marks it `.deleteDisabled`, so it shows nothing when swiped.
+enum CategoryRowRules {
+  static func canDelete<T: SystemFlagged>(_ item: T) -> Bool {
     !item.isSystem
   }
 
+  /// The offsets a swipe-delete may act on: those that name a row in `items`
+  /// and whose row is deletable. A system row never survives, so the delete path
+  /// cannot ask the store to remove one even if the list hands over its offset.
+  static func deletableOffsets<T: SystemFlagged>(_ offsets: IndexSet, in items: [T]) -> IndexSet {
+    IndexSet(offsets.filter { items.indices.contains($0) && canDelete(items[$0]) })
+  }
+}
+
+/// The category delete copy, shared by the list's delete alert and the editor's
+/// Delete row so the two cannot drift apart.
+enum CategoryDeletion {
   /// "Delete Transport?", the delete alert's title (DeleteCategoryConfirm).
   static func alertTitle(for name: String) -> String {
     "Delete \(name)?"
@@ -36,15 +47,14 @@ enum CategoryDeletion {
   /// soft-deleted, so nothing can be restored.
   static let alertMessage = "Its rules and budget will be deleted too, and its transactions become uncategorized. This can't be undone."
 
-  /// The blocking alert's title, for a swipe on a system category or a failed
-  /// delete.
+  /// The blocking alert's title, for a delete the store refused.
   static let blockedTitle = "Can't delete category"
 }
 
 /// The Categories screen (U6; OR2). Shape from the approved `Categories` and
 /// `DeleteCategoryConfirm` artboards: an H0 "Categories" title with "+" in the
-/// nav bar, then one 60-high row per category (32 palette badge, name, a
-/// "System" tag for seeded ones, chevron). Tapping a row opens the editor;
+/// nav bar, then one 60-high row per category (32 badge, name, a "System" tag
+/// for seeded ones, chevron). A system row has no swipe action. Tapping a row opens the editor;
 /// swipe-to-delete stays as the accelerator. Pushed into from Settings by U7 —
 /// public so that unit can construct it without reaching into `NomiUI`'s
 /// internals.
@@ -65,6 +75,7 @@ public struct CategoriesScreen: View {
     List {
       ForEach(categories) { category in
         row(for: category)
+          .deleteDisabled(category.isSystem)
       }
       .onDelete(perform: delete)
     }
@@ -159,20 +170,25 @@ public struct CategoriesScreen: View {
     }
     .buttonStyle(.plain)
     .listRowBackground(NomiColor.card)
+    // D11: the row pitch is the 60 pt minimum, with no list insets added on top.
+    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
   }
 
+  /// A swipe on a system row is filtered out by `CategoryRowRules`, so it shows
+  /// nothing. `.deleteDisabled` already keeps the swipe off those rows.
   private func delete(at offsets: IndexSet) {
-    for index in offsets {
-      let category = categories[index]
-      guard CategoryDeletion.isDeletable(category) else {
-        deleteErrorMessage = "\(category.name) is a system category and can't be deleted."
-        continue
-      }
-      pendingDeletion = category
-    }
+    let deletable = CategoryRowRules.deletableOffsets(offsets, in: categories)
+    guard let index = deletable.first else { return }
+    pendingDeletion = categories[index]
   }
 
   private func confirmDelete(_ category: NomiCore.Category) {
+    // Defence in depth: a system category never reaches the store, whatever the
+    // row or the alert did. The store refuses it too.
+    guard CategoryRowRules.canDelete(category) else {
+      pendingDeletion = nil
+      return
+    }
     do {
       try categoryStore.delete(category.id)
     } catch {
@@ -220,7 +236,7 @@ private struct CategoriesScreenDeleteFailure: Error {}
 /// Delete and update always throw, so swiping to delete a non-system category
 /// and confirming the alert in the canvas exercises the `deleteErrorMessage`
 /// alert, and saving in the editor exercises its inline save error. The
-/// UI-side `CategoryDeletion.isDeletable` gate only covers the system-category
+/// UI-side `CategoryRowRules.canDelete` gate only covers the system-category
 /// case, not a genuine store failure like this one.
 @MainActor
 private final class AlwaysFailingCategoryStore: CategoryStore {

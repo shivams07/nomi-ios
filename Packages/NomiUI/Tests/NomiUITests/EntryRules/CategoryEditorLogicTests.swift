@@ -249,3 +249,44 @@ private let otherNames = ["Food & Dining", "Shopping", "Bills & Utilities"]
     }
   }
 }
+
+/// The icon grid (S13). The seed's fourteen symbols are copied here verbatim
+/// from `DefaultCategorySeed.names`, because NomiApp is not importable from
+/// NomiUI tests. A seeded category whose symbol is missing from the grid could
+/// not be re-iconed by the user.
+@Suite struct CategoryEditorLogicIconChoiceTests {
+
+  private static let seedSymbols = [
+    "fork.knife",
+    "car.fill",
+    "bolt.fill",
+    "house.fill",
+    "building.columns.fill",
+    "chart.line.uptrend.xyaxis",
+    "shield.fill",
+    "banknote.fill",
+    "arrow.left.arrow.right",
+    "bag.fill",
+    "cart.fill",
+    "cross.case.fill",
+    "arrow.down.circle.fill",
+    "tag",
+  ]
+
+  @Test func iconChoicesOfferEverySeededSymbol() {
+    for symbol in Self.seedSymbols {
+      #expect(CategoryEditorLogic.iconChoices.contains(symbol), "missing \(symbol)")
+    }
+  }
+
+  @Test func iconChoicesHaveNoDuplicates() {
+    #expect(Set(CategoryEditorLogic.iconChoices).count == CategoryEditorLogic.iconChoices.count)
+  }
+
+  /// The seed comes first in its own order. Today's extra choices follow, with
+  /// the two that repeat a seed symbol (`tag`, `fork.knife`) dropped.
+  @Test func iconChoicesKeepTheSeedOrderThenTodaysExtras() {
+    let extras = ["bag", "car", "bolt", "house", "heart", "gamecontroller"]
+    #expect(CategoryEditorLogic.iconChoices == Self.seedSymbols + extras)
+  }
+}
