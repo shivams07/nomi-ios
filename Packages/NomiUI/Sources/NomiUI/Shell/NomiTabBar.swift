@@ -161,11 +161,6 @@ public struct NomiTabBar: View {
     .buttonStyle(.plain)
     .accessibilityLabel(item.title)
     .accessibilityAddTraits(isSelected ? [.isSelected] : [])
-    #if os(iOS)
-      .accessibilityShowsLargeContentViewer {
-        Label(item.title, systemImage: item.symbolName)
-      }
-    #endif
   }
 
   private var addSlot: some View {
@@ -185,11 +180,6 @@ public struct NomiTabBar: View {
     }
     .buttonStyle(.plain)
     .accessibilityLabel("Add transaction")
-    #if os(iOS)
-      .accessibilityShowsLargeContentViewer {
-        Label("Add transaction", systemImage: "plus")
-      }
-    #endif
   }
 
   private func glyph(_ symbolName: String) -> some View {
