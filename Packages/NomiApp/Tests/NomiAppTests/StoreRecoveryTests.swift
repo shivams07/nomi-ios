@@ -48,6 +48,21 @@ final class StoreRecoveryTests: XCTestCase {
     directory.appendingPathComponent("Recovered", isDirectory: true)
   }
 
+  /// `persistent` and `mode` must agree: `.inMemory` is the one mode that is not
+  /// persistent, and no other mode is. Called in every test that opens through
+  /// `makeWithLocalFallback`, so a mismatch fails wherever it arises.
+  private func assertPersistenceMatchesMode(
+    _ result: (container: ModelContainer, mode: StorageMode, persistent: Bool),
+    file: StaticString = #filePath, line: UInt = #line
+  ) {
+    var isInMemory = false
+    if case .inMemory = result.mode { isInMemory = true }
+    XCTAssertEqual(
+      result.persistent, !isInMemory,
+      "persistent is false exactly when the mode is .inMemory (got \(result.mode))",
+      file: file, line: line)
+  }
+
   /// A valid V1 store with one row, written and closed.
   private func writeValidStore() throws {
     let container = try NomiModelContainer.makeLocal(at: storeURL)
@@ -75,6 +90,7 @@ final class StoreRecoveryTests: XCTestCase {
       recoveryDefaults: defaults,
       now: { self.fixedNow })
 
+    assertPersistenceMatchesMode(result)
     guard case .localOnly = result.mode else {
       return XCTFail("expected the local fallback after recovery, got \(result.mode)")
     }
@@ -113,6 +129,7 @@ final class StoreRecoveryTests: XCTestCase {
       recoveryDefaults: defaults,
       now: { self.fixedNow })
 
+    assertPersistenceMatchesMode(result)
     guard case .localOnly = result.mode else {
       return XCTFail("expected the local fallback, got \(result.mode)")
     }
@@ -144,7 +161,8 @@ final class StoreRecoveryTests: XCTestCase {
       recoveryDefaults: defaults,
       now: { self.fixedNow })
 
-    XCTAssertEqual(result.mode, .localOnly(reason: NomiModelContainer.retryLaterReason))
+    assertPersistenceMatchesMode(result)
+    XCTAssertEqual(result.mode, .inMemory(reason: NomiModelContainer.retryLaterReason))
     XCTAssertFalse(result.persistent, "an in-memory launch is not persistent")
     XCTAssertNil(StoreRecoveryRecord.load(from: defaults), "no file was moved, so there is no notice")
     XCTAssertFalse(
@@ -176,7 +194,8 @@ final class StoreRecoveryTests: XCTestCase {
       recoveryDefaults: defaults,
       now: { self.fixedNow })
 
-    XCTAssertEqual(result.mode, .localOnly(reason: noRowsKeptReason))
+    assertPersistenceMatchesMode(result)
+    XCTAssertEqual(result.mode, .inMemory(reason: noRowsKeptReason))
     XCTAssertFalse(result.persistent)
     XCTAssertTrue(
       FileManager.default.fileExists(
@@ -214,7 +233,8 @@ final class StoreRecoveryTests: XCTestCase {
       recoveryDefaults: defaults,
       now: { self.fixedNow })
 
-    XCTAssertEqual(result.mode, .localOnly(reason: NomiModelContainer.retryLaterReason))
+    assertPersistenceMatchesMode(result)
+    XCTAssertEqual(result.mode, .inMemory(reason: NomiModelContainer.retryLaterReason))
     XCTAssertFalse(result.persistent)
     XCTAssertFalse(FileManager.default.fileExists(atPath: recoveredDirectory.path), "no Recovered directory")
     XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), "the store is still at its path")
@@ -245,7 +265,8 @@ final class StoreRecoveryTests: XCTestCase {
       recoveryDefaults: defaults,
       now: { self.fixedNow })
 
-    XCTAssertEqual(result.mode, .localOnly(reason: NomiModelContainer.retryLaterReason))
+    assertPersistenceMatchesMode(result)
+    XCTAssertEqual(result.mode, .inMemory(reason: NomiModelContainer.retryLaterReason))
     XCTAssertFalse(result.persistent)
     XCTAssertFalse(FileManager.default.fileExists(atPath: recoveredDirectory.path), "no Recovered directory")
     XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), "the store is still at its path")
@@ -278,9 +299,10 @@ final class StoreRecoveryTests: XCTestCase {
       recoveryDefaults: defaults,
       now: { self.fixedNow })
 
+    assertPersistenceMatchesMode(result)
     XCTAssertEqual(try Data(contentsOf: url), corrupt, "the original is byte-identical, not deleted")
     XCTAssertNil(StoreRecoveryRecord.load(from: defaults), "no notice, because nothing moved")
-    XCTAssertEqual(result.mode, .localOnly(reason: noRowsKeptReason))
+    XCTAssertEqual(result.mode, .inMemory(reason: noRowsKeptReason))
     XCTAssertFalse(result.persistent)
 
     let context = ModelContext(result.container)
@@ -335,5 +357,14 @@ final class StoreRecoveryTests: XCTestCase {
     XCTAssertFalse(
       FileManager.default.fileExists(atPath: directory.appendingPathComponent("default.store-wal").path),
       "the orphan is gone from the store path")
+  }
+
+  /// The retry copy is the I-6 Amendment 2 sentence exactly. It says nothing
+  /// was changed, and it never opens with "safe", because the store is not.
+  func testRetryLaterCopyIsExact() {
+    XCTAssertEqual(
+      NomiModelContainer.retryLaterReason,
+      "Nomi couldn’t open your saved data this time. Nothing has been changed or deleted. Close Nomi and open it again; anything you add before then won’t be kept.")
+    XCTAssertFalse(NomiModelContainer.retryLaterReason.contains("safe"))
   }
 }

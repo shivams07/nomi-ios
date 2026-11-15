@@ -10,6 +10,10 @@ import Foundation
 /// is right: losing sync is not a reason to refuse to launch. That is
 /// `.localOnly`, and regaining sync needs a relaunch.
 ///
+/// **The store could not be opened at all** — the app runs on an in-memory
+/// store and nothing is kept past this process. That is `.inMemory`; it is
+/// never told the data is safe.
+///
 /// **The container constructed but there is no usable iCloud account** —
 /// signed out, restricted by Screen Time or a management profile, temporarily
 /// unavailable. That is `.cloudKitPaused`. The store is still the CloudKit
@@ -43,6 +47,10 @@ public enum StorageMode: Sendable, Equatable {
   /// developer-shaped text, but a developer-shaped explanation the user can
   /// read out beats no explanation at all.
   case localOnly(reason: String)
+  /// An in-memory store. Nothing this process writes outlives it. Produced only by
+  /// NomiModelContainer's in-memory fallback (retry-later, failed move, fresh store failed).
+  /// `reason` is written for a person and is shown verbatim, with no opener.
+  case inMemory(reason: String)
 
   /// True for `.cloudKit` only. A paused container is not syncing, and saying
   /// otherwise is the exact false reassurance this type exists to remove.
@@ -51,12 +59,13 @@ public enum StorageMode: Sendable, Equatable {
     return false
   }
 
-  /// The *construction* error, so `.localOnly` only. A paused account is not
-  /// an error and has no error text — its explanation is chosen from
-  /// `SyncPauseReason` at the display layer, where it can be written for a
+  /// The *construction* error, so `.localOnly` and `.inMemory` only. A paused
+  /// account is not an error and has no error text — its explanation is chosen
+  /// from `SyncPauseReason` at the display layer, where it can be written for a
   /// user rather than for a log.
   public var reason: String? {
     if case .localOnly(let reason) = self { return reason }
+    if case .inMemory(let reason) = self { return reason }
     return nil
   }
 }

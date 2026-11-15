@@ -77,11 +77,11 @@ public enum StorageModeResolver {
   ///   - account: the probe's answer; `nil` means available.
   public static func resolve(constructed: StorageMode, account: SyncPauseReason?) -> StorageMode {
     switch constructed {
-    case .localOnly:
+    case .localOnly, .inMemory:
       // The account is irrelevant here and must not override: this process is
       // not on a CloudKit store at all, so no account status can make it sync.
       // Saying "paused" would imply it resumes on its own, and it does not —
-      // it needs a relaunch.
+      // it needs a relaunch. Neither `.localOnly` nor `.inMemory` is on CloudKit.
       return constructed
     case .cloudKit, .cloudKitPaused:
       guard let account else { return .cloudKit }
@@ -133,11 +133,12 @@ public final class StorageModeMonitor: ObservableObject {
   public func refresh() async {
     let resolved: StorageMode
     switch constructed {
-    case .localOnly:
+    case .localOnly, .inMemory:
       // SIM1. A local-only process is not on a CloudKit store, and the resolver
       // ignores the account for it anyway. So the probe is not asked at all: its
       // `CKContainer(identifier:)` is the call that traps an unsigned simulator
       // build (V2, `CODE_SIGNING_ALLOWED=NO`), even when the store is local.
+      // The same holds for `.inMemory`, which is never on CloudKit either.
       resolved = constructed
     case .cloudKit, .cloudKitPaused:
       resolved = StorageModeResolver.resolve(

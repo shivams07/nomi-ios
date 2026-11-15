@@ -36,6 +36,7 @@ enum StorageModeDisplay {
     switch mode {
     case .cloudKit: return "On"
     case .localOnly: return "Off — this device only"
+    case .inMemory: return "Off — not being saved"
     case .cloudKitPaused(.noAccount): return "Off — not signed in to iCloud"
     case .cloudKitPaused(.restricted): return "Off — iCloud restricted"
     case .cloudKitPaused(.temporarilyUnavailable): return "Waiting for iCloud"
@@ -46,10 +47,11 @@ enum StorageModeDisplay {
   /// The caption under the row. `nil` when syncing, so the row renders as one
   /// line and nothing is said where there is nothing to say.
   ///
-  /// **Every non-syncing caption opens by saying the data is safe**, because
-  /// the report this row exists to prevent is "the app lost my transactions"
-  /// — which is what a user concludes when their second device is empty. The
-  /// reassurance has to come before the explanation, not after it.
+  /// **Every non-syncing caption except `.inMemory` opens by saying the data is
+  /// safe**, because the report this row exists to prevent is "the app lost my
+  /// transactions" — which is what a user concludes when their second device is
+  /// empty. The reassurance has to come before the explanation, not after it.
+  /// `.inMemory` says the opposite, so its reason is shown alone.
   ///
   /// `.localOnly` and `.couldNotDetermine` end in developer-shaped text,
   /// deliberately: a user who can read it out gives a usable report, and a
@@ -62,6 +64,8 @@ enum StorageModeDisplay {
       return nil
     case .localOnly(let reason):
       return "Your data is safe on this device, but it is not syncing to iCloud. \(reason)"
+    case .inMemory(let reason):
+      return reason
     case .cloudKitPaused(.noAccount):
       return "Your data is safe on this device. Sign in to iCloud in the Settings app to sync."
     case .cloudKitPaused(.restricted):

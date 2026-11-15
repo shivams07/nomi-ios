@@ -152,6 +152,28 @@ final class SettingsLogicTests: XCTestCase {
     XCTAssertEqual(StorageMode.localOnly(reason: "x").reason, "x")
   }
 
+  // MARK: - R7c: an in-memory store says it is not being saved, and nothing else
+
+  func testInMemoryRowTextSaysNotBeingSaved() {
+    XCTAssertEqual(StorageModeDisplay.text(for: .inMemory(reason: "x")), "Off — not being saved")
+  }
+
+  /// The caption is the reason alone. A "safe" sentence here would tell the
+  /// user the opposite of what is true.
+  func testInMemoryCaptionIsTheReasonAlone() {
+    let reason =
+      "Nomi couldn’t open your saved data this time. Nothing has been changed or deleted. Close Nomi and open it again; anything you add before then won’t be kept."
+    let caption = StorageModeDisplay.caption(for: .inMemory(reason: reason))
+
+    XCTAssertEqual(caption, reason)
+    XCTAssertFalse(caption?.contains("safe") == true)
+  }
+
+  func testInMemoryIsNotSyncingAndCarriesItsReason() {
+    XCTAssertFalse(StorageMode.inMemory(reason: "x").isSyncing)
+    XCTAssertEqual(StorageMode.inMemory(reason: "x").reason, "x")
+  }
+
   // MARK: - U9b: paused is its own state, and reads differently from failed
 
   /// Each paused reason gets its own words. Collapsing them into one "Off"
