@@ -56,26 +56,54 @@ final class ReportsCSVExportTests: XCTestCase {
     XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
   }
 
-  /// R12b Y1 (mutant V2): dismissing the sheet removes the file it showed.
-  /// Without the `remove` call in `dismiss`, the file stays in `tmp`.
-  func testShareCleanupRemovesTheShownFileOnDismiss() throws {
-    var cleanup = ReportsShareCleanup()
-    let url = try ReportsCSVExport.write([], names: names, periodLabel: "cleanup-test")
-    cleanup.show(url)
+  /// R12b (Y1), T2a: clearing the share item (the sheet closing) removes the
+  /// file it showed. Kills T2-M11: the setter without its remove line keeps it.
+  func testClearingTheShareItemRemovesItsFile() throws {
+    let url = try ReportsCSVExport.write([], names: names, periodLabel: "clear-test")
+    var state = ReportsShareState()
+    state.item = ReportsShareItem(url: url)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
 
-    cleanup.dismiss()
+    state.item = nil
 
     XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
-    XCTAssertNil(cleanup.shown)
+    XCTAssertNil(state.item)
   }
 
-  func testShareCleanupDismissWithNothingShownLeavesOtherFilesAlone() throws {
-    let other = try ReportsCSVExport.write([], names: names, periodLabel: "cleanup-other")
-    defer { ReportsCSVExport.remove(other) }
-    var cleanup = ReportsShareCleanup()
+  /// Showing a second file removes the first and nothing else.
+  func testReplacingTheShareItemRemovesOnlyThePreviousFile() throws {
+    let first = try ReportsCSVExport.write([], names: names, periodLabel: "replace-test")
+    let second = try ReportsCSVExport.write([], names: names, periodLabel: "replace-test")
+    defer { ReportsCSVExport.remove(second) }
+    var state = ReportsShareState()
+    state.item = ReportsShareItem(url: first)
 
-    cleanup.dismiss()
+    state.item = ReportsShareItem(url: second)
+
+    XCTAssertFalse(FileManager.default.fileExists(atPath: first.path))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
+  }
+
+  func testClearingWithNothingShownLeavesFilesAlone() throws {
+    let other = try ReportsCSVExport.write([], names: names, periodLabel: "clear-nothing")
+    defer { ReportsCSVExport.remove(other) }
+    var state = ReportsShareState()
+
+    state.item = nil
 
     XCTAssertTrue(FileManager.default.fileExists(atPath: other.path))
+  }
+
+  /// Re-assigning the item the sheet already shows must not delete its file.
+  func testReassigningTheSameItemKeepsItsFile() throws {
+    let url = try ReportsCSVExport.write([], names: names, periodLabel: "reassign-test")
+    defer { ReportsCSVExport.remove(url) }
+    let item = ReportsShareItem(url: url)
+    var state = ReportsShareState()
+    state.item = item
+
+    state.item = item
+
+    XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
   }
 }

@@ -35,9 +35,8 @@ public struct ReportsScreen: View {
   /// contains today. Decides whether a refresh moves `anchor` to now (R12b, Y1).
   @State private var followsToday = true
   /// The CSV the export menu just wrote. Presented once, then removed when the
-  /// share sheet closes.
-  @State private var shareItem: ReportsShareItem?
-  @State private var shareCleanup = ReportsShareCleanup()
+  /// share sheet closes (by the state's setter, not an `onDismiss`).
+  @State private var share = ReportsShareState()
   @State private var exportError = false
   /// Bumped by a load-failed card's Retry, so the body reads the store again.
   @State private var retryToken = 0
@@ -73,7 +72,7 @@ public struct ReportsScreen: View {
   /// month draws its daily bars from the period itself, so it never reads the
   /// monthly series. A read that failed is not a read that found nothing, so
   /// `.failed` is its own case.
-  private var monthlyTrend: DashboardWiring.Load<[MonthBucket]>? {
+  var monthlyTrend: DashboardWiring.Load<[MonthBucket]>? {
     _ = retryToken
     guard basis == .financialYear else { return nil }
     do {
@@ -137,7 +136,7 @@ public struct ReportsScreen: View {
     .alert("Could not export CSV", isPresented: $exportError) {
       Button("OK", role: .cancel) {}
     }
-    .sheet(item: $shareItem, onDismiss: { shareCleanup.dismiss() }) { item in
+    .sheet(item: $share.item) { item in
       ReportsShareSheet(url: item.url)
     }
     .onChange(of: refreshToken) { _, _ in
@@ -290,8 +289,7 @@ public struct ReportsScreen: View {
     let names = CSVNameMaps(categories: categoryNames, accounts: accountNames)
     do {
       let url = try ReportsCSVExport.write(transactions, names: names, periodLabel: ReportsPeriod.label(for: exportPeriod))
-      shareCleanup.show(url)
-      shareItem = ReportsShareItem(url: url)
+      share.item = ReportsShareItem(url: url)
     } catch {
       exportError = true
     }

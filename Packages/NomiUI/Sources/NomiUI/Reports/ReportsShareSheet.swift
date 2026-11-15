@@ -8,21 +8,20 @@ struct ReportsShareItem: Identifiable {
   let url: URL
 }
 
-/// The CSV the share sheet is showing. Dismissing the sheet removes that file
-/// and nothing else (R12b, Y1). Kept out of the view so the rule is testable.
-struct ReportsShareCleanup {
-  private(set) var shown: URL?
+/// The CSV the share sheet is showing. When SwiftUI clears the sheet's item on
+/// dismissal, or the item is replaced, the previous file is removed (R12b, Y1).
+/// The sheet's binding does the removing, so no `onDismiss` closure can forget it.
+struct ReportsShareState {
+  private var current: ReportsShareItem?
 
-  mutating func show(_ url: URL) {
-    shown = url
-  }
-
-  /// Removes the shown file, if there is one, and forgets it.
-  mutating func dismiss() {
-    if let shown {
-      ReportsCSVExport.remove(shown)
+  var item: ReportsShareItem? {
+    get { current }
+    set {
+      if let old = current, old.id != newValue?.id {
+        ReportsCSVExport.remove(old.url)
+      }
+      current = newValue
     }
-    shown = nil
   }
 }
 
