@@ -92,6 +92,37 @@ enum SettingsActions {
   static func scanRecent(using service: MailConnectionService) async throws -> SyncSummary {
     try await service.startBackfill(months: 6)
   }
+
+  /// Y10: the copy for a failed re-scan or scan alert. Never `localizedDescription`,
+  /// which for an arbitrary error is the framework's "The operation couldn't be
+  /// completed" line with the type name in it. `nil` means no alert: a cancelled
+  /// scan is not a failure the user needs told about.
+  static func alertText(for error: Error) -> String? {
+    if error is CancellationError { return nil }
+    if let mailError = error as? MailError {
+      return MailErrorMessage.text(for: mailError)
+    }
+    return "Couldn’t finish the scan. Check your connection and try again."
+  }
+}
+
+/// The R7 notice shown in Settings after the app moved an unopenable store
+/// aside and started a fresh one. Pure copy, so it can be tested without
+/// rendering.
+enum StoreRecoveryDisplay {
+  /// The notice's body. The date is a calendar day in the device's zone, in
+  /// en_IN, and the formatter is given its calendar and zone explicitly so a
+  /// process in another zone cannot shift the day.
+  static func caption(for notice: StoreRecoveryNotice) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_IN")
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.timeZone = .current
+    formatter.dateFormat = "d MMM yyyy"
+    let day = formatter.string(from: notice.movedAt)
+    return
+      "Nomi couldn’t open its saved data on \(day), so it started fresh. The old data was kept on this device as \(notice.fileName)."
+  }
 }
 
 /// The unmatched-sender rows shown after a manual re-scan (§2.5.1,

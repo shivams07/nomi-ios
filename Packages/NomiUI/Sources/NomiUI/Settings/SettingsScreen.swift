@@ -37,12 +37,17 @@ public struct SettingsScreen: View {
   @State private var isScanningRecent = false
   @State private var lastSyncSummary: SyncSummary?
   @State private var rescanError: String?
+  /// R7's notice. Read from `StoreRecoveryRecord` when the screen is built and
+  /// cleared by its Dismiss button, which hides the row for this view too.
+  @State private var storeRecovery: StoreRecoveryNotice?
   private let forcedPermissionDenied: Bool?
 
   @Environment(\.scenePhase) private var scenePhase
 
   /// `storageMode` defaults to `.cloudKit` so every existing call site and
   /// preview compiles unchanged; `RootView` passes the real value.
+  /// `storeRecovery` reads the R7 record from standard defaults, so `RootView`
+  /// needs no change; previews pass a fixed notice instead.
   public init(
     mailConnectionService: MailConnectionService,
     fileImportService: FileImportService,
@@ -53,7 +58,8 @@ public struct SettingsScreen: View {
     accounts: [NomiCore.Account] = [],
     budgetStore: BudgetStore? = nil,
     insightsStore: InsightsStore? = nil,
-    refreshToken: Int = 0
+    refreshToken: Int = 0,
+    storeRecovery: StoreRecoveryNotice? = StoreRecoveryRecord.load(from: .standard)
   ) {
     self.mailConnectionService = mailConnectionService
     self.fileImportService = fileImportService
@@ -65,6 +71,7 @@ public struct SettingsScreen: View {
     self.budgetStore = budgetStore
     self.insightsStore = insightsStore
     self.refreshToken = refreshToken
+    _storeRecovery = State(initialValue: storeRecovery)
     forcedPermissionDenied = nil
   }
 
@@ -82,7 +89,8 @@ public struct SettingsScreen: View {
     accounts: [NomiCore.Account] = [],
     budgetStore: BudgetStore? = nil,
     insightsStore: InsightsStore? = nil,
-    refreshToken: Int = 0
+    refreshToken: Int = 0,
+    storeRecovery: StoreRecoveryNotice? = StoreRecoveryRecord.load(from: .standard)
   ) {
     self.mailConnectionService = mailConnectionService
     self.fileImportService = fileImportService
@@ -94,6 +102,7 @@ public struct SettingsScreen: View {
     self.budgetStore = budgetStore
     self.insightsStore = insightsStore
     self.refreshToken = refreshToken
+    _storeRecovery = State(initialValue: storeRecovery)
     self.forcedPermissionDenied = forcedPermissionDenied
   }
 
@@ -306,15 +315,40 @@ public struct SettingsScreen: View {
 
   private var dataGroup: some View {
     settingsGroup("Data") {
-      VStack(alignment: .leading, spacing: 0) {
-        navigationRow("Import from file") {
-          ImportEntryView(fileImportService: fileImportService)
+      VStack(alignment: .leading, spacing: NomiSpacing.cardGap) {
+        if let storeRecovery {
+          storeRecoveryNotice(storeRecovery)
         }
-        rowDivider
-        iCloudRow
+        VStack(alignment: .leading, spacing: 0) {
+          navigationRow("Import from file") {
+            ImportEntryView(fileImportService: fileImportService)
+          }
+          rowDivider
+          iCloudRow
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .nomiCard()
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .nomiCard()
+    }
+  }
+
+  /// The R7 notice: says once that the store was moved aside, until Dismiss.
+  /// `NomiAttentionRow` draws its own card, so it sits beside the Data card
+  /// rather than inside it, as the Mail group's attention row does.
+  private func storeRecoveryNotice(_ notice: StoreRecoveryNotice) -> some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+      NomiAttentionRow(
+        systemImage: "exclamationmark.triangle",
+        title: "Saved data couldn’t be opened",
+        message: StoreRecoveryDisplay.caption(for: notice),
+        showsChevron: false
+      )
+      Button("Dismiss") {
+        StoreRecoveryRecord.clear(in: .standard)
+        storeRecovery = nil
+      }
+      .buttonStyle(NomiSecondaryButtonStyle())
+      .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget, alignment: .leading)
     }
   }
 
@@ -460,7 +494,7 @@ public struct SettingsScreen: View {
       do {
         lastSyncSummary = try await SettingsActions.rescan(using: mailConnectionService)
       } catch {
-        rescanError = error.localizedDescription
+        rescanError = SettingsActions.alertText(for: error)
       }
     }
   }
@@ -476,7 +510,7 @@ public struct SettingsScreen: View {
       do {
         lastSyncSummary = try await SettingsActions.scanRecent(using: mailConnectionService)
       } catch {
-        rescanError = error.localizedDescription
+        rescanError = SettingsActions.alertText(for: error)
       }
     }
   }
@@ -641,6 +675,24 @@ private struct SettingsDisclosureStyle: DisclosureGroupStyle {
       ruleStore: FakeRuleStore(),
       notificationSettings: .constant(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9)),
       forcedPermissionDenied: true
+    )
+  }
+  .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
+  .preferredColorScheme(.light)
+}
+
+#Preview("Settings — store recovered") {
+  NavigationStack {
+    SettingsScreen(
+      mailConnectionService: FakeMailConnectionService(),
+      fileImportService: FakeFileImportService(),
+      categoryStore: FakeCategoryStore(),
+      ruleStore: FakeRuleStore(),
+      notificationSettings: .constant(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9)),
+      storeRecovery: StoreRecoveryNotice(
+        movedAt: Date(timeIntervalSince1970: 1_794_648_612),
+        fileName: "default-20261114T093012.store"
+      )
     )
   }
   .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
