@@ -90,31 +90,35 @@ public final class SwiftDataRuleStore: RuleStore {
     return try reapply()
   }
 
+  /// Edits the rule, releases the rows it set that it no longer claims, then
+  /// re-applies every rule. See `reevaluate` for the release rule.
   @discardableResult
   public func update(_ id: UUID, pattern: String, categoryID: UUID, scope: RuleScope) throws -> RuleApplyResult {
     guard let rule = try rule(id: id) else { return RuleApplyResult(matched: 0, recategorized: 0) }
+    let claimed = try claimedRows(by: rule)
     rule.pattern = pattern
     rule.categoryID = categoryID
     rule.scope = scope
-    try context.save()
-    return try reapply()
+    return try reevaluate(edited: rule, claimed: claimed)
   }
 
-  /// Scope alone, then the same retroactive pass `update` runs.
+  /// Scope alone, then the same release-and-re-apply `update` runs.
   ///
   /// The pass is not optional here even though `setEnabled`'s is. Disabling a
   /// rule only ever removes future matches, so there is nothing to revisit;
   /// widening a scope *adds* rows that already exist and would otherwise stay
   /// uncategorised until the next time they happened to be re-imported.
+  /// Narrowing a scope is the mirror case: a row the rule set and the new scope
+  /// no longer admits is released the same way a narrowed pattern releases one.
   ///
   /// The counts the pass returns are dropped rather than returned, because the
   /// contract has nothing to hand them to — the caller is a row action, not
   /// the editor. `reapply` still writes them and still `didWrite`s.
   public func setScope(_ id: UUID, _ scope: RuleScope) throws {
     guard let rule = try rule(id: id) else { return }
+    let claimed = try claimedRows(by: rule)
     rule.scope = scope
-    try context.save()
-    _ = try reapply()
+    _ = try reevaluate(edited: rule, claimed: claimed)
   }
 
   /// Deleting a rule re-evaluates nothing. `appliedRuleID` is cleared where it
@@ -231,6 +235,70 @@ public final class SwiftDataRuleStore: RuleStore {
 
   // MARK: -
 
+  /// Rows this rule set and still claims: `appliedRuleID` names it and the
+  /// category came from a rule. A manual row that carries the same id is left
+  /// out, since the user's category is not the rule's to take back. Empty for a
+  /// disabled rule, which claims nothing it could still be asked to give up.
+  private func claimedRows(by rule: Rule) throws -> [Transaction] {
+    guard rule.isEnabled else { return [] }
+    let target: UUID? = rule.id
+    let ruleSource = CategorySource.rule.rawValue
+    return try context.fetch(
+      FetchDescriptor<Transaction>(
+        predicate: #Predicate<Transaction> {
+          $0.appliedRuleID == target && $0.categorySourceRaw == ruleSource
+        }))
+  }
+
+  /// The tail `update` and `setScope` share: release, save, re-apply.
+  ///
+  /// A claimed row is released when the edited rule no longer matches it, or
+  /// when the edit changed the rule's category, since the row still carries the
+  /// old one. Release puts the row back to uncategorised, the state it has
+  /// before any rule touches it, and `reapply` decides where it goes. So a row
+  /// another rule claims is re-categorised in this same call, and a row nothing
+  /// claims stays uncategorised.
+  ///
+  /// The released rows' previous categories join the affected set `reapply`
+  /// reports. `reapply` also reports the category a restored row lands in, even
+  /// when that is the category it already had. The observer dedupes on fired
+  /// keys, so that costs one evaluation and cannot repeat an alert that fired.
+  ///
+  /// The returned count is rows whose category changed. `reapply` counts a
+  /// released row as recategorised when it finds it a category, because the row
+  /// is nil at that point. This swaps that step for the row's net change, so a
+  /// row moved from Food to Bills is one, and a row put back to Food is none.
+  private func reevaluate(edited rule: Rule, claimed: [Transaction]) throws -> RuleApplyResult {
+    let edited = RuleSnapshot(rule)
+    let timestamp = now()
+
+    var affected: Set<UUID> = []
+    var released: [(row: Transaction, previous: UUID?)] = []
+    for row in claimed {
+      let stillMatches = RuleEngine.firstMatch(row: TransactionSnapshot(row), in: [edited]) != nil
+      guard !stillMatches || row.categoryID != edited.categoryID else { continue }
+      released.append((row: row, previous: row.categoryID))
+      if let previous = row.categoryID { affected.insert(previous) }
+      row.categoryID = nil
+      row.categorySourceRaw = CategorySource.none.rawValue
+      row.appliedRuleID = nil
+      row.updatedAt = timestamp
+    }
+    try context.save()
+
+    let reapplied = try reapply(seeding: affected)
+
+    var restored = 0
+    var moved = 0
+    for (row, previous) in released {
+      if row.categoryID != nil { restored += 1 }
+      if row.categoryID != previous { moved += 1 }
+    }
+    return RuleApplyResult(
+      matched: reapplied.matched,
+      recategorized: reapplied.recategorized - restored + moved)
+  }
+
   /// Every rule edit re-ran this, and it began by materialising every
   /// non-manual row in the ledger as a `@Model` instance - synchronously, on
   /// the main actor, with the user's finger still on the Save button.
@@ -245,14 +313,14 @@ public final class SwiftDataRuleStore: RuleStore {
   /// Narrowing is safe because a row matching no rule is left untouched today:
   /// the loop's first `guard` skips it. Rows excluded by the fetch are exactly
   /// rows that guard would have skipped.
-  private func reapply() throws -> RuleApplyResult {
+  private func reapply(seeding: Set<UUID> = []) throws -> RuleApplyResult {
     let rules = RuleEngine.precedenceOrdered(try ruleSnapshots())
     let rows = try candidateRows(forAnyOf: rules)
     let timestamp = now()
 
     var matched = 0
     var recategorized = 0
-    var affected: Set<UUID> = []
+    var affected: Set<UUID> = seeding
 
     for row in rows {
       let snapshot = TransactionSnapshot(row)
