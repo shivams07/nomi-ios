@@ -3,24 +3,22 @@ import NomiPreview
 import SwiftData
 import SwiftUI
 
-/// The Rules screen (U6; OR1). Shape from the approved `Rules` and `RulesEmpty`
-/// artboards: an H0 "Rules" title with "+" in the nav bar, an "Order sets
-/// priority" header that holds the Reorder/Done toggle, then one row per rule
-/// (pattern, "<Category> · System", scope summary, enable switch). Pushed into
-/// from Settings by U7 — public so that unit can construct it without reaching
-/// into `NomiUI`'s internals.
+/// Auto-categorise (S10; canvas `Rules`, artboard "Auto-categorise (was Rules)").
+/// Each rule reads as a sentence: the merchant it names, the scope it applies
+/// to, and the category it files under. Two sections: "Yours" (the user's
+/// rules, editable and deletable) and "Built in" (the seeded rules, switch
+/// only). The raw patterns, reorder and the swipe actions sit one row down in
+/// "Order and patterns" (`RulesAdvancedScreen`). Pushed into from Settings, so
+/// the public init is what SettingsScreen builds.
 public struct RulesScreen: View {
   public let ruleStore: RuleStore
   public let categoryStore: CategoryStore
 
-  /// The account list for the editor's "Only when" section and this
-  /// screen's own scope-summary line (W2-M4). A plain array, not `@Query`:
-  /// `RulesScreen` is built against preview containers
-  /// (`EntryRulesPreviewSupport.makeRulesContainer()` and this file's own
-  /// `makeSystemRuleDisabledContainer()`), whose schema lists only
-  /// `NomiCore.Category` and `NomiCore.Rule`, not `NomiCore.Account`.
-  /// Defaulted to `[]` for previews. Production passes the live list from
-  /// RootView through SettingsScreen (P-3, #111).
+  /// The account list for each row's scope line and the editor's "Only when"
+  /// section. A plain array, not `@Query`: `RulesScreen` is built against
+  /// preview containers whose schema lists no `NomiCore.Account`. Defaulted to
+  /// `[]` for previews. Production passes the live list from RootView through
+  /// SettingsScreen (P-3, #111).
   public let accounts: [NomiCore.Account]
 
   @Query(sort: \NomiCore.Rule.priority) private var rules: [NomiCore.Rule]
@@ -31,11 +29,11 @@ public struct RulesScreen: View {
   @State private var pendingDelete: NomiCore.Rule?
   @State private var isCreating = false
   @State private var actionError = false
-  #if os(iOS)
-  /// Drives the list's reorder mode. Handles appear only while this is active
-  /// (SIMP §3 item 18: the always-visible ≡ glyph and the nav-bar Edit are cut).
-  @State private var editMode: EditMode = .inactive
-  #endif
+  /// The search field's text. Filters both sections by title and category.
+  @State private var query = ""
+  /// "Show all" on the built-in section. Resets when the screen goes away.
+  @State private var showsAllBuiltIn = false
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   public init(ruleStore: RuleStore, categoryStore: CategoryStore, accounts: [NomiCore.Account] = []) {
     self.ruleStore = ruleStore
@@ -43,35 +41,55 @@ public struct RulesScreen: View {
     self.accounts = accounts
   }
 
-  private var isReordering: Bool {
-    #if os(iOS)
-    editMode.isEditing
-    #else
-    false
-    #endif
+  private var userRules: [NomiCore.Rule] { rules.filter { !$0.isSystem } }
+  private var builtInRules: [NomiCore.Rule] { rules.filter(\.isSystem) }
+
+  private var isSearching: Bool {
+    !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+
+  /// The rules a search keeps, in the order the section already holds them.
+  private func matching(_ rules: [NomiCore.Rule]) -> [NomiCore.Rule] {
+    rules.filter {
+      RuleDisplay.matchesSearch(
+        query,
+        title: RuleDisplay.title(pattern: $0.pattern),
+        categoryName: categoryName(for: $0)
+      )
+    }
   }
 
   public var body: some View {
-    Group {
-      if rules.isEmpty {
-        emptyState
+    List {
+      introSection
+      if isSearching && matching(userRules).isEmpty && matching(builtInRules).isEmpty {
+        noMatchSection
       } else {
-        rulesList
+        yoursSection
+        builtInSection
+        if !userRules.isEmpty && !isSearching {
+          noteSection
+        }
       }
+      advancedSection
     }
+    .scrollContentBackground(.hidden)
     .background(NomiColor.ground)
-    .navigationTitle("Rules")
     #if os(iOS)
+    .listStyle(.insetGrouped)
     .navigationBarTitleDisplayMode(.large)
     #endif
+    .navigationTitle("Auto-categorise")
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         Button {
           isCreating = true
         } label: {
-          NomiNavIcon(systemName: "plus")
+          Text("New rule", bundle: .module)
+            .padding(.horizontal, NomiSpacing.sm)
         }
-        .accessibilityLabel("Add rule")
+        .buttonStyle(NomiPrimaryButtonStyle(height: 44))
+        .fixedSize()
       }
     }
     .sheet(isPresented: $isCreating) {
@@ -83,47 +101,9 @@ public struct RulesScreen: View {
     .alert("Couldn't update rules", isPresented: $actionError) {
       Button("OK", role: .cancel) {}
     }
-  }
-
-  // MARK: - States
-
-  private var emptyState: some View {
-    ScrollView {
-      NomiEmptyState(
-        systemImage: "line.3.horizontal.decrease",
-        title: "No rules yet",
-        message: "A rule sets a category when a transaction's description matches its pattern.",
-        actionTitle: "Add rule"
-      ) {
-        isCreating = true
-      }
-      .padding(.top, 96)
-      .padding(.horizontal, NomiSpacing.screenGutter)
-    }
-  }
-
-  // MARK: - List
-
-  private var rulesList: some View {
-    List {
-      Section {
-        ForEach(rules) { rule in
-          row(for: rule)
-        }
-        .onMove(perform: move)
-      } header: {
-        listHeader
-      }
-    }
-    .scrollContentBackground(.hidden)
-    #if os(iOS)
-    .listStyle(.insetGrouped)
-    .environment(\.editMode, $editMode)
-    #endif
     // An alert, not a confirmationDialog: on iPhone a dialog anchored to the
     // swipe row renders as a popover with no Cancel. An alert is always a
-    // centred modal with its own Cancel. It sits on the List, not beside the
-    // error alert on the body, so the two presentations never share a node.
+    // centred modal with its own Cancel (R9b, Y7).
     .alert(
       RuleDeleteConfirmation.title,
       isPresented: Binding(
@@ -139,79 +119,162 @@ public struct RulesScreen: View {
     } message: { _ in
       Text(RuleDeleteConfirmation.message)
     }
-  }
-
-  /// 44 high: the caption on the left, the Reorder/Done text button (44 hit) on
-  /// the right. The button is iOS-only because reorder mode is a `List`
-  /// edit mode that AppKit does not have.
-  private var listHeader: some View {
-    HStack(alignment: .center, spacing: NomiSpacing.xs) {
-      Text("Order sets priority")
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.inkSecondary)
-      Spacer(minLength: NomiSpacing.xs)
-      #if os(iOS)
-      Button {
-        editMode = editMode.isEditing ? .inactive : .active
-      } label: {
-        Text(editMode.isEditing ? "Done" : "Reorder")
-          .nomiTextStyle(.rowTitle)
-          .foregroundStyle(NomiColor.navy)
-          .frame(minHeight: NomiSpacing.minTarget)
-          .padding(.horizontal, NomiSpacing.xxs)
-      }
-      #endif
+    .onDisappear {
+      showsAllBuiltIn = false
     }
-    .frame(height: NomiSpacing.navRowHeight)
   }
 
-  /// One 72-high row. The label is a `Button` that opens the editor; the
-  /// switch sits to its right in its own hit area, so the two never share a
-  /// tap. Swipe-to-delete is an accelerator and is offered only where
-  /// `RuleRowActions` says so. It is a swipe action, not `onDelete`, because
-  /// `onDelete` draws its delete minus in reorder mode too.
-  private func row(for rule: NomiCore.Rule) -> some View {
-    let categoryName = categories.first(where: { $0.id == rule.categoryID })?.name ?? "Uncategorized"
-    let scopeSummary = RuleScopeSummary.text(
-      for: rule.scope,
-      accountName: { id in accounts.first(where: { $0.id == id })?.displayName }
+  // MARK: - Sections
+
+  /// The explainer from the board, then the search field.
+  private var introSection: some View {
+    Section {
+      Text(
+        "When a payment's name contains the words on the left, Nomi files it under the category on the right. The first match from the top wins.",
+        bundle: .module
+      )
+      .nomiTextStyle(.subhead)
+      .foregroundStyle(NomiColor.inkSecondary)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .listRowBackground(Color.clear)
+      .listRowSeparator(.hidden)
+      .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+
+      NomiSearchField(prompt: "Search merchants", text: $query)
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+    }
+  }
+
+  /// "Yours · N". Its body is the user's rules, or, with none, the one note
+  /// that explains where rules come from.
+  private var yoursSection: some View {
+    Section {
+      if userRules.isEmpty {
+        if !isSearching {
+          noteRow
+        }
+      } else {
+        ForEach(matching(userRules)) { rule in
+          yourRow(rule)
+        }
+      }
+    } header: {
+      sectionHeader(String(localized: "Yours · \(userRules.count)", bundle: .module))
+    }
+  }
+
+  /// "Built in · N" with "Show all" once there are more rows than the preview
+  /// shows. A search lists every match, so the link is not needed then.
+  private var builtInSection: some View {
+    let shown = isSearching
+      ? matching(builtInRules)
+      : RuleBuiltInPreview.visible(builtInRules, showAll: showsAllBuiltIn)
+    let offersShowAll = RuleBuiltInPreview.offersShowAll(
+      total: builtInRules.count,
+      showAll: showsAllBuiltIn,
+      searching: isSearching
     )
-    return HStack(spacing: NomiSpacing.sm) {
-      Button {
-        editingRule = rule
+    return Section {
+      ForEach(shown) { rule in
+        builtInRow(rule)
+      }
+    } header: {
+      HStack(alignment: .center, spacing: NomiSpacing.xs) {
+        sectionHeader(String(localized: "Built in · \(builtInRules.count)", bundle: .module))
+        Spacer(minLength: NomiSpacing.xs)
+        if offersShowAll {
+          Button {
+            showsAllBuiltIn = true
+          } label: {
+            Text("Show all", bundle: .module)
+              .nomiTextStyle(.label)
+              .foregroundStyle(NomiColor.navy)
+              .frame(minHeight: NomiSpacing.minTarget)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+        }
+      }
+    }
+  }
+
+  /// The one note, after the built-in rules, when the user has rules of their own.
+  private var noteSection: some View {
+    Section {
+      noteRow
+    }
+  }
+
+  private var noteRow: some View {
+    NomiStatusNote(
+      String(localized: "Most of these are created for you when you turn on \"Always use this\" on a transaction.", bundle: .module),
+      tone: .ok,
+      systemImage: "sparkles"
+    )
+    .listRowBackground(Color.clear)
+    .listRowSeparator(.hidden)
+    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+  }
+
+  /// Shown in place of both sections when a search finds nothing.
+  private var noMatchSection: some View {
+    Section {
+      NomiEmptyState(
+        systemImage: "magnifyingglass",
+        title: String(localized: "No rules for “\(query.trimmingCharacters(in: .whitespacesAndNewlines))”", bundle: .module),
+        message: String(localized: "Rules are created when you turn on Always use this on a transaction.", bundle: .module)
+      )
+      .frame(maxWidth: .infinity)
+      .listRowBackground(Color.clear)
+      .listRowSeparator(.hidden)
+    }
+  }
+
+  /// "Advanced: order and patterns", last, pushing the list of raw patterns.
+  private var advancedSection: some View {
+    Section {
+      NavigationLink {
+        RulesAdvancedScreen(ruleStore: ruleStore, categoryStore: categoryStore, accounts: accounts)
       } label: {
-        VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-          Text(rule.pattern)
+        HStack(spacing: NomiSpacing.xs) {
+          Text("Advanced: order and patterns", bundle: .module)
             .nomiTextStyle(.rowTitle)
             .foregroundStyle(NomiColor.ink)
-          Text(RuleRowSubtitle.text(categoryName: categoryName, isSystem: rule.isSystem))
-            .nomiTextStyle(.footnote)
-            .foregroundStyle(NomiColor.inkSecondary)
-          if let scopeSummary {
-            Text(scopeSummary)
-              .nomiTextStyle(.footnote)
-              .foregroundStyle(NomiColor.inkSecondary)
-          }
+          Spacer(minLength: NomiSpacing.xs)
         }
-        .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
-        .contentShape(Rectangle())
+        .frame(minHeight: NomiSpacing.rowMinHeight)
       }
-      .buttonStyle(.plain)
-      .disabled(isReordering)
-      Toggle(
-        "Enable rule \(rule.pattern)",
-        isOn: Binding(
-          get: { rule.isEnabled },
-          set: { setEnabled(rule, $0) }
-        )
-      )
-      .labelsHidden()
-      .tint(NomiColor.navy)
-      .frame(minHeight: NomiSpacing.minTarget)
+      .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
     }
-    .padding(.vertical, NomiSpacing.xs)
-    .frame(minHeight: 72)
-    .listRowBackground(NomiColor.card)
+  }
+
+  private func sectionHeader(_ title: String) -> some View {
+    Text(title)
+      .nomiTextStyle(.subhead)
+      .foregroundStyle(NomiColor.dayHeader)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .accessibilityAddTraits(.isHeader)
+  }
+
+  // MARK: - Rows
+
+  /// A user rule. The row opens the editor; swipe deletes after the alert.
+  private func yourRow(_ rule: NomiCore.Rule) -> some View {
+    Button {
+      editingRule = rule
+    } label: {
+      ruleRow(rule) {
+        Image(systemName: "chevron.right")
+          .foregroundStyle(NomiColor.inkSecondary)
+          .accessibilityHidden(true)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
       if RuleRowActions.offered(isSystem: rule.isSystem).contains(.delete) {
         Button(role: .destructive) {
@@ -220,6 +283,75 @@ public struct RulesScreen: View {
           Label("Delete", systemImage: "trash")
         }
       }
+    }
+  }
+
+  /// A built-in rule. Its switch is the only control; the rule is edited under
+  /// "Order and patterns".
+  private func builtInRow(_ rule: NomiCore.Rule) -> some View {
+    let title = RuleDisplay.title(pattern: rule.pattern)
+    return ruleRow(rule) {
+      Toggle(
+        String(localized: "Enable rule \(title)", bundle: .module),
+        isOn: Binding(
+          get: { rule.isEnabled },
+          set: { setEnabled(rule, $0) }
+        )
+      )
+      .labelsHidden()
+      .tint(NomiColor.navy)
+    }
+    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+  }
+
+  /// The text, the category tag and one trailing control. At accessibility
+  /// sizes the tag moves under the text, so the title keeps its width and
+  /// the control stays on the right.
+  private func ruleRow<Trailing: View>(_ rule: NomiCore.Rule, @ViewBuilder trailing: () -> Trailing) -> some View {
+    HStack(alignment: .center, spacing: NomiSpacing.xs) {
+      if dynamicTypeSize.isAccessibilitySize {
+        VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+          ruleText(rule)
+          NomiTag(categoryName(for: rule))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+      } else {
+        ruleText(rule)
+        NomiTag(categoryName(for: rule)).fixedSize()
+      }
+      trailing()
+    }
+    .padding(.vertical, 10)
+  }
+
+  /// The title and the scope line, the two lines every rule row shows.
+  private func ruleText(_ rule: NomiCore.Rule) -> some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+      Text(RuleDisplay.title(pattern: rule.pattern))
+        .nomiTextStyle(.rowTitle)
+        .foregroundStyle(NomiColor.ink)
+      Text(scopeLine(for: rule))
+        .nomiTextStyle(.footnote)
+        .foregroundStyle(NomiColor.inkSecondary)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    // The text wins the width over the category tag at AX sizes; the tag keeps its word.
+    .layoutPriority(1)
+  }
+
+  private func categoryName(for rule: NomiCore.Rule) -> String {
+    categories.first(where: { $0.id == rule.categoryID })?.name ?? "Uncategorized"
+  }
+
+  private func scopeLine(for rule: NomiCore.Rule) -> String {
+    RuleDisplay.scopeLine(rule.scope, accountName: accountLabel(_:))
+  }
+
+  /// "HDFC ••4471" for a scoped account. Nil when the account is no longer in
+  /// the list, which `RuleDisplay.scopeLine` shows as "Unknown account".
+  private func accountLabel(_ id: UUID) -> String? {
+    accounts.first(where: { $0.id == id }).map {
+      RuleDisplay.accountLabel(institution: $0.institution, lastFour: $0.lastFour)
     }
   }
 
@@ -240,18 +372,9 @@ public struct RulesScreen: View {
       actionError = true
     }
   }
-
-  private func move(from source: IndexSet, to destination: Int) {
-    let orderedIDs = RulesReorder.orderedIDs(current: rules.map(\.id), from: source, to: destination)
-    do {
-      try ruleStore.reorder(orderedIDs)
-    } catch {
-      actionError = true
-    }
-  }
 }
 
-#Preview("Rules — default, light") {
+#Preview("Auto-categorise — default, light") {
   NavigationStack {
     RulesScreen(ruleStore: FakeRuleStore(), categoryStore: FakeCategoryStore())
   }
@@ -259,7 +382,7 @@ public struct RulesScreen: View {
   .preferredColorScheme(.light)
 }
 
-#Preview("Rules — empty, light") {
+#Preview("Auto-categorise — no rules of your own, light") {
   NavigationStack {
     RulesScreen(ruleStore: FakeRuleStore(rules: []), categoryStore: FakeCategoryStore())
   }
@@ -267,12 +390,10 @@ public struct RulesScreen: View {
   .preferredColorScheme(.light)
 }
 
-/// A container built locally to this file rather than through
-/// `EntryRulesPreviewSupport` — that file is untouched by this unit (no new
-/// `@Query`, per the design note), and its `makeRulesContainer()` seeds only
-/// user rules, none disabled.
+/// A container built locally to this file: a seeded rule, switched off, so the
+/// built-in section shows a switch in its off position.
 @MainActor
-private func makeSystemRuleDisabledContainer() -> ModelContainer {
+private func makeBuiltInDisabledContainer() -> ModelContainer {
   let container = try! ModelContainer(
     for: Schema([NomiCore.Category.self, NomiCore.Rule.self]),
     configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
@@ -287,31 +408,28 @@ private func makeSystemRuleDisabledContainer() -> ModelContainer {
   return container
 }
 
-#Preview("Rules — system rule, toggle off, light") {
+#Preview("Auto-categorise — built in, switch off, light") {
   NavigationStack {
     RulesScreen(ruleStore: FakeRuleStore(), categoryStore: FakeCategoryStore())
   }
-  .modelContainer(makeSystemRuleDisabledContainer())
+  .modelContainer(makeBuiltInDisabledContainer())
   .preferredColorScheme(.light)
 }
 
-/// Local, `Account`-inclusive container for the one preview below that needs
-/// a scoped rule (W2-M4) — `EntryRulesPreviewSupport.makeRulesContainer()`'s
-/// schema is `[Category, Rule]` with no `Account`, and widening it is that
-/// file's call, not this unit's (see `accounts`'s own note on `RulesScreen`).
+/// Local, `Account`-inclusive container so a scoped rule shows its scope line.
 @MainActor
 private func makeScopedRuleContainer() -> (container: ModelContainer, accounts: [NomiCore.Account]) {
   let container = try! ModelContainer(
     for: Schema([NomiCore.Category.self, NomiCore.Rule.self, NomiCore.Account.self]),
     configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
   )
-  let category = NomiCore.Category(name: "Shopping", symbolName: "bag", paletteSlot: 1, isSystem: true, sortIndex: 0)
-  let account = NomiCore.Account(displayName: "HDFC •• 4471", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank")
+  let category = NomiCore.Category(name: "Eating out", symbolName: "fork.knife", paletteSlot: 1, isSystem: false, sortIndex: 0)
+  let account = NomiCore.Account(displayName: "HDFC •• 4471", institution: "HDFC", lastFour: "4471", kindRaw: "bank")
   container.mainContext.insert(category)
   container.mainContext.insert(account)
   container.mainContext.insert(
     NomiCore.Rule(
-      pattern: "*AMAZON*",
+      pattern: "*BLUE TOKAI*",
       categoryID: category.id,
       priority: 0,
       scope: RuleScope(direction: .debit, accountID: account.id, minAmountMinor: 100_00, maxAmountMinor: 2000_00)
@@ -320,49 +438,11 @@ private func makeScopedRuleContainer() -> (container: ModelContainer, accounts: 
   return (container, [account])
 }
 
-#Preview("Rules — row with a scope summary, light") {
+#Preview("Auto-categorise — yours with a scope, light") {
   let fixture = makeScopedRuleContainer()
   NavigationStack {
     RulesScreen(ruleStore: FakeRuleStore(), categoryStore: FakeCategoryStore(), accounts: fixture.accounts)
   }
   .modelContainer(fixture.container)
-  .preferredColorScheme(.light)
-}
-
-private struct RulesScreenActionFailure: Error {}
-
-/// Delete, reorder, and now `setEnabled` all always throw, so swiping to
-/// delete, dragging a row, or flipping its toggle in the canvas exercises the
-/// `actionError` alert.
-///
-/// `setScope` throws too, for consistency, but nothing on this screen or the
-/// editor calls it: W2-M4's "Only when" section saves the whole rule through
-/// `update`/`create`, the same as a pattern or category edit does.
-/// `setScope` is for a scope-only write with no row for it yet (a swipe
-/// action, maybe) — see its own doc comment on `RuleStore`.
-@MainActor
-private final class AlwaysFailingRuleStore: RuleStore {
-  @discardableResult
-  func create(pattern: String, categoryID: UUID, scope: RuleScope) throws -> RuleApplyResult {
-    RuleApplyResult(matched: 0, recategorized: 0)
-  }
-
-  @discardableResult
-  func update(_ id: UUID, pattern: String, categoryID: UUID, scope: RuleScope) throws -> RuleApplyResult {
-    RuleApplyResult(matched: 0, recategorized: 0)
-  }
-
-  func setScope(_ id: UUID, _ scope: RuleScope) throws { throw RulesScreenActionFailure() }
-  func setEnabled(_ id: UUID, _ enabled: Bool) throws { throw RulesScreenActionFailure() }
-  func delete(_ id: UUID) throws { throw RulesScreenActionFailure() }
-  func reorder(_ orderedIDs: [UUID]) throws { throw RulesScreenActionFailure() }
-  func preview(pattern: String, scope: RuleScope) throws -> Int { 0 }
-}
-
-#Preview("Rules — delete or reorder fails, light") {
-  NavigationStack {
-    RulesScreen(ruleStore: AlwaysFailingRuleStore(), categoryStore: FakeCategoryStore())
-  }
-  .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
   .preferredColorScheme(.light)
 }

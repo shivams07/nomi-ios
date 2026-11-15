@@ -211,6 +211,7 @@ struct RuleEditorSheet: View {
       .pickerStyle(.menu)
       .tint(NomiColor.navy)
     }
+    .nomiCard(padding: EdgeInsets())
   }
 
   /// "Only when": Direction, Account, and one Amount row with Min and Max side
@@ -265,15 +266,14 @@ struct RuleEditorSheet: View {
     .nomiCard(padding: EdgeInsets())
   }
 
-  /// One 56 pt card row: the same chrome for the category picker and the scope
-  /// pickers.
+  /// One 56 pt row: the same layout for the category picker and the scope
+  /// pickers. It draws no card of its own (D8): the group it sits in does.
   private func fieldRow<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
     HStack(spacing: NomiSpacing.xs) {
       content()
     }
     .padding(.horizontal, NomiSpacing.sm)
     .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
-    .nomiCard(padding: EdgeInsets())
   }
 
   private var separator: some View {

@@ -47,6 +47,29 @@
         }
       }
     },
+    "%lld rows match" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld transaction matches"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld transactions match"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld subscriptions" : {
       "extractionState" : "manual",
       "localizations" : {
