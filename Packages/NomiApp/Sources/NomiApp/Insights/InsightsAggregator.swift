@@ -259,7 +259,9 @@ public enum InsightsAggregator {
       priorDebitMinor: priorRows.map { sum($0.filter { $0.isCountedSpend && $0.isDebit }) },
       priorCreditMinor: priorRows.map { sum($0.filter { $0.isCountedSpend && $0.isCredit }) },
       transactionCount: counted.count,
-      byDay: byDay(debits, calendar: calendar),
+      // I-10. Debits and credits both, so the chart can draw income on the same
+      // days as spend.
+      byDay: byDay(counted, calendar: calendar),
       byCategory: byCategory(debits, categories: categories, debitTotal: debit),
       topMerchants: topMerchants(debits, categories: categories, limit: 5),
       // Queue counts, not money counts, so they are over ALL rows. A foreign
@@ -272,7 +274,10 @@ public enum InsightsAggregator {
       uncategorizedCount: rows.filter {
         TransferRules.countsAsUncategorized(categoryID: $0.categoryID, isTransfer: $0.isTransfer)
       }.count,
-      categories: categoryBadges(categories)
+      categories: categoryBadges(categories),
+      // I-10. The like-for-like prior window's counted rows, through the same
+      // `priorRows` the prior totals read: no second fetch. `[]` with no prior.
+      priorByDay: priorRows.map { byDay($0, calendar: calendar) } ?? []
     )
   }
 
@@ -291,16 +296,27 @@ public enum InsightsAggregator {
       .map { CategoryBadge(id: $0.id, name: $0.name, symbolName: $0.symbolName, paletteSlot: $0.paletteSlot) }
   }
 
-  /// Debit only, one bucket per day that has spend, ascending. Days with no
-  /// spend are absent rather than zero — the chart draws what it is given and
-  /// a zero-filled month is a different chart.
-  static func byDay(_ debits: [LedgerRow], calendar: Calendar) -> [DayBucket] {
-    var totals: [Date: Int] = [:]
-    for row in debits {
-      totals[calendar.startOfDay(for: row.date), default: 0] += row.amountMinor
+  /// I-10. One bucket per day that has a counted row, ascending, with debit and
+  /// credit summed apart. A day with only credits keeps a bucket whose debit is
+  /// zero. A day with no counted row is absent rather than zero: the chart draws
+  /// what it is given, and a zero-filled month is a different chart.
+  ///
+  /// Filters to `isCountedSpend` itself, so a transfer or a foreign-currency row
+  /// cannot reach a bucket whichever caller passes it.
+  static func byDay(_ rows: [LedgerRow], calendar: Calendar) -> [DayBucket] {
+    var totals: [Date: (debit: Int, credit: Int)] = [:]
+    for row in rows where row.isCountedSpend {
+      let day = calendar.startOfDay(for: row.date)
+      var entry = totals[day] ?? (0, 0)
+      if row.isDebit {
+        entry.debit += row.amountMinor
+      } else if row.isCredit {
+        entry.credit += row.amountMinor
+      }
+      totals[day] = entry
     }
     return totals
-      .map { DayBucket(id: $0.key, debitMinor: $0.value) }
+      .map { DayBucket(id: $0.key, debitMinor: $0.value.debit, creditMinor: $0.value.credit) }
       .sorted { $0.id < $1.id }
   }
 
@@ -351,19 +367,27 @@ public enum InsightsAggregator {
     categories: [UUID: CategoryRef],
     limit: Int
   ) -> [MerchantTotal] {
-    var totals: [String: (label: String, amount: Int)] = [:]
+    var totals: [String: (label: String, amount: Int, count: Int)] = [:]
     for row in debits {
       let key = row.normalizedDescription.isEmpty
         ? "blank:\(row.categoryID?.uuidString ?? "uncategorized")"
         : row.normalizedDescription
       let label = merchantLabel(row, categoryName: row.categoryID.flatMap { categories[$0]?.name })
-      let running = totals[key]?.amount ?? 0
+      let running = totals[key]
       // First label wins, so the rollup's name does not depend on fetch order.
-      totals[key] = (totals[key]?.label ?? label, running + row.amountMinor)
+      totals[key] = (
+        running?.label ?? label,
+        (running?.amount ?? 0) + row.amountMinor,
+        (running?.count ?? 0) + 1
+      )
     }
 
     return totals
-      .map { MerchantTotal(id: $0.key, label: $0.value.label, totalMinor: $0.value.amount) }
+      .map {
+        // I-10. `count` is the rows folded into this total.
+        MerchantTotal(
+          id: $0.key, label: $0.value.label, totalMinor: $0.value.amount, count: $0.value.count)
+      }
       .sorted(by: descendingByAmount(\.totalMinor, then: \.label))
       .prefix(limit)
       .map { $0 }
@@ -498,7 +522,8 @@ public enum InsightsAggregator {
         // a rupee figure. Foreign rows reach the extractor with no account, but
         // a user can bind one from the review queue, so this cannot rely on
         // them staying unowned.
-        let owned = (byAccount[account.id] ?? []).filter(\.isINR)
+        let every = byAccount[account.id] ?? []
+        let owned = every.filter(\.isINR)
         let credit = sum(owned.filter(\.isCredit))
         let debit = sum(owned.filter(\.isDebit))
         return AccountSummary(
@@ -508,7 +533,10 @@ public enum InsightsAggregator {
           lastFour: account.lastFour,
           kindRaw: account.kindRaw,
           trackedBalanceMinor: (account.openingBalanceMinor ?? 0) + credit - debit,
-          transactionCount: owned.count,
+          // D25. Every row the account owns, in any currency and transfers
+          // included: the count of what the ledger holds against it. The money
+          // above stays rupee-only, and `trackingSince` stays on the rupee rows.
+          transactionCount: every.count,
           trackingSince: owned.map(\.date).min(),
           isArchived: account.isArchived,
           // Read back, not re-derived: it is already inside

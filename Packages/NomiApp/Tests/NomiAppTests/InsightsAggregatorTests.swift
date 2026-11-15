@@ -831,6 +831,103 @@ final class InsightsAggregatorTests: XCTestCase {
     XCTAssertEqual(insights.categories, [])
     XCTAssertEqual(insights.byCategory.count, 1, "control: the row itself was counted")
   }
+
+  // MARK: - I-10 insights reads (B1)
+
+  private func insightsOf(_ rows: [LedgerRow]) -> PeriodInsights {
+    InsightsAggregator.insights(
+      period: .month(year: 2026, month: 11), rows: rows, categories: [:], priorRows: nil,
+      calendar: calendar)
+  }
+
+  /// I-10. Credits join the day buckets, summed apart from debits, so a day
+  /// with one of each is one bucket that carries both figures.
+  func testByDayCarriesCreditsSeparately() {
+    let insights = insightsOf([
+      row(500, .debit, on: date(2026, 11, 3)),
+      row(300, .credit, on: date(2026, 11, 3)),
+    ])
+
+    XCTAssertEqual(insights.byDay.count, 1)
+    XCTAssertEqual(insights.byDay.first?.debitMinor, 500)
+    XCTAssertEqual(insights.byDay.first?.creditMinor, 300)
+  }
+
+  /// A salary day with no spend is still a day that has counted rows, so it
+  /// keeps a bucket; its debit is zero, not absent.
+  func testACreditOnlyDayHasABucketWithNoDebit() {
+    let insights = insightsOf([row(40_000, .credit, on: date(2026, 11, 1))])
+
+    XCTAssertEqual(insights.byDay.count, 1)
+    XCTAssertEqual(insights.byDay.first?.debitMinor, 0)
+    XCTAssertEqual(insights.byDay.first?.creditMinor, 40_000)
+  }
+
+  /// DEC-05 holds for the day buckets on both sides: a transfer is neither spend
+  /// nor income, so it cannot put a day on the chart.
+  func testTransfersStayOutOfByDay() {
+    let insights = insightsOf([
+      row(700, .debit, on: date(2026, 11, 3), transfer: true),
+      row(900, .credit, on: date(2026, 11, 4), transfer: true),
+    ])
+
+    XCTAssertTrue(insights.byDay.isEmpty)
+  }
+
+  /// `byDay` filters for itself, so a caller that hands it raw rows cannot put a
+  /// foreign-currency row or a transfer on the chart.
+  func testByDayFiltersToCountedRowsItself() {
+    let buckets = InsightsAggregator.byDay(
+      [
+        row(900, .debit, on: date(2026, 11, 3), currency: "USD"),
+        row(700, .debit, on: date(2026, 11, 3), transfer: true),
+        row(300, .credit, on: date(2026, 11, 3)),
+      ],
+      calendar: calendar)
+
+    XCTAssertEqual(buckets.count, 1)
+    XCTAssertEqual(buckets.first?.debitMinor, 0)
+    XCTAssertEqual(buckets.first?.creditMinor, 300)
+  }
+
+  /// I-10. `MerchantTotal.count` is the number of rows folded into the total,
+  /// which a merchant list needs to say "3 transactions" rather than guess.
+  func testMerchantTotalCountsRows() {
+    let insights = insightsOf([
+      row(100, .debit, on: date(2026, 11, 1), normalized: "OLA", merchant: "Ola"),
+      row(200, .debit, on: date(2026, 11, 2), normalized: "OLA", merchant: "Ola"),
+      row(300, .debit, on: date(2026, 11, 3), normalized: "OLA", merchant: "Ola"),
+    ])
+
+    XCTAssertEqual(insights.topMerchants.first?.label, "Ola")
+    XCTAssertEqual(insights.topMerchants.first?.totalMinor, 600)
+    XCTAssertEqual(insights.topMerchants.first?.count, 3)
+  }
+
+  /// D25. `AccountSummary.transactionCount` counts every row the account owns,
+  /// in any currency and transfers included. The tracked balance is unchanged:
+  /// it is still the rupee sum, so the foreign row and the transfer leg move
+  /// the count and not the balance's rupee arithmetic.
+  func testAccountCountIncludesForeignAndTransferRows() {
+    let icici = UUID()
+    let accounts = [
+      AccountRef(
+        id: icici, displayName: "ICICI", institution: "ICICI Bank", lastFour: "8890",
+        kindRaw: "card", isArchived: false)
+    ]
+    let inr = row(10_000, .credit, on: date(2026, 11, 2), account: icici)
+    let usd = row(5_000, .debit, on: date(2026, 11, 3), account: icici, currency: "USD")
+    let leg = row(2_000, .debit, on: date(2026, 11, 4), account: icici, transfer: true)
+
+    let base = InsightsAggregator.accountSummaries(
+      accounts: accounts, rows: [inr, leg], includeArchived: false)
+    let full = InsightsAggregator.accountSummaries(
+      accounts: accounts, rows: [inr, usd, leg], includeArchived: false)
+
+    XCTAssertEqual(full.first?.transactionCount, 3)
+    XCTAssertEqual(full.first?.trackedBalanceMinor, 8_000)
+    XCTAssertEqual(full.first?.trackedBalanceMinor, base.first?.trackedBalanceMinor)
+  }
 }
 
 /// UI refresh P1, the half the tests above cannot reach. `CategoryRef` defaults
@@ -972,4 +1069,5 @@ final class InsightsStoreSymbolNameTests: XCTestCase {
       "and the stored column is legible off the summary, not only folded into the sum")
     XCTAssertNil(summaries.first(where: { $0.id == without.id })?.openingBalanceMinor)
   }
+
 }
