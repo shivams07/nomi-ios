@@ -1,56 +1,130 @@
 import Foundation
 import NomiCore
 import XCTest
+
 @testable import NomiUI
 
+/// S1a. The hero's label and its comparison chip. The chip's words come from
+/// `NomiComparisonCopy` (F2a), so these tests check the chip delegates to it
+/// and pin only what the hero adds: which figure, which direction, and when
+/// there is nothing to state.
 final class HeroTotalCardTests: XCTestCase {
-  func testDeltaIsNilWithNoPriorPeriod() {
-    XCTAssertNil(HeroDelta.compute(current: 1000, prior: nil))
+  private func insights(
+    debit: Int,
+    credit: Int = 0,
+    priorDebit: Int?,
+    priorCredit: Int? = nil,
+    period: InsightPeriod = .month(year: 2026, month: 11)
+  ) -> PeriodInsights {
+    PeriodInsights(
+      period: period,
+      debitMinor: debit,
+      creditMinor: credit,
+      netMinor: credit - debit,
+      priorDebitMinor: priorDebit,
+      priorCreditMinor: priorCredit,
+      transactionCount: 0,
+      byDay: [],
+      byCategory: [],
+      topMerchants: [],
+      needsReviewCount: 0,
+      uncategorizedCount: 0
+    )
   }
 
-  /// D27: a whole-rupee delta drops ".00", as the Insights chip does.
-  func testChipCopyDropsWholeRupeeDecimals() {
-    let result = HeroDelta.Result(deltaMinor: 1_485_500, isIncrease: false)
-    XCTAssertEqual(HeroDelta.chipCopy(result), "down ₹14,855 vs last period")
+  // MARK: - Label per kind and basis
+
+  func testLabelNamesTheKindAndTheMonth() {
+    XCTAssertEqual(HeroTotalCard.label(kind: .spent, period: .month(year: 2026, month: 11)), "Spent this month")
+    XCTAssertEqual(HeroTotalCard.label(kind: .income, period: .month(year: 2026, month: 11)), "Received this month")
   }
 
-  /// D27: a delta with paise keeps its decimals.
-  func testChipCopyKeepsPaise() {
-    let result = HeroDelta.Result(deltaMinor: 1_485_550, isIncrease: false)
-    XCTAssertEqual(HeroDelta.chipCopy(result), "down ₹14,855.50 vs last period")
+  func testLabelSaysThisYearForAFinancialYear() {
+    XCTAssertEqual(HeroTotalCard.label(kind: .spent, period: .financialYear(startingYear: 2026)), "Spent this year")
+    XCTAssertEqual(HeroTotalCard.label(kind: .income, period: .financialYear(startingYear: 2026)), "Received this year")
   }
 
-  /// Indian grouping: ₹1,48,200 groups by the lakh, as the rest of the app does.
-  func testChipCopyUsesLakhGrouping() {
-    let result = HeroDelta.Result(deltaMinor: 14_820_000, isIncrease: true)
-    XCTAssertEqual(HeroDelta.chipCopy(result), "up ₹1,48,200 vs last period")
+  func testLabelFallsBackToThisPeriodForOtherPeriods() {
+    XCTAssertEqual(HeroTotalCard.label(kind: .spent, period: .trailingMonths(3)), "Spent this period")
   }
 
-  /// v5: a zero prior is a real prior — the delta is the whole current
-  /// figure, not `nil`.
-  func testZeroPriorIsARealPriorNotNil() {
-    let delta = HeroDelta.compute(current: 1000, prior: 0)
-    XCTAssertEqual(delta?.deltaMinor, 1000)
-    XCTAssertEqual(delta?.isIncrease, true)
+  // MARK: - Chip delegates to NomiComparisonCopy
+
+  /// The chip text is `NomiComparisonCopy.line`, unchanged. The hero does not
+  /// write its own words for it.
+  func testSpentChipTextIsNomiComparisonCopy() {
+    let current = insights(debit: 35_318_00, priorDebit: 50_173_00)
+    let chip = HeroComparison.chip(kind: .spent, insights: current, priorLabel: "October")
+    XCTAssertEqual(
+      chip?.text,
+      NomiComparisonCopy.line(kind: .spent, currentMinor: 35_318_00, priorMinor: 50_173_00, priorLabel: "October")
+    )
+    XCTAssertEqual(chip?.text, "₹14,855 less than October")
   }
 
-  func testDeltaFlagsIncreaseWhenCurrentExceedsPrior() {
-    let delta = HeroDelta.compute(current: 1200, prior: 1000)
-    XCTAssertEqual(delta?.isIncrease, true)
-    XCTAssertEqual(delta?.deltaMinor, 200)
+  /// The artboard's chip carries a down arrow when the figure is lower.
+  func testALowerFigureCarriesADownDirection() {
+    let current = insights(debit: 35_318_00, priorDebit: 50_173_00)
+    let chip = HeroComparison.chip(kind: .spent, insights: current, priorLabel: "October")
+    XCTAssertEqual(chip?.direction, .down)
   }
 
-  func testDeltaFlagsDecreaseWhenCurrentIsBelowPrior() {
-    let delta = HeroDelta.compute(current: 800, prior: 1000)
-    XCTAssertEqual(delta?.isIncrease, false)
-    XCTAssertEqual(delta?.deltaMinor, -200)
+  func testAHigherFigureCarriesAnUpDirection() {
+    let current = insights(debit: 900_00, priorDebit: 400_00)
+    let chip = HeroComparison.chip(kind: .spent, insights: current, priorLabel: "October")
+    XCTAssertEqual(chip?.text, "₹500 more than October")
+    XCTAssertEqual(chip?.direction, .up)
   }
 
-  func testDeltaEqualToPriorCountsAsIncrease() {
-    let delta = HeroDelta.compute(current: 1000, prior: 1000)
-    XCTAssertEqual(delta?.isIncrease, true)
-    XCTAssertEqual(delta?.deltaMinor, 0)
+  func testAnEqualFigureReadsSameAsWithNoDirection() {
+    let current = insights(debit: 400_00, priorDebit: 400_00)
+    let chip = HeroComparison.chip(kind: .spent, insights: current, priorLabel: "October")
+    XCTAssertEqual(chip?.text, "Same as October")
+    XCTAssertNil(chip?.direction)
   }
+
+  /// An empty earlier month is not compared as if it were a figure of zero:
+  /// the copy says there was nothing to compare with.
+  func testAZeroPriorReadsNothingSpentToCompare() {
+    let current = insights(debit: 500_00, priorDebit: 0)
+    let chip = HeroComparison.chip(kind: .spent, insights: current, priorLabel: "October")
+    XCTAssertEqual(chip?.text, "Nothing spent in October to compare")
+    XCTAssertNil(chip?.direction)
+  }
+
+  func testAZeroIncomePriorReadsNothingReceivedToCompare() {
+    let current = insights(debit: 0, credit: 1_000_00, priorDebit: 0, priorCredit: 0)
+    let chip = HeroComparison.chip(kind: .income, insights: current, priorLabel: "October")
+    XCTAssertEqual(chip?.text, "Nothing received in October to compare")
+  }
+
+  /// No earlier period at all: nothing to say, so no chip.
+  func testNoChipWithoutAnEarlierPeriod() {
+    let current = insights(debit: 500_00, priorDebit: nil)
+    XCTAssertNil(HeroComparison.chip(kind: .spent, insights: current, priorLabel: "October"))
+  }
+
+  /// FR1, kept: zero against a zero prior is the first-run Home, which draws no chip.
+  func testNoChipForZeroAgainstZero() {
+    let current = insights(debit: 0, priorDebit: 0)
+    XCTAssertNil(HeroComparison.chip(kind: .spent, insights: current, priorLabel: "October"))
+  }
+
+  /// The Income line with no credits this month and none before has no chip either.
+  func testIncomeWithNoCreditsHasNoChip() {
+    let current = insights(debit: 300_00, credit: 0, priorDebit: 200_00, priorCredit: 0)
+    XCTAssertNil(HeroComparison.chip(kind: .income, insights: current, priorLabel: "October"))
+  }
+
+  /// The Income line compares credits, not debits.
+  func testIncomeChipComparesCredits() {
+    let current = insights(debit: 100_00, credit: 900_00, priorDebit: 100_00, priorCredit: 300_00)
+    let chip = HeroComparison.chip(kind: .income, insights: current, priorLabel: "October")
+    XCTAssertEqual(chip?.text, "₹600 more than October")
+    XCTAssertEqual(chip?.direction, .up)
+  }
+
+  // MARK: - Count-up, kept from v5
 
   func testReduceMotionRendersFinalValueImmediately() {
     XCTAssertEqual(HeroCountUp.initialDisplayValue(target: 42_318_00, reduceMotion: true), 42_318_00)
@@ -58,175 +132,5 @@ final class HeroTotalCardTests: XCTestCase {
 
   func testMotionEnabledStartsFromZeroForCountUp() {
     XCTAssertEqual(HeroCountUp.initialDisplayValue(target: 42_318_00, reduceMotion: false), 0)
-  }
-
-  func testTilesRenderBothIncomeAndExpenseFiguresFromPeriodInsights() {
-    let insights = PeriodInsights(
-      period: .month(year: 2026, month: 8),
-      debitMinor: 42_318_00,
-      creditMinor: 60_000_00,
-      netMinor: 17_682_00,
-      priorDebitMinor: 38_000_00,
-      priorCreditMinor: 55_000_00,
-      transactionCount: 74,
-      byDay: [],
-      byCategory: [],
-      topMerchants: [],
-      needsReviewCount: 0,
-      uncategorizedCount: 0
-    )
-
-    let tiles = HeroIncomeExpense.tiles(for: insights)
-
-    XCTAssertEqual(tiles.count, 2)
-    XCTAssertEqual(
-      tiles.first { $0.title == "Income" }?.amountText,
-      NomiFormatters.amountString(minor: 60_000_00)
-    )
-    XCTAssertEqual(
-      tiles.first { $0.title == "Expenses" }?.amountText,
-      NomiFormatters.amountString(minor: 42_318_00)
-    )
-  }
-
-  private func day(_ offset: Int) -> Date {
-    Date(timeIntervalSince1970: TimeInterval(offset * 86_400))
-  }
-
-  func testSparklineLastPointEqualsSumOfByDay() {
-    let byDay = [
-      DayBucket(id: day(0), debitMinor: 100),
-      DayBucket(id: day(1), debitMinor: 250),
-      DayBucket(id: day(2), debitMinor: 50),
-    ]
-    XCTAssertEqual(HeroSparkline.points(byDay: byDay).last, 400)
-  }
-
-  func testSparklineIsEmptyWithFewerThanTwoBuckets() {
-    XCTAssertTrue(HeroSparkline.points(byDay: [DayBucket(id: day(0), debitMinor: 100)]).isEmpty)
-    XCTAssertTrue(HeroSparkline.points(byDay: []).isEmpty)
-  }
-
-  func testSparklineSortsUnsortedInputByDay() {
-    let byDay = [
-      DayBucket(id: day(2), debitMinor: 50),
-      DayBucket(id: day(0), debitMinor: 100),
-      DayBucket(id: day(1), debitMinor: 250),
-    ]
-    XCTAssertEqual(HeroSparkline.points(byDay: byDay), [100, 350, 400])
-  }
-
-  // MARK: - HM1: the date axis, the flat zero state, the VoiceOver value, the
-  // ticks and the chip copy. Pure helpers, so XCTest here (V3) and not a
-  // harness file: `HeroSparkline` imports Charts.
-
-  private func calendarDay(_ year: Int, _ month: Int, _ dayOfMonth: Int) -> Date {
-    var components = DateComponents()
-    components.year = year
-    components.month = month
-    components.day = dayOfMonth
-    components.hour = 12
-    return Calendar.current.date(from: components)!
-  }
-
-  func testSamplesStepFromZeroAndHoldTheTotalToThePeriodEnd() {
-    let range = dateRange(for: .month(year: 2026, month: 2), calendar: .current)
-    let byDay = [
-      DayBucket(id: calendarDay(2026, 2, 10), debitMinor: 250),
-      DayBucket(id: calendarDay(2026, 2, 3), debitMinor: 100),
-    ]
-    let samples = HeroSparkline.samples(byDay: byDay, range: range)
-    XCTAssertEqual(samples.count, 4)
-    XCTAssertEqual(samples.first, HeroSparkline.Sample(date: range.lowerBound, total: 0))
-    XCTAssertEqual(samples[1].total, 100)
-    XCTAssertEqual(samples[2].total, 350)
-    XCTAssertEqual(samples.last, HeroSparkline.Sample(date: range.upperBound, total: 350))
-  }
-
-  func testSamplesAreEmptyWithFewerThanTwoSpendDaysSoTheFlatLineDraws() {
-    let range = dateRange(for: .month(year: 2026, month: 2), calendar: .current)
-    XCTAssertTrue(HeroSparkline.samples(byDay: [], range: range).isEmpty)
-    XCTAssertTrue(
-      HeroSparkline.samples(byDay: [DayBucket(id: calendarDay(2026, 2, 3), debitMinor: 100)], range: range).isEmpty
-    )
-  }
-
-  func testAccessibilityValueNamesTheLastSpendDayAndTheTotal() {
-    let byDay = [
-      DayBucket(id: calendarDay(2026, 2, 3), debitMinor: 100),
-      DayBucket(id: calendarDay(2026, 2, 10), debitMinor: 250),
-    ]
-    XCTAssertEqual(HeroSparkline.accessibilityValue(byDay: byDay), "Highest on day 10, ₹3.50")
-    XCTAssertEqual(HeroSparkline.accessibilityValue(byDay: []), "No spending this period")
-  }
-
-  func testMonthTicksAreDayNumbersAndFollowLeapFebruary() {
-    let february2026 = HeroSparkline.tickLabels(for: .month(year: 2026, month: 2))
-    XCTAssertEqual(february2026.first, "1")
-    XCTAssertEqual(february2026.last, "28")
-    XCTAssertEqual(HeroSparkline.tickLabels(for: .month(year: 2024, month: 2)).last, "29")
-  }
-
-  func testFinancialYearTicksNameTheMonth() {
-    let fy = HeroSparkline.tickLabels(for: .financialYear(startingYear: 2026))
-    XCTAssertEqual(fy.first, "1 Apr")
-    XCTAssertEqual(fy.last, "31 Mar")
-  }
-
-  // MARK: - FR1: when the chip is shown at all. Zero against zero is the
-  // first-run Home (no transactions, no prior period) and must draw no chip.
-  // A zero delta has no direction, so it never prints "up ₹0.00".
-
-  func testChipHiddenWhenZeroAgainstZeroPrior() {
-    XCTAssertNil(HeroDelta.visibleDelta(current: 0, prior: 0))
-  }
-
-  func testChipHiddenWhenThereIsNoPriorPeriod() {
-    XCTAssertNil(HeroDelta.visibleDelta(current: 0, prior: nil))
-    XCTAssertNil(HeroDelta.visibleDelta(current: 500_00, prior: nil))
-  }
-
-  func testChipShownAsUpWhenPriorIsZeroAndCurrentIsNonZero() {
-    let delta = HeroDelta.visibleDelta(current: 500_00, prior: 0)
-    XCTAssertEqual(delta?.isIncrease, true)
-    XCTAssertEqual(delta?.deltaMinor, 500_00)
-    XCTAssertEqual(HeroDelta.chipCopy(delta!), "up ₹500 vs last period")
-  }
-
-  func testChipShownAsDownWhenCurrentIsZeroAndPriorIsNonZero() {
-    let delta = HeroDelta.visibleDelta(current: 0, prior: 500_00)
-    XCTAssertEqual(delta?.isIncrease, false)
-    XCTAssertEqual(delta?.deltaMinor, -500_00)
-    XCTAssertEqual(HeroDelta.chipCopy(delta!), "down ₹500 vs last period")
-  }
-
-  func testChipShownForNonZeroAgainstNonZeroDifferentFigures() {
-    let up = HeroDelta.visibleDelta(current: 1_200_00, prior: 1_000_00)
-    XCTAssertEqual(HeroDelta.chipCopy(up!), "up ₹200 vs last period")
-    let down = HeroDelta.visibleDelta(current: 800_00, prior: 1_000_00)
-    XCTAssertEqual(HeroDelta.chipCopy(down!), "down ₹200 vs last period")
-  }
-
-  func testChipHiddenWhenDeltaIsExactlyZeroWithData() {
-    XCTAssertNil(HeroDelta.visibleDelta(current: 1_000_00, prior: 1_000_00))
-  }
-
-  /// Rounding: amounts are integer minor units and the delta is exact, so a
-  /// one-paisa difference is a real change. It must show, and must not be
-  /// rounded to the zero case that hides the chip.
-  func testOnePaisaDeltaIsShownNotRoundedAway() {
-    let up = HeroDelta.visibleDelta(current: 1, prior: 0)
-    XCTAssertEqual(up?.deltaMinor, 1)
-    XCTAssertEqual(HeroDelta.chipCopy(up!), "up ₹0.01 vs last period")
-    let down = HeroDelta.visibleDelta(current: 100, prior: 101)
-    XCTAssertEqual(down?.isIncrease, false)
-    XCTAssertEqual(HeroDelta.chipCopy(down!), "down ₹0.01 vs last period")
-  }
-
-  func testChipCopyReadsTheDirectionAsAWord() {
-    let up = HeroDelta.compute(current: 64_824_24, prior: 58_404_00)!
-    XCTAssertEqual(HeroDelta.chipCopy(up), "up ₹6,420.24 vs last period")
-    let down = HeroDelta.compute(current: 1_000_00, prior: 1_500_00)!
-    XCTAssertEqual(HeroDelta.chipCopy(down), "down ₹500 vs last period")
   }
 }
