@@ -17,6 +17,9 @@ struct AccountCreateSheet: View {
   @State private var institution = ""
   @State private var lastFour = ""
   @State private var kindRaw = AccountKindOptions.defaultKind
+  /// S8 step 6. As typed. Empty means no opening balance; a leading minus is an
+  /// overdrawn bank or an owed card, as the footer below says.
+  @State private var openingBalanceText = ""
   @State private var errorMessage: String?
 
   init(accountStore: AccountStore, onCreated: ((UUID) -> Void)? = nil) {
@@ -25,7 +28,7 @@ struct AccountCreateSheet: View {
   }
 
   private var canSave: Bool {
-    AccountCreateFormGate.isValid(displayName: displayName, lastFour: lastFour)
+    AccountCreateFormGate.canSave(displayName: displayName, lastFour: lastFour, openingBalanceText: openingBalanceText)
   }
 
   var body: some View {
@@ -48,11 +51,30 @@ struct AccountCreateSheet: View {
                 .keyboardType(.numberPad)
                 #endif
             }
-            AccountFieldRow(label: "Kind", showsDivider: false) {
+            AccountFieldRow(label: "Kind") {
               AccountKindControl(kindRaw: $kindRaw)
+            }
+            AccountFieldRow(label: "Opening balance (optional)", showsDivider: false) {
+              TextField("Opening balance", text: $openingBalanceText, prompt: Text("0.00").foregroundStyle(NomiColor.placeholder))
+                .accountFieldText()
+                #if os(iOS)
+                .keyboardType(.numbersAndPunctuation)
+                #endif
             }
           }
           .nomiCard(padding: EdgeInsets())
+
+          if let hint = AccountCreateFormGate.openingBalanceHint(openingBalanceText) {
+            Text(hint)
+              .nomiTextStyle(.caption)
+              .foregroundStyle(NomiColor.error)
+              .padding(.horizontal, NomiSpacing.xxs)
+          }
+
+          Text(AccountBalanceDisplay.openingBalanceFooter(kind: AccountKindOptions.kind(raw: kindRaw)))
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.inkSecondary)
+            .padding(.horizontal, NomiSpacing.xxs)
 
           if let errorMessage {
             Text(errorMessage)
@@ -86,11 +108,13 @@ struct AccountCreateSheet: View {
   private func save() {
     guard canSave else { return }
     do {
-      let created = try accountStore.create(
-        displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines),
-        institution: institution.trimmingCharacters(in: .whitespacesAndNewlines),
+      let created = try AccountCreateAction.perform(
+        store: accountStore,
+        displayName: displayName,
+        institution: institution,
         lastFour: lastFour,
-        kindRaw: kindRaw
+        kindRaw: kindRaw,
+        openingBalanceText: openingBalanceText
       )
       onCreated?(created.id)
       dismiss()

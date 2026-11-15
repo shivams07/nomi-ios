@@ -63,6 +63,6 @@ enum AccountBalanceDisplay {
   }
 
   /// The archive confirmation (DEC-06): the existing line, then what archiving
-  /// does to the Tracked balance.
-  static let archiveMessage = "Transactions are kept. You can unarchive this account anytime. Archived accounts are left out of your Tracked balance. Their transactions stay in your history and totals."
+  /// does to the Estimated balance.
+  static let archiveMessage = "Transactions are kept. You can unarchive this account anytime. Archived accounts are left out of your Estimated balance. Their transactions stay in your history and totals."
 }

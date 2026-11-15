@@ -1,5 +1,6 @@
 import Foundation
 import NomiCore
+import NomiPreview
 import XCTest
 @testable import NomiUI
 
@@ -30,6 +31,13 @@ final class TrackedBalanceCaptionTests: XCTestCase {
     let caption = TrackedBalanceCaption.sinceText(Date())
     XCTAssertNotNil(caption)
     XCTAssertTrue(caption!.hasPrefix("since "))
+  }
+
+  /// The rename sheet prints "Tracked " before this, so the caption must not carry its own
+  /// "tracked" (it once did, and the sheet read "Tracked tracked since"). The year stays.
+  func testSinceCaptionDoesNotRepeatTrackedAndKeepsTheYear() {
+    let date = Calendar.current.date(from: DateComponents(year: 2026, month: 9, day: 28, hour: 12))!
+    XCTAssertEqual(TrackedBalanceCaption.sinceText(date), "since 28 Sep 2026")
   }
 }
 
@@ -255,7 +263,7 @@ final class AccountDeleteRoutingTests: XCTestCase {
   /// The alert the route leads to carries the DEC-06 disclosure.
   func testTheArchiveAlertCarriesTheDisclosure() {
     XCTAssertTrue(AccountBalanceDisplay.archiveMessage.contains(
-      "Archived accounts are left out of your Tracked balance."
+      "Archived accounts are left out of your Estimated balance."
     ))
   }
 }
@@ -266,5 +274,278 @@ final class AccountKindControlTests: XCTestCase {
   func testEachSegmentIsAtLeastTheMinimumTapHeight() {
     XCTAssertGreaterThanOrEqual(AccountKindControl.segmentHeight, NomiSpacing.minTarget)
     XCTAssertEqual(NomiSpacing.minTarget, 44)
+  }
+}
+
+// MARK: - S8: the card look, its text, the header, the note and the create path
+
+final class NomiAccountCardStyleTests: XCTestCase {
+  func testEachKindHasItsOwnLook() {
+    XCTAssertEqual(NomiAccountCardStyle.of(kind: .bank), .moss)
+    XCTAssertEqual(NomiAccountCardStyle.of(kind: .card), .black)
+    XCTAssertEqual(NomiAccountCardStyle.of(kind: .wallet), .paper)
+  }
+
+  /// nomi.css `.pcard.moss` and `.pcard.black`, in the order the gradient runs.
+  func testGradientStopsAreTheCanvasStops() {
+    XCTAssertEqual(NomiAccountCardStyle.moss.gradientStops, [0x22392A, 0x3C5A38, 0x587C50])
+    XCTAssertEqual(NomiAccountCardStyle.black.gradientStops, [0x232723, 0x0C0F0C, 0x1A1D1A])
+  }
+
+  /// Text on a moss or black card is white, so every stop must hold 4.5:1 against it.
+  func testWhiteTextOnEveryMossAndBlackStopMeetsContrast() {
+    for style in [NomiAccountCardStyle.moss, .black] {
+      for stop in style.gradientStops {
+        XCTAssertGreaterThanOrEqual(
+          NomiContrast.ratio(0xFFFFFF, stop), 4.5,
+          "white on \(String(stop, radix: 16)) in \(style)"
+        )
+      }
+    }
+  }
+
+  /// The wallet is paper: no gradient, ink text.
+  func testPaperHasNoGradientAndInkText() {
+    XCTAssertTrue(NomiAccountCardStyle.paper.gradientStops.isEmpty)
+    XCTAssertEqual(NomiAccountCardStyle.paper.foregroundHex, 0x111411)
+    XCTAssertEqual(NomiAccountCardStyle.moss.foregroundHex, 0xFFFFFF)
+  }
+}
+
+final class AccountCardTextTests: XCTestCase {
+  func testTitleIsTheInstitutionWhenThereIsOne() {
+    XCTAssertEqual(AccountCardText.title(institution: "HDFC Bank", displayName: "HDFC Savings"), "HDFC Bank")
+  }
+
+  func testTitleFallsBackToTheDisplayNameWithoutAnInstitution() {
+    XCTAssertEqual(AccountCardText.title(institution: "", displayName: "Cash drawer"), "Cash drawer")
+  }
+
+  /// Different from the institution: the name gets the second line.
+  func testSubtitleIsTheDisplayNameWhenItDiffersFromTheInstitution() {
+    XCTAssertEqual(
+      AccountCardText.subtitle(institution: "HDFC Bank", displayName: "HDFC Savings", kind: .bank),
+      "HDFC Savings"
+    )
+  }
+
+  /// Equal to the institution: the title already says it, so the kind label goes second.
+  func testSubtitleIsTheKindLabelWhenTheNameEqualsTheInstitution() {
+    XCTAssertEqual(
+      AccountCardText.subtitle(institution: "HDFC Bank", displayName: "HDFC Bank", kind: .bank),
+      "Bank account"
+    )
+  }
+
+  /// No institution: the name is already the title, so the kind label goes second.
+  func testSubtitleIsTheKindLabelWhenTheInstitutionIsEmpty() {
+    XCTAssertEqual(
+      AccountCardText.subtitle(institution: "", displayName: "Cash drawer", kind: .wallet),
+      "Cash"
+    )
+  }
+
+  func testKindLabelsMatchTheArtboardWords() {
+    XCTAssertEqual(AccountCardText.kindLabel(.bank), "Bank account")
+    XCTAssertEqual(AccountCardText.kindLabel(.card), "Credit card")
+    XCTAssertEqual(AccountCardText.kindLabel(.wallet), "Cash")
+  }
+
+  func testLastFourIsMaskedAndAbsentWhenEmpty() {
+    XCTAssertEqual(AccountCardText.lastFourLine("4471"), "•••• 4471")
+    XCTAssertNil(AccountCardText.lastFourLine(""))
+  }
+}
+
+final class AccountCardAccessibilityTests: XCTestCase {
+  func testBankLabelNamesTheAccountEndingAndTheEstimatedBalance() {
+    XCTAssertEqual(
+      AccountCardAccessibility.label(displayName: "HDFC Savings", lastFour: "4471", kind: .bank, trackedMinor: 1_15_271_00),
+      "HDFC Savings, account ending 4471, estimated balance 1,15,271 rupees"
+    )
+  }
+
+  func testWalletLabelOmitsAnAccountEndingWhenThereIsNoLastFour() {
+    XCTAssertEqual(
+      AccountCardAccessibility.label(displayName: "Paytm wallet", lastFour: "", kind: .wallet, trackedMinor: 3_410_00),
+      "Paytm wallet, estimated balance 3,410 rupees"
+    )
+  }
+
+  /// A card below zero is owed, and the label says so rather than reading a minus.
+  func testOwedCardLabelSpeaksTheAmountOwed() {
+    XCTAssertEqual(
+      AccountCardAccessibility.label(displayName: "ICICI Credit Card", lastFour: "9012", kind: .card, trackedMinor: -200_00),
+      "ICICI Credit Card, account ending 9012, 200 rupees owed"
+    )
+  }
+
+  func testPaiseAreSpokenWhenThereAreAny() {
+    XCTAssertEqual(AccountCardAccessibility.spokenRupees(minor: 1_234_50), "1,234.50")
+  }
+}
+
+final class AccountsHeaderTests: XCTestCase {
+  func testHeaderWithoutATrackingDateIsJustTheLabel() {
+    XCTAssertEqual(AccountsHeader.line(trackedSince: nil), "Estimated balance")
+  }
+
+  /// Any month works; October keeps the expected string free of a month name's locale quirks.
+  func testHeaderNamesTheDayTrackingStarted() {
+    let date = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 1, hour: 12))!
+    XCTAssertEqual(AccountsHeader.line(trackedSince: date), "Estimated balance · tracked since 1 Oct")
+  }
+}
+
+final class UnassignedNoteTests: XCTestCase {
+  func testNoNoteWhenEveryPaymentHasAnAccount() {
+    XCTAssertNil(UnassignedNote.text(count: 0))
+  }
+
+  func testSingularNoteReadsForOnePayment() {
+    XCTAssertEqual(
+      UnassignedNote.text(count: 1),
+      "1 payment has no account. Assign it so balances stay right."
+    )
+  }
+
+  func testPluralNoteReadsForSeveralPayments() {
+    XCTAssertEqual(
+      UnassignedNote.text(count: 2),
+      "2 payments have no account. Assign them so balances stay right."
+    )
+  }
+}
+
+@MainActor
+final class AccountCreateActionTests: XCTestCase {
+  private let indian = Locale(identifier: "en_IN")
+
+  /// The opening balance is written in the same save as the account: one create, one row.
+  func testAnOpeningBalanceIsWrittenWithTheAccountInOneCreate() throws {
+    let store = FakeAccountStore(accounts: [])
+    let account = try AccountCreateAction.perform(
+      store: store,
+      displayName: "  HDFC Savings ",
+      institution: " HDFC Bank ",
+      lastFour: "4471",
+      kindRaw: "bank",
+      openingBalanceText: "1200.50",
+      locale: indian
+    )
+    XCTAssertEqual(store.accounts.count, 1)
+    XCTAssertEqual(account.displayName, "HDFC Savings")
+    XCTAssertEqual(account.institution, "HDFC Bank")
+    XCTAssertEqual(account.openingBalanceMinor, 120_050)
+  }
+
+  func testAnEmptyOpeningBalanceCreatesWithNoBalance() throws {
+    let store = FakeAccountStore(accounts: [])
+    let account = try AccountCreateAction.perform(
+      store: store, displayName: "Cash drawer", institution: "", lastFour: "",
+      kindRaw: "wallet", openingBalanceText: "", locale: indian
+    )
+    XCTAssertNil(account.openingBalanceMinor)
+  }
+
+  /// An overdrawn card is entered as a negative amount, as the footer says.
+  func testANegativeOpeningBalanceIsKeptForAnOwedCard() throws {
+    let store = FakeAccountStore(accounts: [])
+    let account = try AccountCreateAction.perform(
+      store: store, displayName: "ICICI Credit Card", institution: "ICICI Bank", lastFour: "9012",
+      kindRaw: "card", openingBalanceText: "-18420", locale: indian
+    )
+    XCTAssertEqual(account.openingBalanceMinor, -1_842_000)
+  }
+
+  /// Lim, PR 215: a refused amount must never become a created account with no balance.
+  /// The create path refuses, and the store is left as it was.
+  func testAnOutOfRangeOpeningBalanceIsRefusedAndNothingIsCreated() {
+    for text in ["1000000000.01", "-1000000000.01"] {
+      let store = FakeAccountStore(accounts: [])
+      XCTAssertThrowsError(try AccountCreateAction.perform(
+        store: store, displayName: "HDFC Savings", institution: "HDFC Bank", lastFour: "4471",
+        kindRaw: "bank", openingBalanceText: text, locale: indian
+      ), text) { error in
+        XCTAssertEqual(error as? AccountCreateError, .openingBalanceOutOfRange, text)
+      }
+      XCTAssertTrue(store.accounts.isEmpty, text)
+    }
+  }
+
+  /// ±10^11 paise is the edge of `AmountRules.isValidOpeningBalance`, and it is kept.
+  func testTheOpeningBalanceLimitsAreCreatedWithThatBalance() throws {
+    let high = try AccountCreateAction.perform(
+      store: FakeAccountStore(accounts: []), displayName: "Big", institution: "", lastFour: "",
+      kindRaw: "bank", openingBalanceText: "1000000000", locale: indian
+    )
+    XCTAssertEqual(high.openingBalanceMinor, 100_000_000_000)
+    let low = try AccountCreateAction.perform(
+      store: FakeAccountStore(accounts: []), displayName: "Owed", institution: "", lastFour: "",
+      kindRaw: "card", openingBalanceText: "-1000000000", locale: indian
+    )
+    XCTAssertEqual(low.openingBalanceMinor, -100_000_000_000)
+  }
+
+  /// Empty is "no opening balance": created, with nil, and one row in the store.
+  func testAnEmptyOpeningBalanceIsCreatedWithNil() throws {
+    let store = FakeAccountStore(accounts: [])
+    let account = try AccountCreateAction.perform(
+      store: store, displayName: "Cash drawer", institution: "", lastFour: "",
+      kindRaw: "wallet", openingBalanceText: "", locale: indian
+    )
+    XCTAssertNil(account.openingBalanceMinor)
+    XCTAssertEqual(store.accounts.count, 1)
+  }
+}
+
+/// Save is disabled, with its hint, for any opening balance the store would refuse.
+/// The gate and the save use one predicate, so they cannot drift apart.
+final class AccountCreateSaveGateTests: XCTestCase {
+  private let indian = Locale(identifier: "en_IN")
+
+  func testSaveIsDisabledForAnOpeningBalanceOutsideTheRange() {
+    XCTAssertFalse(AccountCreateFormGate.canSave(
+      displayName: "HDFC Savings", lastFour: "4471", openingBalanceText: "1000000000.01", locale: indian))
+    XCTAssertFalse(AccountCreateFormGate.canSave(
+      displayName: "ICICI Credit Card", lastFour: "9012", openingBalanceText: "-1000000000.01", locale: indian))
+  }
+
+  func testSaveIsEnabledAtTheLimitsAndWhenBlank() {
+    XCTAssertTrue(AccountCreateFormGate.canSave(
+      displayName: "Big", lastFour: "", openingBalanceText: "1000000000", locale: indian))
+    XCTAssertTrue(AccountCreateFormGate.canSave(
+      displayName: "Owed", lastFour: "", openingBalanceText: "-1000000000", locale: indian))
+    XCTAssertTrue(AccountCreateFormGate.canSave(
+      displayName: "Cash", lastFour: "", openingBalanceText: "", locale: indian))
+  }
+
+  func testTheHintShowsOnlyForAnAmountTheStoreWouldRefuse() {
+    XCTAssertNotNil(AccountCreateFormGate.openingBalanceHint("1000000000.01", locale: indian))
+    XCTAssertNil(AccountCreateFormGate.openingBalanceHint("", locale: indian))
+    XCTAssertNil(AccountCreateFormGate.openingBalanceHint("1000000000", locale: indian))
+  }
+
+  func testTheEditGateRefusesTheSameBalances() {
+    XCTAssertFalse(AccountOpeningBalanceField.isValid("1000000000.01", locale: indian))
+    XCTAssertFalse(AccountOpeningBalanceField.isValid("-1000000000.01", locale: indian))
+    XCTAssertTrue(AccountOpeningBalanceField.isValid("-1000000000", locale: indian))
+  }
+}
+
+/// Lim's M5, non-blocking: the screen keeps the system navigation bar. Hiding it
+/// removes the back control at every size, which is the S8 must-fix.
+final class AccountsScreenChromePinTests: XCTestCase {
+  func testTheScreenNeverHidesTheSystemNavigationBar() throws {
+    let source = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()  // Accounts
+      .deletingLastPathComponent()  // NomiUITests
+      .deletingLastPathComponent()  // Tests
+      .deletingLastPathComponent()  // NomiUI package
+      .appendingPathComponent("Sources/NomiUI/Accounts/AccountsScreen.swift")
+    let text = try String(contentsOf: source, encoding: .utf8)
+    XCTAssertFalse(text.contains("navigationBarHidden"))
+    XCTAssertFalse(text.contains(".toolbar(.hidden"))
+    XCTAssertFalse(text.contains("NomiHeroScaffold"))
   }
 }

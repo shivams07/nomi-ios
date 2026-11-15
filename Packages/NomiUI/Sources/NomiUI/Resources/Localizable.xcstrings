@@ -93,6 +93,29 @@
         }
       }
     },
+    "%lld payment has no account. Assign it so balances stay right." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld payment has no account. Assign it so balances stay right."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld payments have no account. Assign them so balances stay right."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld transactions" : {
       "extractionState" : "manual",
       "localizations" : {
