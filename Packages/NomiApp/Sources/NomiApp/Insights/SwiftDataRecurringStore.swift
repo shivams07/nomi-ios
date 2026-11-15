@@ -29,25 +29,38 @@ public final class SwiftDataRecurringStore: RecurringInsightsStore {
   /// months) is the only history there is.
   public static let windowMonths = 6
 
+  /// Key for the dismissed series ids, a JSON array, in the launch's preference
+  /// store (I-14). Per device; not in the SwiftData store, so no migration.
+  static let dismissedKey = "nomi.dismissedRecurringSeries"
+
   private let context: ModelContext
   private let cache: InsightsCache
   private let calendar: Calendar
   private let now: () -> Date
+  private let dismissals: any KeyValueStoring
 
   /// `calendar` defaults to `.current` deliberately, matching
   /// `SwiftDataInsightsStore`. This is a display aggregate, not a key: a user
   /// abroad should see their own day boundaries, and `NomiCalendar.india` is
   /// for values that must be identical on two devices (see its doc comment).
+  ///
+  /// `dismissals` is the launch's preference store (`AppEnvironment.preferences`).
+  /// For a non-persistent launch that is a read-through overlay, so a dismissal
+  /// made in that launch never reaches `UserDefaults` (I-6 Amendment 2). The
+  /// default is an in-memory store, which keeps nothing past this instance and
+  /// never touches `UserDefaults`. The app always passes its own.
   public init(
     context: ModelContext,
     cache: InsightsCache,
     calendar: Calendar = .current,
-    now: @escaping () -> Date = { Date() }
+    now: @escaping () -> Date = { Date() },
+    dismissals: any KeyValueStoring = InMemoryKeyValueStore()
   ) {
     self.context = context
     self.cache = cache
     self.calendar = calendar
     self.now = now
+    self.dismissals = dismissals
   }
 
   public func recurringSeries() throws -> [RecurringSeries] {
@@ -55,7 +68,7 @@ public final class SwiftDataRecurringStore: RecurringInsightsStore {
     // on its own reads. This store has to roll it over too, or a day that has
     // only ever been read here would serve yesterday's series.
     cache.rollOver(toDay: calendar.startOfDay(for: now()))
-    return try cache.value(for: .recurring) {
+    let all: [RecurringSeries] = try cache.value(for: .recurring) {
       // One `now()` for the window and for the staleness check. Reading the
       // clock twice would let a series be fetched under one instant and judged
       // stale under another.
@@ -101,6 +114,28 @@ public final class SwiftDataRecurringStore: RecurringInsightsStore {
         series.attaching(series.categoryID.flatMap { badges[$0] })
       }
     }
+    // B6. Filtered after the cache, on every call, so a dismissal needs no
+    // invalidation and the cached answer stays the unfiltered one.
+    let hidden = dismissedSeriesIDs()
+    return all.filter { !hidden.contains($0.id) }
+  }
+
+  /// Adds `seriesID` to the dismissed set and writes it. The cache is not
+  /// touched: `recurringSeries()` filters on every read, so the change shows on
+  /// the next read without a recompute.
+  public func dismiss(seriesID: String) throws {
+    var ids = dismissedSeriesIDs()
+    ids.insert(seriesID)
+    dismissals.set(try JSONEncoder().encode(ids.sorted()), forKey: Self.dismissedKey)
+  }
+
+  /// What is stored. A missing or corrupt value reads as nothing dismissed, so
+  /// a bad value hides nothing; the next `dismiss` overwrites it.
+  public func dismissedSeriesIDs() -> Set<String> {
+    guard let data = dismissals.data(forKey: Self.dismissedKey),
+      let ids = try? JSONDecoder().decode([String].self, from: data)
+    else { return [] }
+    return Set(ids)
   }
 
   /// `uniquingKeysWith`, as `SwiftDataInsightsStore.categoryMap()` does and for

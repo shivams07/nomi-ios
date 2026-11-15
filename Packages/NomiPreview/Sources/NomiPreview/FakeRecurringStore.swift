@@ -12,6 +12,8 @@ import NomiCore
 public final class FakeRecurringStore: RecurringInsightsStore {
   private let series: [RecurringSeries]
   private let failure: Error?
+  /// B6. Dismissals made in this instance; nothing is persisted, as in previews.
+  private var dismissed: Set<String> = []
 
   /// - Parameters:
   ///   - series: pass `[]` for the empty state.
@@ -24,7 +26,15 @@ public final class FakeRecurringStore: RecurringInsightsStore {
 
   public func recurringSeries() throws -> [RecurringSeries] {
     if let failure { throw failure }
-    return series
+    return series.filter { !dismissed.contains($0.id) }
+  }
+
+  public func dismiss(seriesID: String) throws {
+    dismissed.insert(seriesID)
+  }
+
+  public func dismissedSeriesIDs() -> Set<String> {
+    dismissed
   }
 
   /// Three subscriptions at the amounts and cadences the detector is tuned for.

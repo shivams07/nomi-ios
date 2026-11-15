@@ -232,11 +232,14 @@ final class RecurringStoreTests: XCTestCase {
     // Copied out rather than captured through `self`: the closure outlives
     // this call and there is no reason for the store to hold the test case.
     let moment = reference
+    // B6. In-memory dismissals, so nothing from the app or another test can hide
+    // a series these tests expect to see.
     let store = SwiftDataRecurringStore(
       context: context,
       cache: cache,
       calendar: calendar,
-      now: { moment })
+      now: { moment },
+      dismissals: InMemoryKeyValueStore())
     return (store, context, cache)
   }
 }

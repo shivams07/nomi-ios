@@ -3,12 +3,14 @@ import Foundation
 /// The read side of recurrence detection (U17a), and the whole of what the
 /// "Upcoming" card (U17b) is allowed to know about it.
 ///
-/// Deliberately one method. The detector is a heuristic over the ledger, not a
-/// user-editable list: there is no confirm, no deny, no snooze and no
-/// notification, because every one of those needs persisted state and a
-/// migration, and none of them is what U17 asked for. A store that answers
-/// "what looks like it repeats" is the entire contract; if confirmation ever
-/// lands, it lands as new methods here rather than as a second protocol.
+/// The detector is a heuristic over the ledger, and it stays one: a user cannot
+/// confirm a series, edit its amount, or get a notification about it. The one
+/// persisted user decision is dismissal (`dismiss(seriesID:)`, I-14): "not
+/// recurring", which hides a series from `recurringSeries()`. It is stored in
+/// `UserDefaults` and lives on this device only, so it needs no schema change
+/// and does not sync; a second device shows the series again. There is no
+/// un-dismiss, no snooze and no undo. If confirmation ever lands, it lands as
+/// new methods here rather than as a second protocol.
 ///
 /// `@MainActor`, like every other store in `Stores.swift`, and for the same
 /// reason: the real implementation reads a `ModelContext` that is bound to the
@@ -24,5 +26,25 @@ public protocol RecurringInsightsStore: AnyObject {
   /// first five would show a different five on each render. `RecurrenceDetector`
   /// sorts before returning, so a caller may rely on this and does not have to
   /// re-sort defensively.
+  ///
+  /// Series dismissed on this device are absent from this result, immediately
+  /// and after a new store instance.
   func recurringSeries() throws -> [RecurringSeries]
+
+  /// Hides series `id` (RecurringSeries.id, the normalized description) from
+  /// recurringSeries() on this device. Dismissing an id that no series has is
+  /// stored and harmless.
+  func dismiss(seriesID: String) throws
+
+  /// Ids dismissed on this device.
+  func dismissedSeriesIDs() -> Set<String>
+}
+
+/// Stub defaults for the two dismissal requirements, so a conformer that never
+/// persists anything still compiles (`NoopRecurringStore` in the NomiUI tests).
+/// The real conformers override both.
+extension RecurringInsightsStore {
+  public func dismiss(seriesID: String) throws {}
+
+  public func dismissedSeriesIDs() -> Set<String> { [] }
 }

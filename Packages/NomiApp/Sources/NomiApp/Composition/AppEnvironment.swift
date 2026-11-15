@@ -50,6 +50,10 @@ public final class AppEnvironment: ObservableObject {
   public let sync: AppSyncCoordinator
   public let notificationSettings: NotificationSettingsStore
   public let firstRun: FirstRunGate
+  /// The launch's preference store, the one `firstRun` and `notificationSettings`
+  /// use. A non-persistent launch's is a read-through overlay. B6 hands it to
+  /// `SwiftDataRecurringStore`, so a dismissal follows the same rule.
+  public let preferences: any KeyValueStoring
 
   private let pipeline: IngestPipeline
   private let credentials: any MailCredentialStoring
@@ -108,6 +112,7 @@ public final class AppEnvironment: ObservableObject {
     self.categorySuggester = SwiftDataCategorySuggester(context: context)
     self.transactionSearch = SwiftDataTransactionSearch(context: context)
 
+    self.preferences = preferences
     self.firstRun = FirstRunGate(store: preferences)
 
     let notificationSettings = NotificationSettingsStore(store: preferences, scheduler: scheduler)
