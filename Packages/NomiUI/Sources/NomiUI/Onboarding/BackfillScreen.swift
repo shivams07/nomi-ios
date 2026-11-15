@@ -74,11 +74,8 @@ public struct BackfillScreen: View {
   public var onFinish: (() -> Void)?
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @State private var progress = BackfillProgress(scanned: 0, total: 0, created: 0)
-  @State private var isCancelled = false
-  @State private var didFail = false
-  @State private var completionSummary: SyncSummary?
-  @State private var backfillTask: Task<Void, Never>?
+  /// The scan's state and actions (T2b). See `BackfillRun`.
+  @State private var run: BackfillRun
 
   public init(
     mailConnectionService: MailConnectionService,
@@ -88,18 +85,7 @@ public struct BackfillScreen: View {
     self.mailConnectionService = mailConnectionService
     self.months = months
     self.onFinish = onFinish
-  }
-
-  private var currentPhase: BackfillPhase {
-    if completionSummary != nil { return .completed }
-    if didFail { return .failed }
-    if isCancelled { return .cancelled }
-    if backfillTask != nil { return .running }
-    return .notStarted
-  }
-
-  private var controls: BackfillControls {
-    BackfillControls.forPhase(currentPhase)
+    _run = State(initialValue: BackfillRun(service: mailConnectionService, months: months))
   }
 
   public var body: some View {
@@ -127,13 +113,11 @@ public struct BackfillScreen: View {
       // guess made from the last tick: the stream is a progress bar, and the
       // scan itself is the thing that knows when it finished and what it found.
       for await update in mailConnectionService.backfillProgress {
-        progress = update
+        run.receive(update)
       }
     }
     .onAppear {
-      if BackfillLifecycle.shouldStartOnAppear(phase: currentPhase) {
-        start()
-      }
+      run.appear()
     }
     #if os(iOS)
     .toolbar(.hidden, for: .navigationBar)
@@ -148,7 +132,7 @@ public struct BackfillScreen: View {
   private var navRow: some View {
     HStack {
       Spacer()
-      if controls.showsLeave {
+      if run.controls.showsLeave {
         Button("Done") { onFinish?() }
           .nomiTextStyle(.navActionStrong)
           .foregroundStyle(NomiColor.heroText)
@@ -188,9 +172,9 @@ public struct BackfillScreen: View {
 
   @ViewBuilder
   private var detail: some View {
-    switch currentPhase {
+    switch run.phase {
     case .completed:
-      if let completionSummary {
+      if let completionSummary = run.completionSummary {
         VStack(spacing: NomiSpacing.xxs) {
           ForEach(BackfillCompletionSummary.detailLines(for: completionSummary), id: \.self) { line in
             Text(line)
@@ -203,7 +187,7 @@ public struct BackfillScreen: View {
         .padding(.top, NomiSpacing.xs)
       }
     case .cancelled:
-      Text(BackfillLifecycle.cancelledText(created: progress.created))
+      Text(BackfillLifecycle.cancelledText(created: run.progress.created))
         .nomiTextStyle(.caption)
         .foregroundStyle(NomiColor.heroTextSecondary)
         .multilineTextAlignment(.center)
@@ -223,10 +207,10 @@ public struct BackfillScreen: View {
 
   private var controlsView: some View {
     VStack(spacing: NomiSpacing.sm) {
-      if let secondary = controls.secondary {
+      if let secondary = run.controls.secondary {
         heroButton(secondary)
       }
-      if let primary = controls.primary {
+      if let primary = run.controls.primary {
         heroButton(primary)
       }
     }
@@ -237,7 +221,7 @@ public struct BackfillScreen: View {
   /// the frame's width, not the text's.
   private func heroButton(_ control: BackfillControl) -> some View {
     Button {
-      perform(control)
+      if run.perform(control) == .finish { onFinish?() }
     } label: {
       Text(control.title)
         .frame(maxWidth: .infinity)
@@ -249,7 +233,7 @@ public struct BackfillScreen: View {
   // MARK: - Copy and values per phase
 
   private var titleText: String {
-    switch currentPhase {
+    switch run.phase {
     case .notStarted, .running: return "Getting your transactions"
     case .cancelled: return "Scan paused"
     case .completed: return "All caught up"
@@ -258,14 +242,14 @@ public struct BackfillScreen: View {
   }
 
   private var ringFraction: Double {
-    switch currentPhase {
+    switch run.phase {
     case .completed: return 1
-    case .notStarted, .running, .cancelled, .failed: return BackfillMath.fraction(progress)
+    case .notStarted, .running, .cancelled, .failed: return BackfillMath.fraction(run.progress)
     }
   }
 
   private var ringSymbol: String {
-    switch currentPhase {
+    switch run.phase {
     case .completed: return "checkmark"
     case .failed: return "exclamationmark.circle"
     case .notStarted, .running, .cancelled: return "envelope"
@@ -275,10 +259,10 @@ public struct BackfillScreen: View {
   /// The count line reads from the completed summary once the scan returns, so
   /// the Done frame matches what the scan reported, not the last stream tick.
   private var countValue: (scanned: Int, total: Int, found: Int) {
-    if let completionSummary {
+    if let completionSummary = run.completionSummary {
       return (completionSummary.scanned, completionSummary.scanned, completionSummary.created)
     }
-    return (progress.scanned, progress.total, progress.created)
+    return (run.progress.scanned, run.progress.total, run.progress.created)
   }
 
   private var countText: String {
@@ -286,42 +270,6 @@ public struct BackfillScreen: View {
     return "\(value.scanned) of \(value.total) scanned — \(value.found) found"
   }
 
-  // MARK: - Actions
-
-  private func perform(_ control: BackfillControl) {
-    switch control {
-    case .cancel: cancel()
-    case .resume, .retry: start()
-    case .done: onFinish?()
-    }
-  }
-
-  /// Resume and Retry come here. A cancelled scan can still be winding down at
-  /// its next batch boundary, so the new one waits for it: the service never
-  /// sees two scans at once (X14).
-  private func start() {
-    isCancelled = false
-    didFail = false
-    let previous = backfillTask
-    previous?.cancel()
-    backfillTask = BackfillSchedule.next(after: previous) {
-      do {
-        completionSummary = try await BackfillActions.scan(
-          using: mailConnectionService, months: months)
-      } catch {
-        // A cancel the user asked for is a pause, not a failure, whatever
-        // error the service surfaces on the way out.
-        guard !Task.isCancelled, !isCancelled else { return }
-        backfillTask = nil
-        didFail = true
-      }
-    }
-  }
-
-  private func cancel() {
-    backfillTask?.cancel()
-    isCancelled = true
-  }
 }
 
 /// The progress ring: a white track at 22% and a white arc, 12 pt stroke, with
