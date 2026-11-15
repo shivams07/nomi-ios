@@ -1,6 +1,29 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%lld added" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld added"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld added"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld days" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -47,7 +70,7 @@
         }
       }
     },
-    "%lld rows match" : {
+    "%lld matched transactions already in Nomi" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
@@ -56,36 +79,13 @@
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld transaction matches"
+                  "value" : "%lld matched transaction already in Nomi"
                 }
               },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld transactions match"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "%lld subscriptions" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld subscription"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld subscriptions"
+                  "value" : "%lld matched transactions already in Nomi"
                 }
               }
             }
@@ -109,6 +109,144 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld payments have no account. Assign them so balances stay right."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld repeats in this file combined" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld repeat in this file combined"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld repeats in this file combined"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld rows could not be read and will be skipped." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld row could not be read and will be skipped."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld rows could not be read and will be skipped."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld rows match" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld transaction matches"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld transactions match"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld rows repeat another row in this file and will be added once." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld row repeats another row in this file and will be added once."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld rows repeat another row in this file and will be added once."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld rows skipped" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld row skipped"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld rows skipped"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld subscriptions" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld subscription"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld subscriptions"
                 }
               }
             }
@@ -237,6 +375,29 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn't read this alert"
+          }
+        }
+      }
+    },
+    "Import %lld transactions" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Import %lld transaction"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Import %lld transactions"
+                }
+              }
+            }
           }
         }
       }
