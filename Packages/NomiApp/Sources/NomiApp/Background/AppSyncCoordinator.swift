@@ -106,11 +106,26 @@ public actor AppSyncCoordinator {
   @discardableResult
   public func reconcile() async -> ReconcileResult {
     lastReconcileAt = now()
-    let result = (try? await pipeline.reconcile()) ?? .empty
-    if let referenceData {
+    let result: ReconcileResult
+    do {
+      result = try await pipeline.reconcile()
+    } catch {
       // Swallowed for the same reason the pipeline's error is: nobody awaits a
       // reconcile, and the next one retries.
-      await MainActor.run { _ = try? referenceData.run() }
+      NomiLog.sync.error("transaction reconcile failed: \(NomiLog.describe(error), privacy: .public)")
+      result = .empty
+    }
+    if let referenceData {
+      // Swallowed for the same reason the pipeline's error is: nobody awaits a
+      // reconcile, and the next one retries. ReferenceDataReconciler has already
+      // logged the failure where it happened; this line records that it was dropped here.
+      await MainActor.run {
+        do {
+          _ = try referenceData.run()
+        } catch {
+          NomiLog.sync.error("reference data reconcile dropped: \(NomiLog.describe(error), privacy: .public)")
+        }
+      }
     }
     return result
   }
@@ -127,6 +142,7 @@ public actor AppSyncCoordinator {
       do {
         try await pause(AppSyncCoordinator.remoteChangeDebounce)
       } catch {
+        NomiLog.sync.debug("remote-change reconcile superseded: \(NomiLog.describe(error), privacy: .public)")
         return  // superseded by a later notification
       }
       guard let self, !Task.isCancelled else { return }
@@ -224,11 +240,13 @@ public actor AppSyncCoordinator {
     } catch let error as IMAPTransportError where error == .notConnected {
       // Named rather than swallowed. Nothing is wrong and there is nothing to
       // report to the user — there is simply no mailbox yet.
+      NomiLog.sync.debug("sync owed, no mailbox connected: \(NomiLog.describe(error), privacy: .public)")
       return .noMailboxConnected
     } catch {
       // Other errors are the connection service's to report: it yields `.failed`
       // on its state stream, which `SyncStatusRow` and `SettingsScreen` render.
       // Re-throwing here would have nowhere to go — nobody awaits a scene phase.
+      NomiLog.sync.error("sync failed: \(NomiLog.describe(error), privacy: .public)")
       return .failed
     }
   }
@@ -275,8 +293,10 @@ public actor AppSyncCoordinator {
       try await mail.service.startBackfill(months: Self.backfillMonths)
       return .ran
     } catch let error as IMAPTransportError where error == .notConnected {
+      NomiLog.sync.debug("backfill owed, no mailbox connected: \(NomiLog.describe(error), privacy: .public)")
       return .noMailboxConnected
     } catch {
+      NomiLog.sync.error("backfill failed: \(NomiLog.describe(error), privacy: .public)")
       return .failed
     }
   }
@@ -450,7 +470,11 @@ public struct SystemBackgroundTaskSubmitter: BackgroundTaskSubmitting {
       // Throws when the identifier is not permitted, when too many are already
       // queued, or in the simulator, which has no scheduler. None of those are
       // worth failing a launch over.
-      try? BGTaskScheduler.shared.submit(request)
+      do {
+        try BGTaskScheduler.shared.submit(request)
+      } catch {
+        NomiLog.sync.notice("background task not submitted: \(NomiLog.describe(error), privacy: .public)")
+      }
     #endif
   }
 }

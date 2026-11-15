@@ -60,7 +60,14 @@ public actor MailStack {
       extractor: MailTransactionExtractor(bindings: bindings),
       cursor: Self.loadCursor(from: preferences),
       onCursorAdvanced: { [preferences] cursor in
-        preferences.set(try? JSONEncoder().encode(cursor), forKey: PreferenceKey.mailSyncCursor)
+        let data: Data?
+        do {
+          data = try JSONEncoder().encode(cursor)
+        } catch {
+          NomiLog.sync.error("cursor advance encode failed: \(NomiLog.describe(error), privacy: .public)")
+          data = nil
+        }
+        preferences.set(data, forKey: PreferenceKey.mailSyncCursor)
       }
     )
 
@@ -110,17 +117,32 @@ public actor MailStack {
   /// without retyping an app password. Silent by design: a missing credential
   /// is the ordinary "never connected" case, not an error to surface.
   public func reconnectFromKeychain(_ store: any MailCredentialStoring) async {
-    // One `guard let`, not two. `load()` returns `IMAPCredentials?` and `try?`
-    // flattens rather than nesting, so there is no second layer to unwrap —
-    // "no credential stored" and "the keychain read failed" arrive as the same
-    // nil, and both mean the same thing here: nothing to reconnect to.
-    guard let credentials = try? store.load() else { return }
-    try? await service.connect(credentials)
+    // `load()` returns `IMAPCredentials?`, so there is one optional to unwrap.
+    // "No credential stored" and "the keychain read failed" both leave the same
+    // thing to do, which is nothing: a read that throws is logged, a nil is not.
+    let loaded: IMAPCredentials?
+    do {
+      loaded = try store.load()
+    } catch {
+      NomiLog.sync.error("stored credential read failed: \(NomiLog.describe(error), privacy: .public)")
+      return
+    }
+    guard let credentials = loaded else { return }
+    do {
+      try await service.connect(credentials)
+    } catch {
+      NomiLog.sync.error("launch reconnect failed: \(NomiLog.describe(error), privacy: .public)")
+    }
   }
 
   private static func loadCursor(from preferences: any KeyValueStoring) -> MailSyncCursor? {
     guard let data = preferences.data(forKey: PreferenceKey.mailSyncCursor) else { return nil }
-    return try? JSONDecoder().decode(MailSyncCursor.self, from: data)
+    do {
+      return try JSONDecoder().decode(MailSyncCursor.self, from: data)
+    } catch {
+      NomiLog.sync.error("stored cursor decode failed: \(NomiLog.describe(error), privacy: .public)")
+      return nil
+    }
   }
 }
 
@@ -274,7 +296,14 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
 
   private func persistCursor() async {
     let cursor = await engine.cursor
-    preferences.set(try? JSONEncoder().encode(cursor), forKey: PreferenceKey.mailSyncCursor)
+    let data: Data?
+    do {
+      data = try JSONEncoder().encode(cursor)
+    } catch {
+      NomiLog.sync.error("cursor persist encode failed: \(NomiLog.describe(error), privacy: .public)")
+      data = nil
+    }
+    preferences.set(data, forKey: PreferenceKey.mailSyncCursor)
   }
 
   private func setUnfinishedBackfill(_ value: Bool) {
@@ -287,12 +316,23 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   /// The guard is there so that an encode failure skips the write rather than
   /// clearing the stored date. A `Date` cannot fail to encode in practice.
   private func recordLastSync() {
-    guard let data = try? JSONEncoder().encode(now()) else { return }
+    let data: Data
+    do {
+      data = try JSONEncoder().encode(now())
+    } catch {
+      NomiLog.sync.error("last sync encode failed: \(NomiLog.describe(error), privacy: .public)")
+      return
+    }
     preferences.set(data, forKey: PreferenceKey.mailLastSyncAt)
   }
 
   private func storedLastSync() -> Date? {
     guard let data = preferences.data(forKey: PreferenceKey.mailLastSyncAt) else { return nil }
-    return try? JSONDecoder().decode(Date.self, from: data)
+    do {
+      return try JSONDecoder().decode(Date.self, from: data)
+    } catch {
+      NomiLog.sync.error("stored last sync decode failed: \(NomiLog.describe(error), privacy: .public)")
+      return nil
+    }
   }
 }

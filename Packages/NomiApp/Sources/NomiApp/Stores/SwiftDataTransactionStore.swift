@@ -207,9 +207,18 @@ public final class SwiftDataTransactionStore: TransactionStore {
     // DEC-05 detector (TR2). Assigning an account can complete a pair. Marks
     // are decided before the first write, in the same span, and land in the
     // save below. Unassigning marks nothing.
-    let marked = accountID == nil
-      ? Set<UUID>()
-      : ((try? markTransfers(touching: touched, at: timestamp)) ?? [])
+    let marked: Set<UUID>
+    if accountID == nil {
+      marked = Set<UUID>()
+    } else {
+      do {
+        marked = try markTransfers(touching: touched, at: timestamp)
+      } catch {
+        // The account change still saves; only the pair marks are skipped.
+        NomiLog.store.error("transfer marking failed: \(NomiLog.describe(error), privacy: .public)")
+        marked = []
+      }
+    }
 
     // A failed save must not leave the account change or the marks dirty in
     // this context, where a later save would flush them half-applied (TR4, the
@@ -389,7 +398,12 @@ public final class SwiftDataTransactionStore: TransactionStore {
       sortBy: [SortDescriptor(\Transaction.updatedAt, order: .reverse)]
     )
     descriptor.fetchLimit = 1
-    return (try? context.fetch(descriptor))?.first?.categoryID
+    do {
+      return try context.fetch(descriptor).first?.categoryID
+    } catch {
+      NomiLog.store.error("last used category fetch failed: \(NomiLog.describe(error), privacy: .public)")
+      return nil
+    }
   }
 
   // MARK: -

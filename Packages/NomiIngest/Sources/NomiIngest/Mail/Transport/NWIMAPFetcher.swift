@@ -357,6 +357,7 @@ public actor NWIMAPFetcher: MailFetching {
     } catch let error as IMAPTransportError {
       await channel.close()
       if case .commandFailed(_, _, let text) = error {
+        NomiLog.sync.notice("IMAP login refused: \(NomiLog.describe(error), privacy: .public)")
         throw IMAPTransportError.authenticationFailed(text)
       }
       throw error
@@ -393,7 +394,12 @@ public actor NWIMAPFetcher: MailFetching {
     defer { release() }
 
     if isConnected {
-      try? await run(.logout(tag: nextTag()))
+      do {
+        try await run(.logout(tag: nextTag()))
+      } catch {
+        // Best-effort by design, as above. Logged so a field report shows it.
+        NomiLog.sync.debug("IMAP LOGOUT not acknowledged: \(NomiLog.describe(error), privacy: .public)")
+      }
     }
     await channel.close()
     reader.reset()
@@ -632,6 +638,7 @@ public actor NWIMAPFetcher: MailFetching {
       do {
         chunk = try await channel.receive()
       } catch {
+        NomiLog.sync.notice("IMAP read failed mid-command: \(NomiLog.describe(error), privacy: .public)")
         pendingTag = nil
         markDisconnected()
         throw IMAPTransportError.serverClosedMidCommand(tag: tag, text: "\(error)")

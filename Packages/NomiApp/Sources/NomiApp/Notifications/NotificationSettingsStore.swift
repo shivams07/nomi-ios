@@ -98,7 +98,14 @@ public final class NotificationSettingsStore: ObservableObject {
   /// and a test that raced that task would be a test that fails on a busy
   /// machine.
   func requestPermissionAndEnable(_ requested: NotificationSettings) async {
-    let granted = try? await scheduler.requestAuthorization()
+    let granted: Bool?
+    do {
+      granted = try await scheduler.requestAuthorization()
+    } catch {
+      // Treated as denied, below.
+      NomiLog.notifications.error("permission request failed: \(NomiLog.describe(error), privacy: .public)")
+      granted = nil
+    }
     let resolved = NotificationEnablePolicy.settings(after: requested, granted: granted)
 
     // The resolved value is assigned and persisted only now. A denial persists
@@ -116,19 +123,28 @@ public final class NotificationSettingsStore: ObservableObject {
   }
 
   private func persist() {
-    store.set(try? JSONEncoder().encode(settings), forKey: PreferenceKey.notificationSettings)
+    let data: Data?
+    do {
+      data = try JSONEncoder().encode(settings)
+    } catch {
+      NomiLog.notifications.error("alert settings not encoded: \(NomiLog.describe(error), privacy: .public)")
+      data = nil
+    }
+    store.set(data, forKey: PreferenceKey.notificationSettings)
   }
 
   /// Defaults to alerts **off**. Not a neutral choice: the app must never be in
   /// a state where it believes it may notify without having asked, and a fresh
   /// install has asked nobody.
   private static func load(from store: any KeyValueStoring) -> NotificationSettings {
-    guard
-      let data = store.data(forKey: PreferenceKey.notificationSettings),
-      let decoded = try? JSONDecoder().decode(NotificationSettings.self, from: data)
-    else {
+    guard let data = store.data(forKey: PreferenceKey.notificationSettings) else {
       return NotificationSettings()
     }
-    return decoded
+    do {
+      return try JSONDecoder().decode(NotificationSettings.self, from: data)
+    } catch {
+      NomiLog.notifications.error("alert settings not decoded: \(NomiLog.describe(error), privacy: .public)")
+      return NotificationSettings()
+    }
   }
 }

@@ -44,7 +44,14 @@ public final class AppBudgetAlertContextProvider: BudgetAlertContextProviding, @
         return BudgetAlertContext(progress: [], firedKeys: [], settings: settingsStore.settings)
       }
 
-      let progress = (try? insightsStore.budgetProgress(year: year, month: month)) ?? []
+      let progress: [BudgetProgress]
+      do {
+        progress = try insightsStore.budgetProgress(year: year, month: month)
+      } catch {
+        // No progress means no alert this pass; the next evaluation reads it again.
+        NomiLog.notifications.error("budget progress read failed: \(NomiLog.describe(error), privacy: .public)")
+        progress = []
+      }
       let periodKey = InsightsAggregator.periodKey(year: year, month: month)
 
       return BudgetAlertContext(
@@ -71,7 +78,11 @@ public final class AppBudgetAlertContextProvider: BudgetAlertContextProviding, @
       // re-evaluated on the next commit and may fire again. That is the
       // failure `BudgetAlertObserver`'s record-then-schedule ordering chose:
       // a repeated notification, not a lost one.
-      try? context.save()
+      do {
+        try context.save()
+      } catch {
+        NomiLog.notifications.error("alert log save failed: \(NomiLog.describe(error), privacy: .public)")
+      }
     }
   }
 
@@ -107,7 +118,13 @@ public final class AppBudgetAlertContextProvider: BudgetAlertContextProviding, @
     let descriptor = FetchDescriptor<BudgetAlertLog>(
       predicate: #Predicate<BudgetAlertLog> { $0.periodKey == periodKey }
     )
-    let rows = (try? context.fetch(descriptor)) ?? []
+    let rows: [BudgetAlertLog]
+    do {
+      rows = try context.fetch(descriptor)
+    } catch {
+      NomiLog.notifications.error("alert log fetch failed: \(NomiLog.describe(error), privacy: .public)")
+      rows = []
+    }
     return Set(
       rows.map { BudgetAlertEvaluator.logKey(categoryID: $0.categoryID, periodKey: $0.periodKey) }
     )

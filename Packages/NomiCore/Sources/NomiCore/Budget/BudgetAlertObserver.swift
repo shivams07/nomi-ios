@@ -90,13 +90,22 @@ public final class BudgetAlertObserver: PostCommitObserver {
     }
 
     var delivered: [BudgetAlert] = []
+    var lastFailure: Error?
     for alert in pending {
       do {
         try await scheduler.schedule(alert)
         delivered.append(alert)
       } catch {
         // Not recorded, so the next commit in this period retries it.
+        lastFailure = error
       }
+    }
+
+    // One line per call, not per alert: a count and the last error's type and code.
+    if let lastFailure {
+      let failed = pending.count - delivered.count
+      NomiLog.notifications.error(
+        "budget alerts not scheduled: \(failed, privacy: .public) of \(pending.count, privacy: .public), last \(NomiLog.describe(lastFailure), privacy: .public)")
     }
 
     await context.recordFired(suppressed + delivered)
