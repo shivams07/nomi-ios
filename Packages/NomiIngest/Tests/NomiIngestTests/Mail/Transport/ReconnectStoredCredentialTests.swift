@@ -42,8 +42,52 @@ private func bounded<T: Sendable>(
   }
 }
 
+/// Collects what a reader task receives. A class so the reader can write into it
+/// while the test holds the same reference.
+private final class StateLog: @unchecked Sendable {
+  private let lock = NSLock()
+  private var items: [MailConnectionState] = []
+
+  func append(_ state: MailConnectionState) {
+    lock.lock()
+    defer { lock.unlock() }
+    items.append(state)
+  }
+
+  var all: [MailConnectionState] {
+    lock.lock()
+    defer { lock.unlock() }
+    return items
+  }
+}
+
+/// Every state the service yields, not a fixed count of them.
+///
+/// The state stream is unbounded and never finishes on its own, so `prefix(n)`
+/// stops after `n` and cannot show a trailing `.connecting` or `.connected`. This
+/// reads the stream until it is cancelled instead. Every yield in `connect`,
+/// `reconnectWithStoredCredential` and `syncNow` is synchronous, so by the time
+/// an action has returned its states are already buffered. The settle period only
+/// gives the reader time to take them. A state yielded after the settle is not
+/// caught, so the settle is long enough for a reader that has been running since
+/// before the actions.
+private func drainStates(
+  _ service: IMAPMailConnectionService,
+  settleNanoseconds: UInt64 = 300_000_000
+) async throws -> [MailConnectionState] {
+  let log = StateLog()
+  let reader = Task {
+    for await state in service.state { log.append(state) }
+  }
+  try await Task.sleep(nanoseconds: settleNanoseconds)
+  reader.cancel()
+  try await bounded { await reader.value }
+  return log.all
+}
+
 /// The first `count` states the service yields, bounded. Fewer than `count`
-/// fails as `Stalled` rather than waiting forever for the rest.
+/// fails as `Stalled` rather than waiting forever for the rest. Used where the
+/// test's own sequence is the whole sequence it cares about.
 private func states(
   _ service: IMAPMailConnectionService, _ count: Int
 ) async throws -> [MailConnectionState] {
@@ -253,7 +297,7 @@ final class ReconnectStoredCredentialTests: XCTestCase {
     XCTAssertEqual(fetcher.connectCount, 0, "no socket is opened without a password")
     XCTAssertEqual(store.saveCount, 0)
 
-    let seen = try await states(service, 1)
+    let seen = try await drainStates(service)
     XCTAssertEqual(seen, [.disconnected], "no .connecting or .failed for a reconnect that never started")
   }
 
@@ -285,7 +329,7 @@ final class ReconnectStoredCredentialTests: XCTestCase {
     XCTAssertNotNil(error)
     XCTAssertEqual(store.deleteCount, 0)
     XCTAssertEqual(store.password, "app-password")
-    let seen = try await states(service, 3)
+    let seen = try await drainStates(service)
     XCTAssertEqual(seen, [.disconnected, .connecting, .failed(.connectionFailed)])
   }
 
@@ -309,7 +353,7 @@ final class ReconnectStoredCredentialTests: XCTestCase {
       XCTAssertEqual(transport, .notConnected)
     }
 
-    let seen = try await states(service, 5)
+    let seen = try await drainStates(service)
     XCTAssertEqual(
       seen,
       [
