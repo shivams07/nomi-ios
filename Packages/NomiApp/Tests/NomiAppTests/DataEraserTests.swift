@@ -317,16 +317,67 @@ final class DataEraserTests: XCTestCase {
     XCTAssertFalse(saveOpen, "save fails")
   }
 
+  // MARK: - Credential and caches (Andrews' ruling on PR #217)
+
+  /// A Keychain delete that fails is not success. Every other step still runs, the
+  /// gate reopens, and the erase reports incomplete.
+  func testCredentialDeleteFailureRunsEverythingElseAndThrowsIncomplete() async throws {
+    let fixture = try await makeFixture(credentialDeleteFails: true)
+    let seeded = try fixture.seedEveryModel()
+    for key in PreferenceKey.standardDefaultsErasable {
+      fixture.suite.set(Data([3]), forKey: key)
+    }
+    let recovered = fixture.storeDirectory.appendingPathComponent("Recovered", isDirectory: true)
+    try FileManager.default.createDirectory(at: recovered, withIntermediateDirectories: true)
+    fixture.startRecording()
+
+    do {
+      try await withTestTimeout(seconds: 30) { [eraser = fixture.eraser!] in try await eraser.eraseEverything() }
+      XCTFail("a credential that cannot be deleted must throw incomplete")
+    } catch let error as EraseError {
+      XCTAssertEqual(error, .incomplete)
+    }
+
+    XCTAssertEqual(
+      fixture.trace.count("credentials.delete"), 2,
+      "the mailbox layer's delete and the erase's direct delete were both attempted")
+    XCTAssertTrue(fixture.trace.events.contains("store.save"), "the store was still saved")
+    XCTAssertEqual(fixture.trace.count("notifications.removeAllAlerts"), 1, "alerts were still removed")
+    XCTAssertEqual(try fixture.count(NomiCore.Transaction.self), 0, "rows were still deleted")
+    XCTAssertEqual(try fixture.categoryIDs(), seeded.categoryIDs, "the seeds came back")
+    XCTAssertFalse(FileManager.default.fileExists(atPath: recovered.path), "files were still removed")
+    XCTAssertNil(fixture.preferences.data(forKey: PreferenceKey.mailSyncCursor), "preferences were still cleared")
+    XCTAssertNil(
+      fixture.suite.object(forKey: PreferenceKey.dismissedRecurringSeries), "defaults were still cleared")
+    XCTAssertEqual(fixture.firstRunRoute, .onboarding(.welcome), "first run was still restarted")
+    let erasing = await fixture.sync.isErasing
+    XCTAssertFalse(erasing, "the gate reopened")
+  }
+
+  /// Every aggregate cache is dropped. The generation moves and the cache is empty.
+  func testAggregateCachesAreDroppedByErase() async throws {
+    let fixture = try await makeFixture()
+    try fixture.seedEveryModel()
+    let before = fixture.cache.generation
+
+    try await withTestTimeout(seconds: 30) { [eraser = fixture.eraser!] in try await eraser.eraseEverything() }
+
+    XCTAssertGreaterThan(fixture.cache.generation, before, "the cache generation moved")
+    XCTAssertTrue(fixture.cache.isEmpty, "the cache holds nothing after erase")
+  }
+
   // MARK: - Fixtures
 
   private func makeFixture(
     mode: StorageMode = .cloudKit,
     disconnect: EraseFetcher.Disconnect = .succeeds,
     disconnectTimeout: TimeInterval = 5,
-    saveFails: Bool = false
+    saveFails: Bool = false,
+    credentialDeleteFails: Bool = false
   ) async throws -> EraseFixture {
     let fixture = try EraseFixture(
-      mode: mode, disconnect: disconnect, disconnectTimeout: disconnectTimeout, saveFails: saveFails)
+      mode: mode, disconnect: disconnect, disconnectTimeout: disconnectTimeout, saveFails: saveFails,
+      credentialDeleteFails: credentialDeleteFails)
     await fixture.wire()
     fixtures.append(fixture)
     return fixture
@@ -369,10 +420,14 @@ private final class EraseFixture {
   let writes: WriteCoordinator
   let disconnectTimeout: TimeInterval
   let saveFails: Bool
+  let cache: InsightsCache
   /// Set by `wire()`, which must run before any test calls it.
   private(set) var eraser: DataEraser!
 
-  init(mode: StorageMode, disconnect: EraseFetcher.Disconnect, disconnectTimeout: TimeInterval, saveFails: Bool) throws {
+  init(
+    mode: StorageMode, disconnect: EraseFetcher.Disconnect, disconnectTimeout: TimeInterval, saveFails: Bool,
+    credentialDeleteFails: Bool
+  ) throws {
     let trace = EraseTrace()
     self.trace = trace
     let root = FileManager.default.temporaryDirectory
@@ -394,11 +449,12 @@ private final class EraseFixture {
     self.stack = stack
 
     let fetcher = EraseFetcher(disconnect: disconnect, trace: trace)
-    let credentials = TracingCredentials(trace: trace)
+    let credentials = TracingCredentials(trace: trace, deleteFails: credentialDeleteFails)
     let preferences = TracingPreferences(trace: trace)
     self.preferences = preferences
     let notifications = TracingNotifications(trace: trace)
     let cache = InsightsCache()
+    self.cache = cache
     let writes = WriteCoordinator(cache: cache)
     let pipeline = IngestPipeline(store: EmptyPipelineStore())
     let mailStack = MailStack(
@@ -584,16 +640,23 @@ private final class EraseFetcher: MailFetching, @unchecked Sendable {
   func fetch(uids: [UInt32], in mailbox: String) async throws -> [MailMessage] { [] }
 }
 
+private enum FixtureCredentialError: Error { case failed }
+
 private final class TracingCredentials: MailCredentialStoring, @unchecked Sendable {
   private let trace: EraseTrace
+  private let deleteFails: Bool
 
-  init(trace: EraseTrace) { self.trace = trace }
+  init(trace: EraseTrace, deleteFails: Bool = false) {
+    self.trace = trace
+    self.deleteFails = deleteFails
+  }
 
   func save(_ credentials: IMAPCredentials) throws {}
   func load() throws -> IMAPCredentials? { nil }
 
   func delete() throws {
     trace.record("credentials.delete")
+    if deleteFails { throw FixtureCredentialError.failed }
   }
 }
 

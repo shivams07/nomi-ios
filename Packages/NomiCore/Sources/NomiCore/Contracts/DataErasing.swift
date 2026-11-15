@@ -19,8 +19,9 @@ public enum EraseError: Error, Sendable, Equatable {
   case unavailable(reason: String)
   /// A sync did not stop within 30 s. Nothing was erased.
   case busy
-  /// Credential, notifications, files and preferences were cleared, but the store
-  /// save failed and some rows remain. Retrying is safe.
+  /// Some data could not be removed. Every other step still ran and the gate is
+  /// open. Retrying is safe. It covers a store save that failed, a reseed that
+  /// failed, and a mail credential that could not be deleted.
   case incomplete
 }
 

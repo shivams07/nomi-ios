@@ -6,8 +6,9 @@ import SwiftData
 /// I-13 Amendment 1, B5. Erases everything the app holds, in the order below.
 ///
 /// The gate is closed first and reopened on every exit, with the token that
-/// closed it. A failure to save the store is remembered and reported last, so
-/// the rest of the erase still runs. Nothing here is undone: the order is the
+/// closed it. A failure that leaves data behind (a store save, a reseed, a
+/// credential delete) is remembered and reported last as `.incomplete`, so the
+/// rest of the erase still runs. Nothing here is undone: the order is the
 /// safety property. Once a step is done it is not done again by a later one.
 @MainActor
 final class DataEraser: DataErasing {
@@ -103,17 +104,20 @@ final class DataEraser: DataErasing {
 
     // From here the gate is closed. No step below throws, so the reopen in `k`
     // is reached on every path. A step that starts to throw must be caught here.
-    var storeIncomplete = false
+    var incomplete = false
 
     // c. Mail. Disconnect is best effort: it can wait on a socket that never
     // answers, so it is abandoned at the deadline. The credential is then
     // deleted directly, because the mailbox layer skips its own delete when
-    // the disconnect throws.
+    // the disconnect throws. A credential that will not delete is not success:
+    // the password is still on the device, so the erase reports incomplete
+    // after every other step has run (Andrews' ruling, PR #217).
     await disconnectMailBestEffort()
     do {
       try credentials.delete()
     } catch {
       NomiLog.sync.error("erase could not delete the mail credential: \(NomiLog.describe(error), privacy: .public)")
+      incomplete = true
     }
 
     // d. Store. Every row of every model, one save, inside the pipeline's
@@ -121,10 +125,10 @@ final class DataEraser: DataErasing {
     let rowsDeleted = await pipeline.runExclusiveForErase {
       await MainActor.run { self.deleteEveryRow() }
     }
-    if !rowsDeleted { storeIncomplete = true }
+    if !rowsDeleted { incomplete = true }
 
     // e. Reseed at once, with the calls bootstrap makes (G8).
-    if !reseedDefaults() { storeIncomplete = true }
+    if !reseedDefaults() { incomplete = true }
 
     // f. Budget alerts, pending and delivered (G3).
     await notifications.removeAllAlerts()
@@ -155,8 +159,9 @@ final class DataEraser: DataErasing {
     // k. Reopen the gate. Only the holder's token can do this.
     await sync.endErase(token)
 
-    // l. Reported last, so every other step has already run.
-    if storeIncomplete { throw EraseError.incomplete }
+    // l. Reported last, so every other step has already run. Covers a failed
+    // credential delete, a failed store save and a failed reseed.
+    if incomplete { throw EraseError.incomplete }
   }
 
   // MARK: - Steps
