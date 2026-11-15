@@ -69,19 +69,19 @@ public struct MailTransactionExtractor: TransactionExtractor {
     let text = message.extractableText()
 
     if let entry = pack.entry(forDomain: message.senderDomain, subject: message.subject),
-      let draft = packDraft(message, text: text, entry: entry)
+      let result = packDraft(message, text: text, entry: entry)
     {
-      return ExtractionOutcome(draft: draft, layer: .pack, wasUnparseableCandidate: false)
+      return outcome(result, layer: .pack, message: message, text: text)
     }
 
-    if let draft = heuristicDraft(message, text: text) {
-      return ExtractionOutcome(draft: draft, layer: .heuristic, wasUnparseableCandidate: false)
+    if let result = heuristicDraft(message, text: text) {
+      return outcome(result, layer: .heuristic, message: message, text: text)
     }
 
-    // U18. Only reached when no rupee amount was found by either layer above:
+    // U18. Only reached when no rupee figure was found by either layer above:
     // a mail carrying both is an INR transaction that quotes a foreign one.
-    if let draft = foreignCurrencyDraft(message, text: text) {
-      return ExtractionOutcome(draft: draft, layer: .heuristic, wasUnparseableCandidate: false)
+    if let result = foreignCurrencyDraft(message, text: text) {
+      return outcome(result, layer: .heuristic, message: message, text: text)
     }
 
     // A real candidate nobody could read. §1.4's safety net: ONE flagged row
@@ -94,17 +94,47 @@ public struct MailTransactionExtractor: TransactionExtractor {
     )
   }
 
+  /// What one layer made of a message (B8). `.unusableAmount` means the layer found
+  /// an amount it may not store, because it overflowed `Int` or is outside
+  /// `AmountRules`. The mail then becomes one needs-review row with amount 0, the
+  /// bank's wording kept, and no later layer is tried, so the mail cannot yield a
+  /// different figure from the same message.
+  enum LayerResult {
+    case draft(TransactionDraft)
+    case unusableAmount
+  }
+
+  /// A layer's result as the outcome the engine counts. An unusable amount is the
+  /// same single row as an unreadable mail, carried from the layer that found it.
+  private func outcome(
+    _ result: LayerResult, layer: ExtractionLayer, message: MailMessage, text: String
+  ) -> ExtractionOutcome {
+    switch result {
+    case .draft(let draft):
+      return ExtractionOutcome(draft: draft, layer: layer, wasUnparseableCandidate: false)
+    case .unusableAmount:
+      return ExtractionOutcome(
+        draft: unparseableDraft(message, text: text),
+        layer: layer,
+        wasUnparseableCandidate: true
+      )
+    }
+  }
+
   // MARK: - Layer 1
 
   private func packDraft(
     _ message: MailMessage, text: String, entry: SenderPackEntry
-  ) -> TransactionDraft? {
+  ) -> LayerResult? {
     // Amount is required. Without it Layer 1 declines the whole message and it
     // falls to Layer 2 — precision over recall, which is why there are two
     // layers rather than one lenient one.
-    guard let digits = SenderPackFieldRegexes.capture(entry.fieldRegexes.amount, in: text),
-      let amountMinor = MailAmount.paise(fromDigits: digits), amountMinor > 0
+    guard let digits = SenderPackFieldRegexes.capture(entry.fieldRegexes.amount, in: text)
     else { return nil }
+    // B8. The pack named a figure, and it cannot be stored. Stop here: the heuristic
+    // would read the next figure in the mail, such as a running balance.
+    guard case .valid(let amountMinor) = MailAmount.reading(fromDigits: digits)
+    else { return .unusableAmount }
 
     guard let direction = packDirection(entry, text: text) else { return nil }
 
@@ -114,7 +144,7 @@ public struct MailTransactionExtractor: TransactionExtractor {
       ? nil
       : bindings.accountID(senderDomain: message.senderDomain, cardFragment: fragment)
 
-    return draft(
+    return .draft(draft(
       message,
       date: date,
       narration: MailNarration.narration(
@@ -129,7 +159,7 @@ public struct MailTransactionExtractor: TransactionExtractor {
       // it belongs to. That is exactly the flag `setAccount` may clear.
       reason: accountID == nil ? .unidentifiedAccount : nil,
       cardFragment: fragment
-    )
+    ))
   }
 
   private func packDirection(_ entry: SenderPackEntry, text: String) -> Direction? {
@@ -170,17 +200,19 @@ public struct MailTransactionExtractor: TransactionExtractor {
     }
   }
 
-  private func heuristicDraft(_ message: MailMessage, text: String) -> TransactionDraft? {
+  private func heuristicDraft(_ message: MailMessage, text: String) -> LayerResult? {
     // "The amount in the clause the verb is in, the nearest parseable date, the
     // direction from the verb" (§1.4, amended). Largest-wins used to sit here
     // and it took the running balance every time a mail quoted one; the rows are
     // still flagged, but a flagged row carrying a plausible wrong number is worse
     // than a flagged row carrying the right one.
     guard let direction = MailDirection.direction(in: text + " " + message.subject),
-      let amountMinor = MailAmount.transactionAmount(
-        in: text, verbRange: Self.directionVerbClause(in: text)),
-      amountMinor > 0
+      let reading = MailAmount.transactionReading(
+        in: text, verbRange: Self.directionVerbClause(in: text))
     else { return nil }
+    // B8. The nearest figure decides. When it cannot be stored, the mail is
+    // unparseable; the next figure in the clause is not a substitute.
+    guard case .valid(let amountMinor) = reading else { return .unusableAmount }
 
     let date = MailDate.firstDate(in: text) ?? message.headerDate
     let fragment = SenderPackFieldRegexes.capture(
@@ -189,7 +221,7 @@ public struct MailTransactionExtractor: TransactionExtractor {
       ? nil
       : bindings.accountID(senderDomain: message.senderDomain, cardFragment: fragment)
 
-    return draft(
+    return .draft(draft(
       message,
       date: date,
       narration: MailNarration.narration(in: text, packRegex: nil, subject: message.subject),
@@ -201,7 +233,7 @@ public struct MailTransactionExtractor: TransactionExtractor {
       // account does not make this row reviewed.
       reason: .heuristic,
       cardFragment: fragment
-    )
+    ))
   }
 
   /// A transaction the app can see but cannot total (U18 / M9).
@@ -213,13 +245,15 @@ public struct MailTransactionExtractor: TransactionExtractor {
   /// Always `needsReview`, and the reason is the point: a row the dashboard
   /// deliberately does not count has to be visible somewhere, or the user's
   /// spend total is quietly missing a charge they made.
-  private func foreignCurrencyDraft(_ message: MailMessage, text: String) -> TransactionDraft? {
-    guard MailAmount.firstAmount(in: text) == nil,
-      let foreign = MailAmount.foreignAmount(in: text),
-      foreign.minor > 0
+  private func foreignCurrencyDraft(_ message: MailMessage, text: String) -> LayerResult? {
+    // B8. A rupee figure that cannot be stored is still a rupee figure: the mail
+    // does not fall through to its foreign one, which would be a different amount.
+    guard !MailAmount.hasRupeeFigure(in: text),
+      let foreign = MailAmount.foreignAmount(in: text)
     else { return nil }
+    guard foreign.isUsable else { return .unusableAmount }
 
-    return draft(
+    return .draft(draft(
       message,
       date: MailDate.firstDate(in: text) ?? message.headerDate,
       narration: MailNarration.narration(in: text, packRegex: nil, subject: message.subject),
@@ -230,7 +264,7 @@ public struct MailTransactionExtractor: TransactionExtractor {
       needsReview: true,
       reason: .foreignCurrency,
       cardFragment: ""
-    )
+    ))
   }
 
   private func unparseableDraft(_ message: MailMessage, text: String) -> TransactionDraft {
