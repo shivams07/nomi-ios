@@ -30,9 +30,10 @@ enum HeroSparkline {
     return formatter.string(from: date)
   }
 
-  /// The VoiceOver value: the last day the kind counted, and the total. An
-  /// income-only month reads "No spending" on the spent line, and an
-  /// income day is never counted as spending.
+  /// The VoiceOver value: the last day the kind counted, and the running total
+  /// the line ends on. That day is not necessarily the day with the most spend,
+  /// so the copy does not call it the highest. An income-only month reads "No
+  /// spending" on the spent line, and an income day is never counted as spending.
   static func accessibilityValue(
     byDay: [DayBucket],
     kind: NomiComparisonCopy.Kind = .spent,
@@ -44,7 +45,11 @@ enum HeroSparkline {
     }
     let total = counted.reduce(0) { $0 + amount(of: $1, kind: kind) }
     let day = calendar.component(.day, from: last.id)
-    return "Highest on day \(day), \(NomiFormatters.amountString(minor: total))"
+    let amountText = NomiFormatters.amountString(minor: total)
+    if kind == .spent {
+      return String(localized: "Last spending on day \(day), \(amountText)", bundle: .module)
+    }
+    return String(localized: "Last income on day \(day), \(amountText)", bundle: .module)
   }
 
   /// The minor units a day counts for this line: debit for spent, credit for income.

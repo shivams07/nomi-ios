@@ -70,7 +70,7 @@ final class InsightsCreditDayConsumerTests: XCTestCase {
   }
 
   /// The spoken day is the last spend day. A later credit-only day must not
-  /// become "Highest on day N".
+  /// become "Last spending on day N".
   func testTheSpokenDayIsTheLastSpendDayNotALaterCreditDay() {
     let byDay = [
       DayBucket(id: day(3), debitMinor: 10_000),
@@ -79,7 +79,7 @@ final class InsightsCreditDayConsumerTests: XCTestCase {
 
     XCTAssertEqual(
       HeroSparkline.accessibilityValue(byDay: byDay),
-      "Highest on day 3, \(NomiFormatters.amountString(minor: 10_000))")
+      "Last spending on day 3, \(NomiFormatters.amountString(minor: 10_000))")
   }
 
   /// Control, and expected to pass before and after: Reports sums `debitMinor`

@@ -159,6 +159,8 @@ final class HeroSparklineTests: XCTestCase {
 
   // MARK: - VoiceOver value and the no-spend copy
 
+  /// The value names the last day that counted and the running total, which is
+  /// what the cumulative line ends on.
   func testAccessibilityValueNamesTheLastSpendDayAndTheTotal() {
     let byDay = [
       DayBucket(id: day(2026, 2, 3), debitMinor: 100),
@@ -166,7 +168,30 @@ final class HeroSparklineTests: XCTestCase {
     ]
     XCTAssertEqual(
       HeroSparkline.accessibilityValue(byDay: byDay, kind: .spent, calendar: calendar),
-      "Highest on day 10, ₹3.50"
+      "Last spending on day 10, \(NomiFormatters.amountString(minor: 350))"
+    )
+  }
+
+  /// Red-first pin for the copy fix: the last spend day is not the day with the
+  /// most spend. The value must not call it the highest.
+  func testAccessibilityValueDoesNotCallTheLastSpendDayTheHighest() {
+    let byDay = [
+      DayBucket(id: day(2026, 2, 3), debitMinor: 50_000),
+      DayBucket(id: day(2026, 2, 10), debitMinor: 10_000),
+    ]
+    let value = HeroSparkline.accessibilityValue(byDay: byDay, kind: .spent, calendar: calendar)
+    XCTAssertEqual(value, "Last spending on day 10, \(NomiFormatters.amountString(minor: 60_000))")
+    XCTAssertFalse(value.contains("Highest"))
+  }
+
+  func testTheIncomeValueNamesTheLastIncomeDay() {
+    let byDay = [
+      DayBucket(id: day(2026, 2, 2), debitMinor: 0, creditMinor: 50_000),
+      DayBucket(id: day(2026, 2, 9), debitMinor: 0, creditMinor: 10_000),
+    ]
+    XCTAssertEqual(
+      HeroSparkline.accessibilityValue(byDay: byDay, kind: .income, calendar: calendar),
+      "Last income on day 9, \(NomiFormatters.amountString(minor: 60_000))"
     )
   }
 
