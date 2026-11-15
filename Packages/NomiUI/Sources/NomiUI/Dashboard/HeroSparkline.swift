@@ -10,12 +10,21 @@ enum HeroSparkline {
   /// Sorted by day, cumulative `debitMinor`. `[]` when fewer than two
   /// buckets: the hero draws a flat line for that, the same as zero spend.
   static func points(byDay: [DayBucket]) -> [Double] {
-    guard byDay.count >= 2 else { return [] }
+    let spend = spendDays(byDay)
+    guard spend.count >= 2 else { return [] }
     var running = 0
-    return byDay.sorted { $0.id < $1.id }.map { bucket in
+    return spend.sorted { $0.id < $1.id }.map { bucket in
       running += bucket.debitMinor
       return Double(running)
     }
+  }
+
+  /// The buckets that are spend days. `byDay` also carries days with only
+  /// credits, at a zero debit (I-10), and this line was written when every
+  /// bucket was spend. Those days are dropped before any count, line or spoken
+  /// value, so the hero reads as it did before income reached `byDay`.
+  static func spendDays(_ byDay: [DayBucket]) -> [DayBucket] {
+    byDay.filter { $0.debitMinor != 0 }
   }
 
   /// One step of the line, placed on the calendar, so the x axis is the
@@ -30,9 +39,10 @@ enum HeroSparkline {
   /// spend day's running total, and holds the final total to the end of the
   /// period. `[]` when `points` is empty, which draws the flat line.
   static func samples(byDay: [DayBucket], range: Range<Date>) -> [Sample] {
-    let totals = points(byDay: byDay)
+    let spend = spendDays(byDay)
+    let totals = points(byDay: spend)
     guard let finalTotal = totals.last else { return [] }
-    let days = byDay.sorted { $0.id < $1.id }.map(\.id)
+    let days = spend.sorted { $0.id < $1.id }.map(\.id)
     var samples = [Sample(date: range.lowerBound, total: 0)]
     for (day, total) in zip(days, totals) {
       samples.append(Sample(date: day, total: total))
@@ -71,10 +81,11 @@ enum HeroSparkline {
   /// The VoiceOver value. The running total only rises, so its highest point
   /// is the last spend day: "Highest on day N, ₹X".
   static func accessibilityValue(byDay: [DayBucket], calendar: Calendar = .current) -> String {
-    guard let last = byDay.max(by: { $0.id < $1.id }) else {
+    let spend = spendDays(byDay)
+    guard let last = spend.max(by: { $0.id < $1.id }) else {
       return "No spending this period"
     }
-    let total = byDay.reduce(0) { $0 + $1.debitMinor }
+    let total = spend.reduce(0) { $0 + $1.debitMinor }
     let day = calendar.component(.day, from: last.id)
     return "Highest on day \(day), \(NomiFormatters.amountString(minor: total))"
   }

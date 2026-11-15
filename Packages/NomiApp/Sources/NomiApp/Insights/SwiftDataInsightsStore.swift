@@ -176,6 +176,18 @@ public final class SwiftDataInsightsStore: InsightsStore {
     return try context.fetchCount(descriptor)
   }
 
+  /// I-10. Rows with no account, newest first, transfers included. A predicate
+  /// and a sort in the store, and no cache: a row the user has just bound must
+  /// leave this list on the next read, and a cached answer would keep it.
+  public func unassignedTransactions() throws -> [Transaction] {
+    var descriptor = FetchDescriptor<Transaction>(
+      predicate: #Predicate<Transaction> { $0.accountID == nil },
+      sortBy: [SortDescriptor(\Transaction.date, order: .reverse)]
+    )
+    descriptor.includePendingChanges = true
+    return try context.fetch(descriptor)
+  }
+
   // MARK: -
 
   /// Every cached read goes through here, so a value computed on an earlier

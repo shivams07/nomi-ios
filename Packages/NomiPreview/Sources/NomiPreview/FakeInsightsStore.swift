@@ -48,23 +48,35 @@ public final class FakeInsightsStore: InsightsStore {
       )
     }.sorted { $0.totalMinor > $1.totalMinor }
 
-    var byDay: [Date: Int] = [:]
-    for row in rows where row.directionRaw == Direction.debit.rawValue {
-      let day = calendar.startOfDay(for: row.date)
-      byDay[day, default: 0] += row.amountMinor
-    }
-    let dayBuckets = byDay.map { DayBucket(id: $0.key, debitMinor: $0.value) }.sorted { $0.id < $1.id }
+    // I-10, mirrored from `InsightsAggregator.byDay` over the same rows, so a
+    // preview's sparkline is the store's sparkline.
+    let dayBuckets = fakeByDay(allRows)
 
-    var byMerchant: [String: (String, Int)] = [:]
+    var byMerchant: [String: (label: String, total: Int, count: Int)] = [:]
     for row in rows where row.directionRaw == Direction.debit.rawValue {
       let key = row.normalizedDescription
       let label = row.merchantName ?? row.descriptionText
-      let existing = byMerchant[key]?.1 ?? 0
-      byMerchant[key] = (label, existing + row.amountMinor)
+      let existing = byMerchant[key]
+      byMerchant[key] = (
+        existing?.label ?? label,
+        (existing?.total ?? 0) + row.amountMinor,
+        (existing?.count ?? 0) + 1
+      )
     }
-    let topMerchants = byMerchant.map { MerchantTotal(id: $0.key, label: $0.value.0, totalMinor: $0.value.1) }
+    let topMerchants = byMerchant.map {
+      MerchantTotal(id: $0.key, label: $0.value.label, totalMinor: $0.value.total, count: $0.value.count)
+    }
       .sorted { $0.totalMinor > $1.totalMinor }
       .prefix(5)
+
+    // I-10. The like-for-like prior window, the same cut the store makes, so the
+    // prior-period sparkline lines up day for day with this one.
+    let priorBuckets: [DayBucket]
+    if let window = fakePriorRange(for: period, now: Date()) {
+      priorBuckets = fakeByDay(transactions.filter { window.contains($0.date) })
+    } else {
+      priorBuckets = []
+    }
 
     // The aggregator's order, id last, so a preview lists categories the way the
     // app does.
@@ -89,8 +101,68 @@ public final class FakeInsightsStore: InsightsStore {
       topMerchants: Array(topMerchants),
       needsReviewCount: allRows.filter { $0.needsReview }.count,
       uncategorizedCount: rows.filter { $0.categoryID == nil }.count,
-      categories: badges
+      categories: badges,
+      priorByDay: priorBuckets
     )
+  }
+
+  /// I-10, as `InsightsAggregator.byDay` over `isCountedSpend` rows: INR, not a
+  /// transfer, debit and credit summed apart, one bucket per day with a counted
+  /// row, ascending. Written out again because NomiPreview does not see NomiApp.
+  private func fakeByDay(_ rows: [Transaction]) -> [DayBucket] {
+    var totals: [Date: (debit: Int, credit: Int)] = [:]
+    for row in rows where !row.isTransfer && row.currencyCode == "INR" {
+      let day = calendar.startOfDay(for: row.date)
+      var entry = totals[day] ?? (0, 0)
+      if row.directionRaw == Direction.debit.rawValue {
+        entry.debit += row.amountMinor
+      } else if row.directionRaw == Direction.credit.rawValue {
+        entry.credit += row.amountMinor
+      }
+      totals[day] = entry
+    }
+    return totals
+      .map { DayBucket(id: $0.key, debitMinor: $0.value.debit, creditMinor: $0.value.credit) }
+      .sorted { $0.id < $1.id }
+  }
+
+  /// `InsightsAggregator.priorRange`, written out again for the same reason as
+  /// `fakeTrendMonths`: the boundary is `dateRange`, the like-for-like cut is the
+  /// same arithmetic. `nil` for `.allTime`.
+  private func fakePriorRange(for period: InsightPeriod, now: Date) -> Range<Date>? {
+    switch period {
+    case .month(let year, let month):
+      let priorMonth = month == 1 ? 12 : month - 1
+      let priorYear = month == 1 ? year - 1 : year
+      let prior = dateRange(for: .month(year: priorYear, month: priorMonth), calendar: calendar, now: now)
+      return fakeLikeForLike(
+        current: dateRange(for: period, calendar: calendar, now: now), prior: prior, now: now)
+
+    case .financialYear(let startingYear):
+      let prior = dateRange(for: .financialYear(startingYear: startingYear - 1), calendar: calendar, now: now)
+      return fakeLikeForLike(
+        current: dateRange(for: period, calendar: calendar, now: now), prior: prior, now: now)
+
+    case .trailingMonths(let count):
+      let current = dateRange(for: .trailingMonths(count), calendar: calendar, now: now)
+      guard let start = calendar.date(byAdding: .month, value: -count, to: current.lowerBound) else {
+        return nil
+      }
+      return start..<current.lowerBound
+
+    case .allTime:
+      return nil
+    }
+  }
+
+  /// `prior` cut to as many days as `current` has elapsed by `now`, when
+  /// `current` contains `now`; otherwise the whole of `prior`.
+  private func fakeLikeForLike(current: Range<Date>, prior: Range<Date>, now: Date) -> Range<Date> {
+    guard current.contains(now) else { return prior }
+    let today = calendar.startOfDay(for: now)
+    let daysSinceStart = calendar.dateComponents([.day], from: current.lowerBound, to: today).day ?? 0
+    let cutoff = calendar.date(byAdding: .day, value: daysSinceStart + 1, to: prior.lowerBound) ?? prior.upperBound
+    return prior.lowerBound..<min(cutoff, prior.upperBound)
   }
 
   public func trend(months: Int) throws -> [MonthBucket] {
@@ -231,5 +303,11 @@ public final class FakeInsightsStore: InsightsStore {
 
   public func recentTransactions(limit: Int) throws -> [Transaction] {
     Array(transactions.sorted { $0.date > $1.date }.prefix(max(0, limit)))
+  }
+
+  /// I-10. The answer `SwiftDataInsightsStore.unassignedTransactions()` gives on
+  /// the same rows: no account, newest first, transfers included.
+  public func unassignedTransactions() throws -> [Transaction] {
+    transactions.filter { $0.accountID == nil }.sorted { $0.date > $1.date }
   }
 }

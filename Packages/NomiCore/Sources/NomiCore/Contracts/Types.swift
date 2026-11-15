@@ -106,10 +106,14 @@ public struct CategorySlice: Sendable, Identifiable {
 public struct DayBucket: Sendable, Identifiable {
   public let id: Date
   public let debitMinor: Int
+  /// I-10. Counted income on this day, the same filter as `debitMinor`: INR
+  /// and not a transfer. Defaulted so every existing construction compiles.
+  public let creditMinor: Int
 
-  public init(id: Date, debitMinor: Int) {
+  public init(id: Date, debitMinor: Int, creditMinor: Int = 0) {
     self.id = id
     self.debitMinor = debitMinor
+    self.creditMinor = creditMinor
   }
 }
 
@@ -129,11 +133,15 @@ public struct MerchantTotal: Sendable, Identifiable {
   public let id: String
   public let label: String
   public let totalMinor: Int
+  /// I-10. Rows folded into this total. Defaulted so existing constructions
+  /// compile; the aggregator and the fake always pass it.
+  public let count: Int
 
-  public init(id: String, label: String, totalMinor: Int) {
+  public init(id: String, label: String, totalMinor: Int, count: Int = 0) {
     self.id = id
     self.label = label
     self.totalMinor = totalMinor
+    self.count = count
   }
 }
 
@@ -176,6 +184,10 @@ public struct PeriodInsights: Sendable {
   /// the rule `CategorySlice.symbolName` states: a default is how a production
   /// site ships an empty map and every row draws the fallback badge.
   public let categories: [CategoryBadge]
+  /// I-10. `byDay` of the like-for-like prior window (`priorRange`), so a
+  /// consumer can draw this period against the same days of the last. `[]`
+  /// when there is no prior window, as for `.allTime`.
+  public let priorByDay: [DayBucket]
 
   public init(
     period: InsightPeriod,
@@ -190,7 +202,8 @@ public struct PeriodInsights: Sendable {
     topMerchants: [MerchantTotal],
     needsReviewCount: Int,
     uncategorizedCount: Int,
-    categories: [CategoryBadge] = []
+    categories: [CategoryBadge] = [],
+    priorByDay: [DayBucket] = []
   ) {
     self.period = period
     self.debitMinor = debitMinor
@@ -205,6 +218,7 @@ public struct PeriodInsights: Sendable {
     self.needsReviewCount = needsReviewCount
     self.uncategorizedCount = uncategorizedCount
     self.categories = categories
+    self.priorByDay = priorByDay
   }
 }
 

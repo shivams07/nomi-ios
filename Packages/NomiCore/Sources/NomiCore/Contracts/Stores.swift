@@ -131,9 +131,21 @@ public protocol InsightsStore: AnyObject {
   /// month. Independent of `insights(for:)`, whose `needsReviewCount` is the
   /// selected period.
   func needsReviewCountAllTime() throws -> Int
+
+  /// I-10. Rows with `accountID == nil`, newest first, transfers included. No
+  /// cache: a row bound to an account drops out of this list on the next read,
+  /// not after the next cache clear.
+  func unassignedTransactions() throws -> [Transaction]
 }
 
 extension InsightsStore {
+  /// I-10. Stub default, as `recentTransactions` is. Every database store
+  /// overrides it; inheriting this one would route the read through
+  /// `transactions(in:)` and its cache.
+  public func unassignedTransactions() throws -> [Transaction] {
+    try transactions(in: .allTime).filter { $0.accountID == nil }.sorted { $0.date > $1.date }
+  }
+
   /// Default for preview and test stubs that hold a handful of rows, so
   /// adding this requirement did not have to reach into files outside the
   /// unit that added it. **Every store that talks to a database overrides
