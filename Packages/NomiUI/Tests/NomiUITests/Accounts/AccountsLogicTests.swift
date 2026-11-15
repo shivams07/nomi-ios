@@ -457,4 +457,95 @@ final class AccountCreateActionTests: XCTestCase {
     )
     XCTAssertEqual(account.openingBalanceMinor, -1_842_000)
   }
+
+  /// Lim, PR 215: a refused amount must never become a created account with no balance.
+  /// The create path refuses, and the store is left as it was.
+  func testAnOutOfRangeOpeningBalanceIsRefusedAndNothingIsCreated() {
+    for text in ["1000000000.01", "-1000000000.01"] {
+      let store = FakeAccountStore(accounts: [])
+      XCTAssertThrowsError(try AccountCreateAction.perform(
+        store: store, displayName: "HDFC Savings", institution: "HDFC Bank", lastFour: "4471",
+        kindRaw: "bank", openingBalanceText: text, locale: indian
+      ), text) { error in
+        XCTAssertEqual(error as? AccountCreateError, .openingBalanceOutOfRange, text)
+      }
+      XCTAssertTrue(store.accounts.isEmpty, text)
+    }
+  }
+
+  /// ±10^11 paise is the edge of `AmountRules.isValidOpeningBalance`, and it is kept.
+  func testTheOpeningBalanceLimitsAreCreatedWithThatBalance() throws {
+    let high = try AccountCreateAction.perform(
+      store: FakeAccountStore(accounts: []), displayName: "Big", institution: "", lastFour: "",
+      kindRaw: "bank", openingBalanceText: "1000000000", locale: indian
+    )
+    XCTAssertEqual(high.openingBalanceMinor, 100_000_000_000)
+    let low = try AccountCreateAction.perform(
+      store: FakeAccountStore(accounts: []), displayName: "Owed", institution: "", lastFour: "",
+      kindRaw: "card", openingBalanceText: "-1000000000", locale: indian
+    )
+    XCTAssertEqual(low.openingBalanceMinor, -100_000_000_000)
+  }
+
+  /// Empty is "no opening balance": created, with nil, and one row in the store.
+  func testAnEmptyOpeningBalanceIsCreatedWithNil() throws {
+    let store = FakeAccountStore(accounts: [])
+    let account = try AccountCreateAction.perform(
+      store: store, displayName: "Cash drawer", institution: "", lastFour: "",
+      kindRaw: "wallet", openingBalanceText: "", locale: indian
+    )
+    XCTAssertNil(account.openingBalanceMinor)
+    XCTAssertEqual(store.accounts.count, 1)
+  }
+}
+
+/// Save is disabled, with its hint, for any opening balance the store would refuse.
+/// The gate and the save use one predicate, so they cannot drift apart.
+final class AccountCreateSaveGateTests: XCTestCase {
+  private let indian = Locale(identifier: "en_IN")
+
+  func testSaveIsDisabledForAnOpeningBalanceOutsideTheRange() {
+    XCTAssertFalse(AccountCreateFormGate.canSave(
+      displayName: "HDFC Savings", lastFour: "4471", openingBalanceText: "1000000000.01", locale: indian))
+    XCTAssertFalse(AccountCreateFormGate.canSave(
+      displayName: "ICICI Credit Card", lastFour: "9012", openingBalanceText: "-1000000000.01", locale: indian))
+  }
+
+  func testSaveIsEnabledAtTheLimitsAndWhenBlank() {
+    XCTAssertTrue(AccountCreateFormGate.canSave(
+      displayName: "Big", lastFour: "", openingBalanceText: "1000000000", locale: indian))
+    XCTAssertTrue(AccountCreateFormGate.canSave(
+      displayName: "Owed", lastFour: "", openingBalanceText: "-1000000000", locale: indian))
+    XCTAssertTrue(AccountCreateFormGate.canSave(
+      displayName: "Cash", lastFour: "", openingBalanceText: "", locale: indian))
+  }
+
+  func testTheHintShowsOnlyForAnAmountTheStoreWouldRefuse() {
+    XCTAssertNotNil(AccountCreateFormGate.openingBalanceHint("1000000000.01", locale: indian))
+    XCTAssertNil(AccountCreateFormGate.openingBalanceHint("", locale: indian))
+    XCTAssertNil(AccountCreateFormGate.openingBalanceHint("1000000000", locale: indian))
+  }
+
+  func testTheEditGateRefusesTheSameBalances() {
+    XCTAssertFalse(AccountOpeningBalanceField.isValid("1000000000.01", locale: indian))
+    XCTAssertFalse(AccountOpeningBalanceField.isValid("-1000000000.01", locale: indian))
+    XCTAssertTrue(AccountOpeningBalanceField.isValid("-1000000000", locale: indian))
+  }
+}
+
+/// Lim's M5, non-blocking: the screen keeps the system navigation bar. Hiding it
+/// removes the back control at every size, which is the S8 must-fix.
+final class AccountsScreenChromePinTests: XCTestCase {
+  func testTheScreenNeverHidesTheSystemNavigationBar() throws {
+    let source = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()  // Accounts
+      .deletingLastPathComponent()  // NomiUITests
+      .deletingLastPathComponent()  // Tests
+      .deletingLastPathComponent()  // NomiUI package
+      .appendingPathComponent("Sources/NomiUI/Accounts/AccountsScreen.swift")
+    let text = try String(contentsOf: source, encoding: .utf8)
+    XCTAssertFalse(text.contains("navigationBarHidden"))
+    XCTAssertFalse(text.contains(".toolbar(.hidden"))
+    XCTAssertFalse(text.contains("NomiHeroScaffold"))
+  }
 }

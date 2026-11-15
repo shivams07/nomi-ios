@@ -36,6 +36,9 @@ enum NomiAccountCardStyle: Equatable, CaseIterable {
     case .paper: return 0x111411
     }
   }
+
+  /// The text colour for views. The conversion lives here, in Design/, so a view never builds a colour from hex (G1).
+  var foreground: Color { Color(hex: foregroundHex) }
 }
 
 /// A card's background: the gradient with its sheen band for moss and black,

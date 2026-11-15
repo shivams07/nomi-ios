@@ -28,8 +28,7 @@ struct AccountCreateSheet: View {
   }
 
   private var canSave: Bool {
-    AccountCreateFormGate.isValid(displayName: displayName, lastFour: lastFour)
-      && AccountOpeningBalanceField.isValid(openingBalanceText)
+    AccountCreateFormGate.canSave(displayName: displayName, lastFour: lastFour, openingBalanceText: openingBalanceText)
   }
 
   var body: some View {
@@ -64,6 +63,13 @@ struct AccountCreateSheet: View {
             }
           }
           .nomiCard(padding: EdgeInsets())
+
+          if let hint = AccountCreateFormGate.openingBalanceHint(openingBalanceText) {
+            Text(hint)
+              .nomiTextStyle(.caption)
+              .foregroundStyle(NomiColor.error)
+              .padding(.horizontal, NomiSpacing.xxs)
+          }
 
           Text(AccountBalanceDisplay.openingBalanceFooter(kind: AccountKindOptions.kind(raw: kindRaw)))
             .nomiTextStyle(.caption)

@@ -123,12 +123,22 @@ enum AccountCreateAction {
     openingBalanceText: String,
     locale: Locale = .current
   ) throws -> Account {
-    try store.create(
+    // Blank is "no balance". Any other text must convert; a refusal throws before the store is touched,
+    // so a bad amount can never become an account with its balance silently dropped.
+    let openingBalanceMinor: Int?
+    if openingBalanceText.isEmpty {
+      openingBalanceMinor = nil
+    } else if let converted = AccountOpeningBalanceField.minorUnits(from: openingBalanceText, locale: locale) {
+      openingBalanceMinor = converted
+    } else {
+      throw AccountCreateError.openingBalanceOutOfRange
+    }
+    return try store.create(
       displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines),
       institution: institution.trimmingCharacters(in: .whitespacesAndNewlines),
       lastFour: lastFour,
       kindRaw: kindRaw,
-      openingBalanceMinor: AccountOpeningBalanceField.minorUnits(from: openingBalanceText, locale: locale)
+      openingBalanceMinor: openingBalanceMinor
     )
   }
 }
@@ -233,6 +243,25 @@ enum AccountCreateFormGate {
     guard !trimmedName.isEmpty else { return false }
     return AccountLastFourGate.isValid(lastFour)
   }
+
+  /// Save is enabled when the name and last four pass and the opening balance is
+  /// one the store would take (or blank). The same predicate `AccountCreateAction` uses.
+  static func canSave(displayName: String, lastFour: String, openingBalanceText: String, locale: Locale = .current) -> Bool {
+    isValid(displayName: displayName, lastFour: lastFour)
+      && AccountOpeningBalanceField.isValid(openingBalanceText, locale: locale)
+  }
+
+  /// The inline hint under the opening-balance field: shown only when the text is
+  /// non-empty and outside the range, so the user sees why Save is off.
+  static func openingBalanceHint(_ text: String, locale: Locale = .current) -> String? {
+    guard !AccountOpeningBalanceField.isValid(text, locale: locale) else { return nil }
+    return String(localized: "Enter an amount from −1,000,000,000.00 to 1,000,000,000.00, or leave it blank.", bundle: .module)
+  }
+}
+
+/// Why the create path refused. Thrown, never turned into a balance-less account.
+enum AccountCreateError: Error, Equatable {
+  case openingBalanceOutOfRange
 }
 
 /// The opening-balance `TextField`'s two directions: seeding editable plain
@@ -255,9 +284,10 @@ enum AccountOpeningBalanceField {
     return NSDecimalNumber(decimal: Decimal(minor) / 100).stringValue
   }
 
-  /// Empty means "no opening balance" and is valid. Anything else must parse.
+  /// Empty means "no opening balance" and is valid. Anything else is valid exactly when
+  /// `minorUnits(from:)` converts it, so a gate and a save can never disagree.
   static func isValid(_ text: String, locale: Locale = .current) -> Bool {
-    text.isEmpty || AmountText.minorUnits(text, locale: locale, allowNegative: true) != nil
+    text.isEmpty || minorUnits(from: text, locale: locale) != nil
   }
 
   /// `nil` for empty and for anything invalid. Only meaningful once `isValid` has

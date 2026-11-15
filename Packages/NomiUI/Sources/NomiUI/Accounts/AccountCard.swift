@@ -15,7 +15,7 @@ struct AccountCard: View {
   private var balance: AccountBalanceDisplay.Line {
     AccountBalanceDisplay.line(kind: kind, trackedMinor: account.trackedBalanceMinor)
   }
-  private var foreground: Color { Color(hex: style.foregroundHex) }
+  private var foreground: Color { style.foreground }
 
   var body: some View {
     Button(action: action) {
