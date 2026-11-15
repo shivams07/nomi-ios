@@ -25,16 +25,18 @@ public actor FakeFileImportService: FileImportService {
     )
   }
 
-  /// The Import artboard's "Check before importing" numbers (38 new, 9 already
-  /// in Nomi, 2 could not read) and its three "First rows" lines, so S11's
-  /// previews match the board. Fixed, not computed from the URL.
+  /// The Import artboard's "Check before importing" numbers (38 to create, 9
+  /// matched to rows already in Nomi, none repeated in the file, 2 could not
+  /// read) and its three "First rows" lines, so S11's previews match the board.
+  /// Fixed, not computed from the URL.
   public func dryRun(_ url: URL, mapping: ColumnMapping) async throws -> ImportDryRun {
     func day(_ day: Int) -> Date {
       NomiCalendar.india.date(from: DateComponents(year: 2026, month: 11, day: day)) ?? .distantPast
     }
     return ImportDryRun(
-      newCount: 38,
-      alreadyImportedCount: 9,
+      createCount: 38,
+      matchExistingCount: 9,
+      repeatInFileCount: 0,
       unreadable: [
         ["10/11/2026", "CHARGES FOR SMS ALERT", "", "REF020"],
         ["11/11/2026", "REVERSAL HOLD", "", "REF021"],
@@ -54,7 +56,8 @@ public actor FakeFileImportService: FileImportService {
   }
 
   public func commit(_ url: URL, mapping: ColumnMapping, accountID: UUID?) async throws -> ImportSummary {
-    ImportSummary(created: 2, merged: 0, skipped: 0)
+    // The same split as the fixed dry run above (I-12 Amendment 1).
+    ImportSummary(created: 38, merged: 9, skipped: 2, matchedExisting: 9, repeatedInFile: 0)
   }
 
   public nonisolated func saveMapping(_ mapping: ColumnMapping, signature: String, bankLabel: String) throws {}

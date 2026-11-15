@@ -123,6 +123,16 @@ public struct MailSyncCursor: Sendable, Equatable, Codable {
 /// `ModelContext`. `IngestPipeline` is an actor and satisfies this as-is.
 public protocol DraftIngesting: Sendable {
   func ingest(_ drafts: [TransactionDraft]) async throws -> IngestBatchResult
+
+  /// The ingest loop run without writing (I-12 Amendment 1). Test doubles do not
+  /// dry-run, so the default below throws.
+  func simulate(_ drafts: [TransactionDraft]) async throws -> IngestBatchResult
+}
+
+extension DraftIngesting {
+  public func simulate(_ drafts: [TransactionDraft]) async throws -> IngestBatchResult {
+    throw CancellationError()
+  }
 }
 
 extension IngestPipeline: DraftIngesting {}

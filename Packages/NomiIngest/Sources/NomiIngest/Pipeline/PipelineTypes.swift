@@ -228,11 +228,30 @@ public struct IngestBatchResult: Sendable, Equatable {
   public let created: Int
   public let merged: Int
   public let flagged: Int
+  /// The id of every row this call created, in draft order (I-12 Amendment 1).
+  public let createdIDs: [UUID]
+  /// One entry per merged draft: the id of the row it folded into, in draft
+  /// order. Includes the no-op case where the contributor is already on the row.
+  public let mergeTargetIDs: [UUID]
+  /// The draft index of every row this call created, parallel to `createdIDs`.
+  /// For `simulate` the index runs over the whole array it was given, not per
+  /// chunk. The dry run uses it to name the first five rows it will create.
+  public let createdDraftIndexes: [Int]
 
-  public init(created: Int, merged: Int, flagged: Int) {
+  public init(
+    created: Int,
+    merged: Int,
+    flagged: Int,
+    createdIDs: [UUID] = [],
+    mergeTargetIDs: [UUID] = [],
+    createdDraftIndexes: [Int] = []
+  ) {
     self.created = created
     self.merged = merged
     self.flagged = flagged
+    self.createdIDs = createdIDs
+    self.mergeTargetIDs = mergeTargetIDs
+    self.createdDraftIndexes = createdDraftIndexes
   }
 
   public static let empty = IngestBatchResult(created: 0, merged: 0, flagged: 0)

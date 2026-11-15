@@ -459,15 +459,30 @@ public struct ColumnMapping: Codable, Sendable, Equatable {
   }
 }
 
+/// What `FileImportService.commit` did (I-12, Amendment 1). `merged` is the sum of
+/// the two split fields: a row folded into a transaction already in Nomi, or into
+/// a row this same import created.
 public struct ImportSummary: Sendable {
   public let created: Int
   public let merged: Int
   public let skipped: Int
+  /// Merged into a transaction that was already in Nomi before this import.
+  public let matchedExisting: Int
+  /// Merged into a row this same import created.
+  public let repeatedInFile: Int
 
-  public init(created: Int, merged: Int, skipped: Int) {
+  public init(
+    created: Int,
+    merged: Int,
+    skipped: Int,
+    matchedExisting: Int = 0,
+    repeatedInFile: Int = 0
+  ) {
     self.created = created
     self.merged = merged
     self.skipped = skipped
+    self.matchedExisting = matchedExisting
+    self.repeatedInFile = repeatedInFile
   }
 }
 
