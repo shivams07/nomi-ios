@@ -1,4 +1,5 @@
 import Foundation
+import NomiCore
 
 /// Currency amounts out of normalized mail text, as `Int` paise.
 ///
@@ -14,17 +15,36 @@ public enum MailAmount {
   /// The trailing form: `4,500.00 INR`. Less common, but some UPI alerts use it.
   private static let trailingSymbolPattern = #"([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(?:₹|\bINR\b)(?![A-Za-z])"#
 
-  /// Every amount in the text, in the order they appear. Deduplicated by
-  /// position rather than by value — two ₹500 charges in one mail are two
-  /// amounts, not one.
-  public static func allAmounts(in text: String) -> [Int] {
-    amountsWithRanges(in: text).map(\.minor)
+  /// What one currency-tagged figure in a mail came to (B8).
+  ///
+  /// `.valid` is an amount the app may store: it parsed without overflowing `Int`
+  /// and sits inside `AmountRules`. `.unusable` is a figure that matched a currency
+  /// pattern but cannot be stored, because it overflowed `Int` or is outside
+  /// `AmountRules`. A caller that gets `.unusable` must not read another figure from
+  /// the same mail in its place.
+  public enum MailAmountReading: Equatable, Sendable {
+    case valid(Int)
+    case unusable
   }
 
-  /// The same amounts, each with the span it was matched in. The Layer 2 rule
-  /// needs to know WHERE a number is, not just what it is.
-  static func amountsWithRanges(in text: String) -> [(range: Range<String.Index>, minor: Int)] {
-    var found: [(range: Range<String.Index>, minor: Int)] = []
+  /// Every usable amount in the text, in the order they appear. Deduplicated by
+  /// position rather than by value — two ₹500 charges in one mail are two
+  /// amounts, not one. Unusable figures are left out (see `hasRupeeFigure`).
+  public static func allAmounts(in text: String) -> [Int] {
+    amountsWithRanges(in: text).compactMap { found in
+      if case .valid(let minor) = found.reading { return minor }
+      return nil
+    }
+  }
+
+  /// Every currency-tagged figure, usable or not, each with the span it was matched
+  /// in. The Layer 2 rule needs to know WHERE a number is, not just what it is.
+  /// An unusable figure is kept here, not dropped: dropping it let the heuristic
+  /// read the next number in the clause (B8, F1).
+  static func amountsWithRanges(in text: String)
+    -> [(range: Range<String.Index>, reading: MailAmountReading)]
+  {
+    var found: [(range: Range<String.Index>, reading: MailAmountReading)] = []
     for pattern in [leadingSymbolPattern, trailingSymbolPattern] {
       guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
       else { continue }
@@ -32,18 +52,24 @@ public enum MailAmount {
       for match in regex.matches(in: text, range: range) {
         guard match.numberOfRanges > 1,
           let whole = Range(match.range, in: text),
-          let captured = Range(match.range(at: 1), in: text),
-          let minor = paise(fromDigits: String(text[captured]))
+          let captured = Range(match.range(at: 1), in: text)
         else { continue }
-        found.append((whole, minor))
+        found.append((whole, reading(fromDigits: String(text[captured]))))
       }
     }
     return found.sorted { $0.range.lowerBound < $1.range.lowerBound }
   }
 
-  /// The first amount, which for a single-transaction alert is the transaction.
+  /// The first usable amount, which for a single-transaction alert is the transaction.
   public static func firstAmount(in text: String) -> Int? {
     allAmounts(in: text).first
+  }
+
+  /// Whether the text carries a rupee figure at all, usable or not. The pre-filter
+  /// and the extractor ask this rather than `firstAmount`, so a mail whose only
+  /// figure cannot be stored is still a candidate and still becomes a row (B8, F2).
+  public static func hasRupeeFigure(in text: String) -> Bool {
+    !amountsWithRanges(in: text).isEmpty
   }
 
   /// Layer 2's rule: the amount in the same clause as the direction verb,
@@ -61,21 +87,35 @@ public enum MailAmount {
   /// clause or no amount inside it. A single-transaction alert leads with its
   /// amount, and being wrong towards the first number at least fails the same
   /// way every time.
-  public static func transactionAmount(in text: String, verbRange: Range<String.Index>?)
-    -> Int?
+  ///
+  /// Returns the reading of the chosen figure, usable or not, so the caller can
+  /// refuse the mail when the nearest figure cannot be stored, rather than take
+  /// the next one. nil only when there is no currency-tagged figure.
+  public static func transactionReading(in text: String, verbRange: Range<String.Index>?)
+    -> MailAmountReading?
   {
     let amounts = amountsWithRanges(in: text)
     guard !amounts.isEmpty else { return nil }
-    guard let verbRange else { return amounts.first?.minor }
+    guard let verbRange else { return amounts.first?.reading }
 
     let clause = MailNarration.clauseBounds(around: verbRange, in: text)
     let inClause = amounts.filter { clause.contains($0.range.lowerBound) }
-    guard !inClause.isEmpty else { return amounts.first?.minor }
+    guard !inClause.isEmpty else { return amounts.first?.reading }
 
     return inClause.min {
       characterDistance(from: $0.range, to: verbRange, in: text)
         < characterDistance(from: $1.range, to: verbRange, in: text)
-    }?.minor
+    }?.reading
+  }
+
+  /// The chosen figure's paise when it is usable, nil when it is not or there is
+  /// none. The extractor reads `transactionReading`, which keeps an unusable figure
+  /// as a refusal; this form serves callers that want only a storable amount.
+  public static func transactionAmount(in text: String, verbRange: Range<String.Index>?) -> Int? {
+    guard case .valid(let minor)? = transactionReading(in: text, verbRange: verbRange) else {
+      return nil
+    }
+    return minor
   }
 
   /// Characters between two spans, zero if they overlap.
@@ -89,6 +129,16 @@ public enum MailAmount {
       return text.distance(from: other.upperBound, to: range.lowerBound)
     }
     return 0
+  }
+
+  /// Digits to a reading. `.valid` only when the digits parse without overflow and
+  /// the value is inside `AmountRules`. Anything else, including a fraction that
+  /// will not parse, is `.unusable`: a figure that cannot be read is not a reason
+  /// to try the next one (B8).
+  static func reading(fromDigits raw: String) -> MailAmountReading {
+    guard let minor = paise(fromDigits: raw), AmountRules.isValidTransactionAmount(minor)
+    else { return .unusable }
+    return .valid(minor)
   }
 
   /// `"4,500.75"` -> `450075`. `"4,500.7"` -> `450070`. `"4,500"` -> `450000`.
@@ -130,10 +180,15 @@ public enum MailAmount {
   public struct ForeignAmount: Equatable, Sendable {
     public let currencyCode: String
     public let minor: Int
+    /// False when the figure is outside `AmountRules`, or when it overflowed `Int`
+    /// (then `minor` is 0). An unusable figure is still reported, so the caller
+    /// flags the mail rather than reading past it (B8).
+    public let isUsable: Bool
 
-    public init(currencyCode: String, minor: Int) {
+    public init(currencyCode: String, minor: Int, isUsable: Bool = true) {
       self.currencyCode = currencyCode
       self.minor = minor
+      self.isUsable = isUsable
     }
   }
 
@@ -161,12 +216,13 @@ public enum MailAmount {
 
   private static let numberPattern = #"([0-9][0-9,]*(?:\.[0-9]{1,2})?)(?![0-9])"#
 
-  /// The first non-INR amount in the text, by position.
+  /// The first non-INR amount in the text, by position, usable or not.
   ///
   /// Deliberately independent of `firstAmount`: a mail carrying both — "₹1,089.00
   /// (USD 12.99)" on a card statement — is an INR transaction, and the caller
   /// asks for the rupee amount first. This only answers "was there a foreign
-  /// amount", never "which amount is the transaction".
+  /// amount", never "which amount is the transaction". Check `isUsable` before
+  /// trusting `minor`.
   public static func foreignAmount(in text: String) -> ForeignAmount? {
     foreignAmountsWithRanges(in: text).first?.amount
   }
@@ -205,11 +261,21 @@ public enum MailAmount {
         let code =
           spec.isSymbol
           ? currencySymbols[token.uppercased()] : token.uppercased()
-        guard let code, let exponent = foreignCurrencies[code],
-          let minor = minorUnits(fromDigits: String(text[digitsRange]), exponent: exponent)
-        else { continue }
+        guard let code, let exponent = foreignCurrencies[code] else { continue }
+        let digits = String(text[digitsRange])
+        // "JPY 1000.50" is malformed, not an amount. It stays refused outright.
+        if exponent == 0, digits.contains(".") { continue }
 
-        found.append((whole, ForeignAmount(currencyCode: code, minor: minor)))
+        let amount: ForeignAmount
+        if let minor = minorUnits(fromDigits: digits, exponent: exponent) {
+          amount = ForeignAmount(
+            currencyCode: code, minor: minor, isUsable: AmountRules.isValidTransactionAmount(minor))
+        } else {
+          // Overflowed Int. Kept as unusable, not dropped, so the row is flagged
+          // rather than the mail vanishing or a later figure being read (B8).
+          amount = ForeignAmount(currencyCode: code, minor: 0, isUsable: false)
+        }
+        found.append((whole, amount))
       }
     }
     return found.sorted { $0.range.lowerBound < $1.range.lowerBound }

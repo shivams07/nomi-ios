@@ -69,7 +69,10 @@ public struct MailPreFilter: Sendable {
     // forms alone rejected every card statement billed in USD as
     // `.noCurrencyAmount`, so the row never reached the extractor and the
     // transaction vanished rather than arriving flagged.
-    guard MailAmount.firstAmount(in: haystack) != nil
+    // B8. A figure that cannot be stored (over the cap, or overflowing Int) still
+    // counts. Gating on the usable amount alone let an overflow-only mail vanish
+    // here, so it never became the needs-review row the user has to see.
+    guard MailAmount.hasRupeeFigure(in: haystack)
       || MailAmount.foreignAmount(in: haystack) != nil
     else { return .rejected(.noCurrencyAmount) }
     guard MailDirection.containsTransactionVerb(haystack) else {
