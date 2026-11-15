@@ -42,7 +42,8 @@ public struct ImportEntryView: View {
       .background(NomiColor.ground)
       .navigationTitle(navigationTitle)
       #if os(iOS)
-      .navigationBarTitleDisplayMode(.large)
+      // The check screen's title is inline: a large title truncates "Check before importing" at 390 pt.
+      .navigationBarTitleDisplayMode(isChecking ? .inline : .large)
       #endif
       .fileImporter(
         isPresented: $isPickerPresented,
@@ -87,13 +88,20 @@ public struct ImportEntryView: View {
     }
   }
 
-  private var navigationTitle: String {
+  /// True on the check screen (needs columns, ready, importing). Those states use an inline title.
+  private var isChecking: Bool {
     switch check?.state {
     case .needsColumns?, .ready?, .importing?:
-      return String(localized: "Check before importing", bundle: .module)
+      return true
     default:
-      return String(localized: "Import from file", bundle: .module)
+      return false
     }
+  }
+
+  private var navigationTitle: String {
+    isChecking
+      ? String(localized: "Check before importing", bundle: .module)
+      : String(localized: "Import from file", bundle: .module)
   }
 
   // MARK: - States
