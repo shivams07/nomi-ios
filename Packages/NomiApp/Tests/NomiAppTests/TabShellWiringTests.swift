@@ -26,13 +26,21 @@ final class TabShellWiringTests: XCTestCase {
   }
 
   /// M3. A tab that is not selected is neither hit-testable nor shown to accessibility.
+  /// F3c moved these two modifiers into `TabRootHost`'s body (keyed on `key.isSelected`), so
+  /// M3 now scans that file. The mutant is the same: delete either modifier and this fails.
   func testHiddenTabsAreNotHitTestableOrAccessible() throws {
-    let text = try rootView()
+    let package = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()  // NomiAppTests
+      .deletingLastPathComponent()  // Tests
+      .deletingLastPathComponent()  // NomiApp
+    let host = try String(
+      contentsOf: package.appendingPathComponent("Sources/NomiApp/Navigation/TabRootHost.swift"),
+      encoding: .utf8)
     XCTAssertTrue(
-      text.contains(".allowsHitTesting(tab == selection)"),
+      host.contains(".allowsHitTesting(key.isSelected)"),
       "a hidden tab must not take taps")
     XCTAssertTrue(
-      text.contains(".accessibilityHidden(tab != selection)"),
+      host.contains(".accessibilityHidden(!key.isSelected)"),
       "a hidden tab must not be read by VoiceOver")
   }
 

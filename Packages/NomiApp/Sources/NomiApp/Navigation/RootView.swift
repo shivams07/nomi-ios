@@ -112,7 +112,7 @@ struct RootView: View {
     NomiTabShell {
       GeometryReader { shell in
         ZStack(alignment: .bottom) {
-          tabs
+          tabs(reserve: tabRootReserve(safeAreaBottom: shell.safeAreaInsets.bottom))
             .safeAreaInset(edge: .top) {
               if BackfillBannerVisibility.shouldShow(progress: backfillProgress, unfinished: backfillUnfinished) {
                 BackfillBanner(progress: backfillProgress ?? BackfillProgress(scanned: 0, total: 0, created: 0))
@@ -125,12 +125,7 @@ struct RootView: View {
           }
         }
         // Every tab root reads this. A pushed screen sees 0, because the bar is hidden there.
-        .environment(
-          \.nomiTabBarReserve,
-          isTabBarShown
-            ? NomiTabBarReserve.margin(barHeight: tabBarHeight, safeAreaBottom: shell.safeAreaInsets.bottom)
-            : 0
-        )
+        .environment(\.nomiTabBarReserve, tabRootReserve(safeAreaBottom: shell.safeAreaInsets.bottom))
       }
     }
     .modifier(ShellEnvironment(actions: shellActions))
@@ -227,18 +222,38 @@ struct RootView: View {
   // MARK: - Tabs
 
   /// Each visited tab, built once and then kept. Only the selected one is visible and
-  /// hit-testable.
-  private var tabs: some View {
+  /// hit-testable. `TabRootHost` rebuilds a root only when its key changes (F3c), so a
+  /// switch re-runs two roots, not all of them.
+  private func tabs(reserve: CGFloat) -> some View {
     ZStack {
       ForEach(RootTab.allCases) { tab in
         if visited.contains(tab) {
-          tabRoot(tab)
-            .opacity(tab == selection ? 1 : 0)
-            .allowsHitTesting(tab == selection)
-            .accessibilityHidden(tab != selection)
+          TabRootHost(key: tabKey(tab, reserve: reserve)) {
+            tabRoot(tab)
+          }
+          .equatable()
         }
       }
     }
+  }
+
+  /// The key for one tab root, from the state this view owns.
+  private func tabKey(_ tab: RootTab, reserve: CGFloat) -> TabRootKey {
+    TabRootKey.make(
+      tab: tab,
+      selection: selection,
+      tokens: tokens,
+      pathCount: pathCount(for: tab),
+      activityRequestID: activityRequestID,
+      reserve: reserve,
+      isRequestingPermission: notificationSettings.isRequestingPermission)
+  }
+
+  /// Every tab root reads this reserve. A pushed screen sees 0, because the bar is hidden there.
+  private func tabRootReserve(safeAreaBottom: CGFloat) -> CGFloat {
+    isTabBarShown
+      ? NomiTabBarReserve.margin(barHeight: tabBarHeight, safeAreaBottom: safeAreaBottom)
+      : 0
   }
 
   @ViewBuilder
