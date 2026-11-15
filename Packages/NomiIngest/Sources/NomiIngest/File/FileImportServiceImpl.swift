@@ -15,8 +15,9 @@ public final class FileImportServiceImpl: FileImportService, @unchecked Sendable
   private let pipeline: any DraftIngesting
   private let calendar: Calendar
   private let now: @Sendable () -> Date
-  /// Read by `dryRun` only. Nil means no store to compare against, so nothing
-  /// is counted as already imported.
+  /// No longer read by `dryRun` (I-12 Amendment 1): the dry run asks the
+  /// pipeline, which compares against the store itself. Kept so the composition
+  /// root's call compiles; removed by the unit that next owns `AppEnvironment`.
   private let lookup: (any ImportedRowLookup)?
 
   public init(
@@ -37,10 +38,12 @@ public final class FileImportServiceImpl: FileImportService, @unchecked Sendable
     self.lookup = lookup
   }
 
-  /// Counts what `commit` would import, and writes nothing (I-12). Maps the file
-  /// with the same `RowMapper.mapAll` call `commit` makes, so a row is parsed here
-  /// exactly when commit would parse it. Reads the already-imported IDs once; a
-  /// lookup that throws propagates, and nothing is counted as zero by accident.
+  /// Counts what `commit` would do with this file, and writes nothing (I-12,
+  /// Amendment 1). The counts come from the pipeline's own ingest loop run by
+  /// `simulate`, over the same drafts `commit` builds, so dry run and commit agree
+  /// field by field with no write in between. A row is parsed here exactly when
+  /// commit would parse it (the same `RowMapper.mapAll` call and the same amount
+  /// rule).
   public func dryRun(_ url: URL, mapping: ColumnMapping) async throws -> ImportDryRun {
     let file = try FileReader.read(url: url)
     let signature = FormatSignature.make(headers: file.headers)
@@ -62,34 +65,33 @@ public final class FileImportServiceImpl: FileImportService, @unchecked Sendable
       }
     }
 
-    // No lookup means no store to compare against: nothing is already imported.
-    let stored: Set<String>
-    if let lookup {
-      stored = try await lookup.externalIDs(source: .file)
-    } else {
-      stored = []
-    }
+    // Accounts are not part of the match (DedupeMatcher keys on amount, direction,
+    // date and normalized text), so the dry run's nil account gives commit's counts.
+    let capturedAt = now()
+    let drafts = parsed.map { draft(for: $0.row, accountID: nil, capturedAt: capturedAt) }
+    let result = try await pipeline.simulate(drafts)
 
-    var newCount = 0
+    let createdIDs = Set(result.createdIDs)
+    let repeatInFile = result.mergeTargetIDs.filter { createdIDs.contains($0) }.count
+
     var sample: [ImportDryRunRow] = []
-    for (index, row) in parsed where !stored.contains(row.externalID) {
-      newCount += 1
-      if sample.count < 5 {
-        sample.append(
-          ImportDryRunRow(
-            id: index,
-            date: row.date,
-            descriptionText: row.descriptionText,
-            amountMinor: row.amountMinor,
-            direction: row.direction
-          )
+    for draftIndex in result.createdDraftIndexes.prefix(5) {
+      let entry = parsed[draftIndex]
+      sample.append(
+        ImportDryRunRow(
+          id: entry.index,
+          date: entry.row.date,
+          descriptionText: entry.row.descriptionText,
+          amountMinor: entry.row.amountMinor,
+          direction: entry.row.direction
         )
-      }
+      )
     }
 
     return ImportDryRun(
-      newCount: newCount,
-      alreadyImportedCount: parsed.count - newCount,
+      createCount: result.created,
+      matchExistingCount: result.merged - repeatInFile,
+      repeatInFileCount: repeatInFile,
       unreadable: unreadable,
       sample: sample
     )
@@ -149,18 +151,7 @@ public final class FileImportServiceImpl: FileImportService, @unchecked Sendable
     }
 
     let capturedAt = now()
-    let drafts = parsed.map { row in
-      TransactionDraft(
-        date: row.date,
-        descriptionText: row.descriptionText,
-        amountMinor: row.amountMinor,
-        direction: row.direction,
-        accountID: accountID,
-        source: .file,
-        externalID: row.externalID,
-        capturedAt: capturedAt
-      )
-    }
+    let drafts = parsed.map { draft(for: $0, accountID: accountID, capturedAt: capturedAt) }
 
     // B2. One `ingest` call per 50 drafts, not one per file. The pipeline
     // serialises every call behind a single actor and holds that lock for the
@@ -171,17 +162,46 @@ public final class FileImportServiceImpl: FileImportService, @unchecked Sendable
     // The batch size is `MailSyncEngine.fetchBatchSize` rather than a second
     // constant, because the two write paths queue against each other and a
     // different bound on each side would only be confusing.
+    //
+    // I-12 Amendment 1: a repeat that folds into a row an earlier batch created
+    // is a repeat in this file, not a match with Nomi. So each batch's merge
+    // targets are checked against every row this import has created so far.
     var created = 0
     var merged = 0
+    var repeatedInFile = 0
+    var createdIDs: Set<UUID> = []
     for batch in drafts.slices(of: MailSyncEngine.fetchBatchSize) {
       let result = try await pipeline.ingest(batch)
       created += result.created
       merged += result.merged
+      createdIDs.formUnion(result.createdIDs)
+      repeatedInFile += result.mergeTargetIDs.filter { createdIDs.contains($0) }.count
     }
-    return ImportSummary(created: created, merged: merged, skipped: skipped)
+    return ImportSummary(
+      created: created,
+      merged: merged,
+      skipped: skipped,
+      matchedExisting: merged - repeatedInFile,
+      repeatedInFile: repeatedInFile
+    )
   }
 
   public func saveMapping(_ mapping: ColumnMapping, signature: String, bankLabel: String) throws {
     mappingStore.save(mapping, signature: signature, bankLabel: bankLabel)
+  }
+
+  /// The draft `commit` builds for one parsed row. Dry run builds the same one,
+  /// so the pipeline sees the same input on both paths.
+  private func draft(for row: ParsedRow, accountID: UUID?, capturedAt: Date) -> TransactionDraft {
+    TransactionDraft(
+      date: row.date,
+      descriptionText: row.descriptionText,
+      amountMinor: row.amountMinor,
+      direction: row.direction,
+      accountID: accountID,
+      source: .file,
+      externalID: row.externalID,
+      capturedAt: capturedAt
+    )
   }
 }

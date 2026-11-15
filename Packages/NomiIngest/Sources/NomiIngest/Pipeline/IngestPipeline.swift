@@ -76,13 +76,59 @@ public actor IngestPipeline {
     return try await performIngest(drafts)
   }
 
-  private func performIngest(_ drafts: [TransactionDraft]) async throws -> IngestBatchResult {
-    // Ordered once per pass, not once per row. `RuleEngine.firstMatch` used to
-    // sort internally, so a batch of 50 drafts sorted the rule set 100 times
-    // to answer the same question 100 times.
-    let rules = RuleEngine.precedenceOrdered(try await store.rules())
-    let timestamp = now()
+  // MARK: - Simulate (I-12, Amendment 1)
 
+  /// The ingest loop run without writing. The dry run asks this, so its counts
+  /// are commit's counts by construction: same drafts, same rules, same decisions.
+  ///
+  /// The lock is taken and released once per chunk of `MailSyncEngine.fetchBatchSize`,
+  /// as commit's batches take it, so a long file does not hold it for its length.
+  /// Working rows carry across chunks, so a repeat in a later chunk is seen as a
+  /// repeat of a row created in an earlier one. Nothing is written: no `apply`, no
+  /// `applyTransferMarks`, no observer call.
+  ///
+  /// The epoch is captured once, on entry. A chunk that finds it moved (an erase
+  /// has run since the drafts were fetched) throws `CancellationError`, as `ingest`
+  /// does.
+  public func simulate(_ drafts: [TransactionDraft]) async throws -> IngestBatchResult {
+    guard !drafts.isEmpty else { return .empty }
+    let entered = epoch
+    let timestamp = now()
+    var state = BatchState()
+    var offset = 0
+    for chunk in drafts.slices(of: MailSyncEngine.fetchBatchSize) {
+      try await simulateChunk(chunk, offset: offset, entered: entered, timestamp: timestamp, into: &state)
+      offset += chunk.count
+      // A writer queued behind this chunk (an erase, a mail sync) is granted the
+      // lock here, before the next chunk's epoch check. Without the yield this
+      // task could retake the lock straight after its own release.
+      await Task.yield()
+    }
+    return state.result
+  }
+
+  private func simulateChunk(
+    _ chunk: [TransactionDraft],
+    offset: Int,
+    entered: Int,
+    timestamp: Date,
+    into state: inout BatchState
+  ) async throws {
+    await acquire()
+    guard epoch == entered else {
+      release()
+      throw CancellationError()
+    }
+    defer { release() }
+    let rules = RuleEngine.precedenceOrdered(try await store.rules())
+    try await process(chunk, offset: offset, rules: rules, timestamp: timestamp, into: &state)
+  }
+
+  // MARK: - Ingest loop, shared by ingest and simulate
+
+  /// What one pass of the ingest loop has decided so far. `ingest` makes one pass
+  /// over its batch; `simulate` makes one pass over every chunk, in order.
+  private struct BatchState {
     var working: [UUID: TransactionSnapshot] = [:]
     var insertedIDs: [UUID] = []
     var updatedIDs: [UUID] = []
@@ -90,8 +136,60 @@ public actor IngestPipeline {
     var created = 0
     var merged = 0
     var flagged = 0
+    var mergeTargetIDs: [UUID] = []
+    var createdDraftIndexes: [Int] = []
 
-    for draft in drafts {
+    var result: IngestBatchResult {
+      IngestBatchResult(
+        created: created,
+        merged: merged,
+        flagged: flagged,
+        createdIDs: insertedIDs,
+        mergeTargetIDs: mergeTargetIDs,
+        createdDraftIndexes: createdDraftIndexes
+      )
+    }
+  }
+
+  private func performIngest(_ drafts: [TransactionDraft]) async throws -> IngestBatchResult {
+    // Ordered once per pass, not once per row. `RuleEngine.firstMatch` used to
+    // sort internally, so a batch of 50 drafts sorted the rule set 100 times
+    // to answer the same question 100 times.
+    let rules = RuleEngine.precedenceOrdered(try await store.rules())
+    let timestamp = now()
+
+    var state = BatchState()
+    try await process(drafts, offset: 0, rules: rules, timestamp: timestamp, into: &state)
+
+    let plan = CommitPlan(
+      inserts: state.insertedIDs.compactMap { state.working[$0] },
+      updates: state.updatedIDs.compactMap { state.working[$0] },
+      affectedCategoryIDs: state.affected
+    )
+    if !plan.isEmpty {
+      try await store.apply(plan)
+      // Transfer marks are a second write, made only through
+      // `applyTransferMarks` (TR4). Their categories join the one observer call
+      // for the batch; with no marks the call is what it was before.
+      let marked = await markTransfers(touching: plan.inserts + plan.updates, at: timestamp)
+      await observer?.didCommit(affectedCategoryIDs: plan.affectedCategoryIDs.union(marked))
+    }
+
+    return state.result
+  }
+
+  /// The loop itself: each draft is merged into a candidate or created, and the
+  /// decision is recorded in `state`. Draft `offset + i` is `drafts[i]` in the
+  /// array the caller was given, so `createdDraftIndexes` names drafts in that
+  /// array's order whether it is one batch or a chunk of a larger pass.
+  private func process(
+    _ drafts: [TransactionDraft],
+    offset: Int,
+    rules: [RuleSnapshot],
+    timestamp: Date,
+    into state: inout BatchState
+  ) async throws {
+    for (position, draft) in drafts.enumerated() {
       let derived = DraftDerivation.derive(draft, calendar: calendar)
       let range = DedupeMatcher.candidateDateRange(for: draft.date, calendar: calendar)
 
@@ -101,10 +199,10 @@ public actor IngestPipeline {
         dateRange: range
       )
 
-      var candidates = stored.map { working[$0.id] ?? $0 }
+      var candidates = stored.map { state.working[$0.id] ?? $0 }
       let storedIDs = Set(stored.map(\.id))
       candidates.append(
-        contentsOf: working.values.filter { row in
+        contentsOf: state.working.values.filter { row in
           !storedIDs.contains(row.id)
             && row.amountMinor == draft.amountMinor
             && row.directionRaw == draft.direction.rawValue
@@ -113,7 +211,9 @@ public actor IngestPipeline {
       )
 
       if let hit = DedupeMatcher.match(derived, in: candidates, calendar: calendar) {
-        merged += 1
+        state.merged += 1
+        // The row this draft folds into, counted whether or not anything changes.
+        state.mergeTargetIDs.append(hit.row.id)
         let before = hit.row
 
         guard
@@ -129,12 +229,12 @@ public actor IngestPipeline {
           next.updatedAt = timestamp
         }
 
-        if next.needsReview && !before.needsReview { flagged += 1 }
-        note(&affected, before.categoryID, next.categoryID)
+        if next.needsReview && !before.needsReview { state.flagged += 1 }
+        note(&state.affected, before.categoryID, next.categoryID)
 
-        working[next.id] = next
-        if !insertedIDs.contains(next.id) && !updatedIDs.contains(next.id) {
-          updatedIDs.append(next.id)
+        state.working[next.id] = next
+        if !state.insertedIDs.contains(next.id) && !state.updatedIDs.contains(next.id) {
+          state.updatedIDs.append(next.id)
         }
         continue
       }
@@ -142,29 +242,14 @@ public actor IngestPipeline {
       var row = TransactionSnapshot.creating(from: derived, now: timestamp)
       if let ruled = RuleEngine.apply(rules, to: row) { row = ruled }
 
-      created += 1
-      if row.needsReview { flagged += 1 }
-      note(&affected, row.categoryID)
+      state.created += 1
+      if row.needsReview { state.flagged += 1 }
+      note(&state.affected, row.categoryID)
 
-      working[row.id] = row
-      insertedIDs.append(row.id)
+      state.working[row.id] = row
+      state.insertedIDs.append(row.id)
+      state.createdDraftIndexes.append(offset + position)
     }
-
-    let plan = CommitPlan(
-      inserts: insertedIDs.compactMap { working[$0] },
-      updates: updatedIDs.compactMap { working[$0] },
-      affectedCategoryIDs: affected
-    )
-    if !plan.isEmpty {
-      try await store.apply(plan)
-      // Transfer marks are a second write, made only through
-      // `applyTransferMarks` (TR4). Their categories join the one observer call
-      // for the batch; with no marks the call is what it was before.
-      let marked = await markTransfers(touching: plan.inserts + plan.updates, at: timestamp)
-      await observer?.didCommit(affectedCategoryIDs: plan.affectedCategoryIDs.union(marked))
-    }
-
-    return IngestBatchResult(created: created, merged: merged, flagged: flagged)
   }
 
   // MARK: - Transfer detection (DEC-05, TR1 to TR5)

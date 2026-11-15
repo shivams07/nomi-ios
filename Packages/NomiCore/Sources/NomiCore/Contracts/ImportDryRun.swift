@@ -27,45 +27,44 @@ public struct ImportDryRunRow: Sendable, Equatable, Identifiable {
 }
 
 /// What `FileImportService.dryRun` found in a file under a mapping, before any
-/// write (I-12). The counts describe what `commit` does with the same file.
+/// write (I-12, Amendment 1). The counts come from the pipeline's own ingest loop
+/// run without writing, so they answer the question `commit` answers: with no
+/// write in between, `commit` returns the same numbers for the same file.
 ///
-/// - `alreadyImportedCount`: parsed rows whose (source `.file`, externalID) is
-///   already stored. Commit **merges** each one into the stored row. None is
-///   created.
-/// - `newCount`: every other parsed row. Commit **creates** it, or folds it into
-///   an earlier row of the same file (same narration, amount and date under a
-///   different reference). The Done screen's `created` and `merged` say which.
+/// - `createCount`: rows commit will create.
+/// - `matchExistingCount`: rows commit will fold into a transaction already in
+///   Nomi, including a row imported before (the same file row imported twice).
+/// - `repeatInFileCount`: rows commit will fold into a row this same import
+///   creates (a repeated line, or two references the matcher treats as one).
 /// - `unreadable`: raw cells of rows that cannot be read, including rows whose
 ///   amount is outside `AmountRules`.
+/// - `sample`: the first five rows that will be created, in file order.
 ///
-/// Invariants, asserted in `ImportDryRunTests`:
-/// `newCount + alreadyImportedCount == created + merged` and
-/// `unreadable.count == skipped`. Commit skips the same over-cap rows dry run
-/// counts as unreadable (B7), so the second holds for every amount.
-///
-/// S11 copy: "new" here is not "will be added as a new row". The screen must not
-/// say a row marked new is added as a new row, and must not say an already-known
-/// row is skipped; it is merged.
+/// Invariant, asserted in `ImportDryRunTests`:
+/// `createCount + matchExistingCount + repeatInFileCount` equals the parsed rows.
 public struct ImportDryRun: Sendable, Equatable {
-  /// Parsed rows that are not already stored. Commit creates them or folds them
-  /// into an earlier row of the same file (see above).
-  public let newCount: Int
-  /// Parsed rows whose (source `.file`, externalID) is already stored. Commit merges them.
-  public let alreadyImportedCount: Int
+  /// Rows commit will create.
+  public let createCount: Int
+  /// Rows commit will fold into a transaction already in Nomi.
+  public let matchExistingCount: Int
+  /// Rows commit will fold into a row this same import creates.
+  public let repeatInFileCount: Int
   /// Raw cells of rows `RowMapper` could not map, or whose amount is outside
   /// `AmountRules`, in file order.
   public let unreadable: [[String]]
-  /// The first five parsed rows that are new, in file order.
+  /// The first five rows that will be created, in file order.
   public let sample: [ImportDryRunRow]
 
   public init(
-    newCount: Int,
-    alreadyImportedCount: Int,
+    createCount: Int,
+    matchExistingCount: Int,
+    repeatInFileCount: Int,
     unreadable: [[String]],
     sample: [ImportDryRunRow]
   ) {
-    self.newCount = newCount
-    self.alreadyImportedCount = alreadyImportedCount
+    self.createCount = createCount
+    self.matchExistingCount = matchExistingCount
+    self.repeatInFileCount = repeatInFileCount
     self.unreadable = unreadable
     self.sample = sample
   }

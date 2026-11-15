@@ -327,6 +327,14 @@ final class RowMapperAmountTests: XCTestCase {
       drafts.append(contentsOf: batch)
       return IngestBatchResult(created: batch.count, merged: 0, flagged: 0)
     }
+
+    // B4b: the dry run asks `simulate`. This double creates every draft, as its
+    // `ingest` does, so the dry run's create count is the same meaning it had.
+    func simulate(_ batch: [TransactionDraft]) async throws -> IngestBatchResult {
+      IngestBatchResult(
+        created: batch.count, merged: 0, flagged: 0,
+        createdDraftIndexes: Array(batch.indices))
+    }
   }
 
   private func writeFile(_ lines: [String]) throws -> URL {
@@ -356,7 +364,7 @@ final class RowMapperAmountTests: XCTestCase {
     )
 
     let dry = try await service.dryRun(url, mapping: withoutReference)
-    XCTAssertEqual(dry.newCount, 2)
+    XCTAssertEqual(dry.createCount, 2)
     XCTAssertEqual(dry.unreadable.count, 2)
 
     let summary = try await service.commit(url, mapping: withoutReference, accountID: nil)
@@ -400,7 +408,7 @@ final class RowMapperAmountTests: XCTestCase {
       )
 
       let dry = try await service.dryRun(url, mapping: mapping)
-      XCTAssertEqual(dry.newCount, fixture.accepted ? 1 : 0, "\(fixture.text): dry run new")
+      XCTAssertEqual(dry.createCount, fixture.accepted ? 1 : 0, "\(fixture.text): dry run create")
       XCTAssertEqual(dry.unreadable.count, fixture.accepted ? 0 : 1, "\(fixture.text): dry run unreadable")
 
       // A one-row file with its only row refused has nothing to import, so commit throws
