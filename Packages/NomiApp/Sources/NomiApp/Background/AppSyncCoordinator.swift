@@ -6,6 +6,19 @@ import NomiIngest
   import BackgroundTasks
 #endif
 
+/// Thrown by `AppSyncCoordinator.beginErase` when a sync or a reconcile has not
+/// stopped by the deadline. Nothing was erased. `EraseError.busy` in NomiCore
+/// (B5) is what callers see; B5 maps this one onto it.
+public enum CoordinatorEraseError: Error, Sendable, Equatable {
+  case busy
+}
+
+/// What `AppSyncCoordinator.beginErase` hands the caller. Only the holder of the
+/// gate can end it: `endErase(_:)` with any other token does nothing.
+public struct EraseToken: Sendable, Equatable {
+  let id: UUID
+}
+
 /// Everything that runs because of *time* rather than because of a tap: the
 /// launch reconcile, the foreground sync, the background refresh, and the
 /// remote-change reconcile.
@@ -36,6 +49,10 @@ public actor AppSyncCoordinator {
   /// How long after the *last* remote-change notification the reconcile runs.
   static let remoteChangeDebounce: TimeInterval = 2
 
+  /// How often `beginErase` checks whether in-flight work has stopped. Its
+  /// timeout is counted in these pauses, so the timeout is a floor on wall time.
+  static let erasePollInterval: TimeInterval = 0.1
+
   private let mail: MailStack
   private let pipeline: IngestPipeline
   private let referenceData: (any ReferenceDataReconciling)?
@@ -43,6 +60,14 @@ public actor AppSyncCoordinator {
   private let now: @Sendable () -> Date
   private let pause: @Sendable (TimeInterval) async throws -> Void
   private var isSyncing = false
+  /// Closed by `beginErase` and open otherwise. A `Flag`, not actor state, because
+  /// the scheduling calls are `nonisolated` and must read it synchronously.
+  private let eraseGate = Flag()
+  /// The one erase that holds the gate, if any. Only its token ends the gate.
+  private var eraseHolder: EraseToken?
+  /// Reconciles, syncs, backfills and background runs in flight. `beginErase`
+  /// waits for it to reach zero, so an erase never overlaps one of them.
+  private var activeWork = 0
   private(set) var foregroundTask: Task<Void, Never>?
   private(set) var remoteChangeTask: Task<Void, Never>?
   private var lastReconcileAt: Date?
@@ -89,6 +114,80 @@ public actor AppSyncCoordinator {
     self.ensureMailConnected = ensureMailConnected
   }
 
+  // MARK: - Erase (B5a)
+
+  /// Closes the gate, stops what is running, and waits until nothing can write
+  /// behind it. Then cancels the pending background requests. The gate stays
+  /// closed on success until `endErase(_:)` is called with the returned token. A
+  /// second call while one erase holds the gate throws `busy` and changes nothing.
+  ///
+  /// The background requests are cancelled only after the wait succeeds. The
+  /// cancellations of the running tasks are signals and nothing more, so a
+  /// `busy` erase leaves no trace except those signals. Cancelling the requests
+  /// first would make a `busy` erase change the schedule.
+  ///
+  /// The wait is bounded by `timeout`, and the bound covers the tasks as well as
+  /// the work. Awaiting a cancelled task's `.value` directly would hang on a task
+  /// that ignores cancellation, and the erase would never report `busy`. So the
+  /// tasks are joined in an unstructured task, and the wait polls for that join
+  /// and for `activeWork`.
+  public func beginErase(timeout: TimeInterval = 30) async throws -> EraseToken {
+    // One holder at a time, and no queue. The check and the take happen before
+    // the first suspension, so two erases cannot both pass it. A refused caller
+    // changes nothing: not the holder, not the gate, not the requests.
+    guard eraseHolder == nil else { throw CoordinatorEraseError.busy }
+    let token = EraseToken(id: UUID())
+    eraseHolder = token
+    eraseGate.set(true)
+
+    let inFlight = [foregroundTask, remoteChangeTask].compactMap { $0 }
+    inFlight.forEach { $0.cancel() }
+    foregroundTask = nil
+    remoteChangeTask = nil
+
+    let joined = Flag()
+    Task {
+      for task in inFlight { await task.value }
+      joined.set(true)
+    }
+
+    var waited: TimeInterval = 0
+    while !joined.isSet || activeWork > 0 {
+      guard waited < timeout else {
+        releaseErase(token)
+        throw CoordinatorEraseError.busy
+      }
+      do {
+        try await pause(Self.erasePollInterval)
+      } catch {
+        // The caller was cancelled mid-wait. Nothing was erased, so give the gate back.
+        releaseErase(token)
+        throw error
+      }
+      waited += Self.erasePollInterval
+    }
+
+    submitter.cancelAll()
+    return token
+  }
+
+  /// Ends the erase that `token` came from. A token that is not the current
+  /// holder's does nothing, so a stale caller cannot reopen a gate a newer erase
+  /// closed.
+  public func endErase(_ token: EraseToken) {
+    releaseErase(token)
+  }
+
+  /// Gives the gate back, but only to the holder. Every exit from an erase goes through here.
+  private func releaseErase(_ token: EraseToken) {
+    guard eraseHolder == token else { return }
+    eraseHolder = nil
+    eraseGate.set(false)
+  }
+
+  /// Whether an erase currently holds the gate. Test visibility only.
+  var isErasing: Bool { eraseGate.isSet }
+
   // MARK: - Reconcile
 
   /// R5's mandatory pass. CloudKit forbids unique constraints, so two devices
@@ -105,6 +204,11 @@ public actor AppSyncCoordinator {
   /// Transactions first, then reference data, so both share this scheduling.
   @discardableResult
   public func reconcile() async -> ReconcileResult {
+    // While erasing, nothing reaches the pipeline or the reference data. A
+    // reconcile already running is counted in `activeWork`, so the erase waits.
+    guard !eraseGate.isSet else { return .empty }
+    activeWork += 1
+    defer { activeWork -= 1 }
     lastReconcileAt = now()
     let result: ReconcileResult
     do {
@@ -137,6 +241,7 @@ public actor AppSyncCoordinator {
   /// full scan. Every call cancels the reconcile the previous one scheduled and
   /// schedules its own.
   public func remoteChangeObserved() {
+    guard !eraseGate.isSet else { return }
     remoteChangeTask?.cancel()
     remoteChangeTask = Task { [weak self, pause = self.pause] in
       do {
@@ -174,6 +279,7 @@ public actor AppSyncCoordinator {
   /// `foregroundReconcileInterval` old — whoever ran it: launch, a foreground,
   /// or a remote change.
   public func didBecomeActive() {
+    guard !eraseGate.isSet else { return }
     foregroundTask?.cancel()
     let reconcileIsDue = lastReconcileAt.map {
       now().timeIntervalSince($0) >= Self.foregroundReconcileInterval
@@ -230,9 +336,13 @@ public actor AppSyncCoordinator {
 
   @discardableResult
   func syncIfIdle() async -> SyncAttempt {
-    guard !isSyncing else { return .alreadyRunning }
+    guard !eraseGate.isSet, !isSyncing else { return .alreadyRunning }
     isSyncing = true
-    defer { isSyncing = false }
+    activeWork += 1
+    defer {
+      isSyncing = false
+      activeWork -= 1
+    }
 
     do {
       _ = try await mail.syncNow()
@@ -285,9 +395,13 @@ public actor AppSyncCoordinator {
   /// that finds no mailbox is owed rather than failed, and is retried after a
   /// reconnect exactly as a refresh is.
   private func backfillIfIdle() async -> SyncAttempt {
-    guard !isSyncing else { return .alreadyRunning }
+    guard !eraseGate.isSet, !isSyncing else { return .alreadyRunning }
     isSyncing = true
-    defer { isSyncing = false }
+    activeWork += 1
+    defer {
+      isSyncing = false
+      activeWork -= 1
+    }
 
     do {
       try await mail.service.startBackfill(months: Self.backfillMonths)
@@ -331,6 +445,7 @@ public actor AppSyncCoordinator {
   /// freshness criterion is not achievable this way; this is best-effort
   /// catch-up, not delivery.
   public nonisolated func scheduleBackgroundRefresh(after interval: TimeInterval = 15 * 60) {
+    guard !eraseGate.isSet else { return }
     submitter.submit(.refresh, identifier: TaskIdentifier.refresh, notBefore: interval)
   }
 
@@ -340,6 +455,7 @@ public actor AppSyncCoordinator {
   /// run, the user has just watched a progress bar, and the dashboard is empty
   /// until the scan completes. It is still only a floor.
   public nonisolated func scheduleBackgroundBackfill(after interval: TimeInterval = 60) {
+    guard !eraseGate.isSet else { return }
     submitter.submit(.backfill, identifier: TaskIdentifier.backfill, notBefore: interval)
   }
 
@@ -350,6 +466,12 @@ public actor AppSyncCoordinator {
   /// scheduling budget, which is the mechanism that quietly turns background
   /// refresh off for good.
   public func run(_ work: BackgroundWork) async {
+    // Erasing: the work is refused and reported as not done. Nothing here is
+    // rescheduled either, so iOS is not asked for another window.
+    guard !eraseGate.isSet else {
+      work.setCompleted(success: false)
+      return
+    }
     // Created before the handler is installed, and that ordering is safe rather
     // than lucky: `Task {}` written inside an actor's method inherits this
     // actor's executor, so its body cannot begin until `run(_:)` suspends, and
@@ -400,6 +522,12 @@ public actor AppSyncCoordinator {
   /// reconnect attempt is still success: nothing was saved and nothing is owed,
   /// because the user never connected mail. Only `.failed` is a failure.
   private func perform(_ kind: BackgroundWork.Kind) async -> Bool {
+    // Checked and counted with no suspension between, so `beginErase` sees either
+    // this work in `activeWork` or the closed gate that refuses it. Counting the
+    // whole run also covers `ensureMailConnected`, which is not counted otherwise.
+    guard !eraseGate.isSet else { return false }
+    activeWork += 1
+    defer { activeWork -= 1 }
     await reconcile()
 
     var attempt = await runSync(kind)
@@ -430,6 +558,30 @@ public actor AppSyncCoordinator {
   }
 }
 
+/// A boolean that can be read and written from any isolation. The erase gate is
+/// read by `nonisolated` scheduling calls, and the join latch is set from an
+/// unstructured task. Both need a value that is not behind the actor.
+private final class Flag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value: Bool
+
+  init(_ value: Bool = false) {
+    self.value = value
+  }
+
+  var isSet: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return value
+  }
+
+  func set(_ newValue: Bool) {
+    lock.lock()
+    value = newValue
+    lock.unlock()
+  }
+}
+
 /// The submit half of `BGTaskScheduler`, behind a protocol.
 ///
 /// Not abstraction for its own sake. `BGTaskScheduler` does not exist on macOS,
@@ -442,11 +594,27 @@ public protocol BackgroundTaskSubmitting: Sendable {
   /// different classes and iOS treats them differently — see
   /// `SystemBackgroundTaskSubmitter`.
   func submit(_ kind: BackgroundWork.Kind, identifier: String, notBefore: TimeInterval)
+  /// Cancels every pending request for both identifiers (B5a, I-13 G4). A no-op
+  /// for conformers that never schedule anything.
+  func cancelAll()
+}
+
+extension BackgroundTaskSubmitting {
+  public func cancelAll() {}
 }
 
 /// The real one. A no-op off iOS, where there is no scheduler to submit to.
 public struct SystemBackgroundTaskSubmitter: BackgroundTaskSubmitting {
   public init() {}
+
+  /// Cancels the pending request for each identifier. `cancel` is a no-op for an
+  /// identifier with nothing queued, and off iOS there is nothing to cancel.
+  public func cancelAll() {
+    #if os(iOS)
+      BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: AppSyncCoordinator.TaskIdentifier.refresh)
+      BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: AppSyncCoordinator.TaskIdentifier.backfill)
+    #endif
+  }
 
   public func submit(_ kind: BackgroundWork.Kind, identifier: String, notBefore: TimeInterval) {
     #if os(iOS)
