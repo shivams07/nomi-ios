@@ -4,98 +4,92 @@ import XCTest
 @testable import NomiApp
 
 /// G1 (WR-3b). `RootView`'s Needs-you taps are built by `NeedsYouRoute.taps`,
-/// and each one writes an outcome through `NeedsYouRoute.apply`. These tests run
-/// the taps the way `RootView` runs them, with a recording sink in place of the
-/// state, so a change to which chip a tap opens, or to the order the chip and
-/// the tab are written, fails here by name.
+/// and each one hands its request to `NeedsYouRoute.apply`, which passes it on
+/// to the Activity writer. These tests run the taps the way `RootView` runs
+/// them, so a change to which request a tap opens fails here by name.
 final class NeedsYouRouteTests: XCTestCase {
 
-  // MARK: - The outcome each handler opens
+  // MARK: - The request each handler opens
 
-  func testReviewQueueOpensTheNeedsReviewChipOnTheLedger() {
-    XCTAssertEqual(
-      NeedsYouRoute.reviewQueue,
-      NeedsYouRoute.Outcome(initialChip: .needsReview, selection: .ledger))
+  func testReviewQueueOpensToReview() {
+    XCTAssertEqual(NeedsYouRoute.reviewQueue, .toReview)
   }
 
   /// The regression R1 names: the uncategorized card routed to Needs review.
-  func testUncategorizedOpensTheUncategorizedChipNotNeedsReview() {
-    XCTAssertEqual(
-      NeedsYouRoute.uncategorized,
-      NeedsYouRoute.Outcome(initialChip: .uncategorized, selection: .ledger))
-    XCTAssertNotEqual(NeedsYouRoute.uncategorized.initialChip, .needsReview)
+  func testUncategorizedOpensUncategorizedNotToReview() {
+    XCTAssertEqual(NeedsYouRoute.uncategorized, .uncategorized)
+    XCTAssertNotEqual(NeedsYouRoute.uncategorized, .toReview)
   }
 
   // MARK: - Through the taps RootView passes to DashboardView
 
-  func testUncategorizedTapWritesTheUncategorizedOutcome() {
-    var written: [NeedsYouRoute.Outcome] = []
+  func testUncategorizedTapWritesTheUncategorizedRequest() {
+    var written: [ActivityRequest] = []
     let taps = NeedsYouRoute.taps { written.append($0) }
 
     taps.uncategorized()
 
-    XCTAssertEqual(written, [NeedsYouRoute.uncategorized])
+    XCTAssertEqual(written, [.uncategorized])
   }
 
-  func testReviewQueueTapWritesTheReviewOutcome() {
-    var written: [NeedsYouRoute.Outcome] = []
+  func testReviewQueueTapWritesTheToReviewRequest() {
+    var written: [ActivityRequest] = []
     let taps = NeedsYouRoute.taps { written.append($0) }
 
     taps.reviewQueue()
 
-    XCTAssertEqual(written, [NeedsYouRoute.reviewQueue])
+    XCTAssertEqual(written, [.toReview])
   }
 
-  /// Each tap writes exactly one outcome and nothing until it is run, so a
-  /// card that is only built does not move the Ledger.
+  /// Each tap writes exactly one request and nothing until it is run, so a
+  /// card that is only built does not move the Activity tab.
   func testBuildingTheTapsWritesNothing() {
-    var written: [NeedsYouRoute.Outcome] = []
+    var written: [ActivityRequest] = []
     _ = NeedsYouRoute.taps { written.append($0) }
 
     XCTAssertTrue(written.isEmpty)
   }
 
-  // MARK: - The order RootView writes the state in
+  /// `apply` hands the request to the writer unchanged, so the one function
+  /// `RootView` calls for Needs-you is the same one Home's See all goes through.
+  func testApplyPassesTheRequestThrough() {
+    var received: [ActivityRequest] = []
 
-  /// `LedgerScreen` reads `initialChip` once, when the tab moves to `.ledger`
-  /// constructs it. The chip has to be written first, so this records the
-  /// writes in order.
-  func testChipIsWrittenBeforeTheTabMovesToTheLedger() {
-    var writes: [String] = []
+    NeedsYouRoute.apply(.uncategorized, request: { received.append($0) })
 
-    NeedsYouRoute.apply(
-      NeedsYouRoute.uncategorized,
-      setChip: { writes.append("chip:\($0)") },
-      setSelection: { writes.append("tab:\($0.rawValue)") }
-    )
-
-    XCTAssertEqual(writes, ["chip:uncategorized", "tab:ledger"])
+    XCTAssertEqual(received, [.uncategorized])
   }
 
-  func testReviewChipIsWrittenBeforeTheTabMovesToTheLedger() {
-    var writes: [String] = []
-
-    NeedsYouRoute.apply(
-      NeedsYouRoute.reviewQueue,
-      setChip: { writes.append("chip:\($0)") },
-      setSelection: { writes.append("tab:\($0.rawValue)") }
-    )
-
-    XCTAssertEqual(writes, ["chip:needsReview", "tab:ledger"])
-  }
-
-  /// The end-to-end path a tap takes into `RootView`'s state: the tap, then the
-  /// writer `RootView` hands `taps(open:)`, then `apply`. Both halves at once.
-  func testUncategorizedTapEndsWithTheUncategorizedChipAndTheLedgerTab() {
-    var chip: LedgerChipSelection = .all
-    var tab: RootTab = .home
-    let taps = NeedsYouRoute.taps { outcome in
-      NeedsYouRoute.apply(outcome, setChip: { chip = $0 }, setSelection: { tab = $0 })
+  /// The end-to-end path a tap takes: the tap, the writer `RootView` hands
+  /// `taps(open:)`, then `apply`.
+  func testUncategorizedTapEndsAtTheUncategorizedRequest() {
+    var shown: ActivityRequest?
+    let taps = NeedsYouRoute.taps { request in
+      NeedsYouRoute.apply(request, request: { shown = $0 })
     }
 
     taps.uncategorized()
 
-    XCTAssertEqual(chip, .uncategorized)
-    XCTAssertEqual(tab, .ledger)
+    XCTAssertEqual(shown, .uncategorized)
+  }
+
+  // MARK: - The request becomes the Activity chip
+
+  func testToReviewRequestOpensTheNeedsReviewChip() {
+    XCTAssertEqual(ActivityRoute.chip(for: .toReview), .needsReview)
+  }
+
+  func testUncategorizedRequestOpensTheUncategorizedChip() {
+    XCTAssertEqual(ActivityRoute.chip(for: .uncategorized), .uncategorized)
+  }
+
+  func testCategoryRequestOpensThatCategoryChip() {
+    let id = UUID()
+    XCTAssertEqual(ActivityRoute.chip(for: .category(id)), .category(id))
+  }
+
+  func testAllAndSearchRequestsOpenTheAllChip() {
+    XCTAssertEqual(ActivityRoute.chip(for: .all), .all)
+    XCTAssertEqual(ActivityRoute.chip(for: .search("swiggy")), .all)
   }
 }

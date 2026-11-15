@@ -11,7 +11,7 @@ final class RootTabTests: XCTestCase {
   func testBarOrderMatchesTheDesign() {
     XCTAssertEqual(
       TabBarLayout.items,
-      [.tab(.home), .tab(.ledger), .add, .tab(.insights), .tab(.accounts)]
+      [.tab(.home), .tab(.activity), .add, .tab(.insights), .tab(.plan)]
     )
   }
 
@@ -22,13 +22,13 @@ final class RootTabTests: XCTestCase {
     XCTAssertEqual(TabBarLayout.items.firstIndex(of: .add), 2)
   }
 
-  /// Accounts is a tab. Budgets and Settings are not: Budgets is pushed from
-  /// Home's card and Settings' row, and Settings is pushed from Home's gear.
-  func testAccountsIsATabBudgetsAndSettingsAreNot() {
+  /// Plan is a tab. Budgets, Accounts and Settings are not: Accounts is pushed
+  /// from Settings, Budgets from Home's card, and Settings from Home's gear.
+  func testPlanIsATabAccountsBudgetsAndSettingsAreNot() {
     XCTAssertEqual(RootTab.allCases.count, 4)
     XCTAssertEqual(
       Set(RootTab.allCases.map(\.rawValue)),
-      ["home", "ledger", "insights", "accounts"]
+      ["home", "activity", "insights", "plan"]
     )
   }
 

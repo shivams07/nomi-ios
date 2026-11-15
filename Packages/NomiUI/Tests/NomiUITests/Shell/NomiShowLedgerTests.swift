@@ -48,4 +48,46 @@ struct NomiShowLedgerTests {
   func controlHiddenWhenNotWired() {
     #expect(!NomiShowLedgerLogic.showsControl(isWired: false))
   }
+
+  /// Records each request the action hands its closure, in order.
+  @MainActor
+  private final class RequestLog {
+    var requests: [ActivityRequest] = []
+  }
+
+  @Test("the zero-argument call runs the closure as .all")
+  @MainActor
+  func zeroArgumentIsAll() {
+    let log = RequestLog()
+    let action = NomiShowLedgerAction { request in log.requests.append(request) }
+    action()
+    #expect(log.requests == [.all])
+  }
+
+  @Test("a request reaches the closure unchanged, including a category")
+  @MainActor
+  func requestReachesTheClosure() {
+    let log = RequestLog()
+    let categoryID = UUID()
+    let action = NomiShowLedgerAction { request in log.requests.append(request) }
+    action(.toReview)
+    action(.uncategorized)
+    action(.category(categoryID))
+    #expect(log.requests == [.toReview, .uncategorized, .category(categoryID)])
+  }
+
+  @Test("a zero-argument closure still runs for the zero-argument call")
+  @MainActor
+  func zeroArgumentClosureStillRuns() {
+    let counter = Counter()
+    let action = NomiShowLedgerAction { counter.count += 1 }
+    action()
+    #expect(counter.count == 1)
+  }
+
+  @Test("the activity request defaults to nil on the environment")
+  func activityRequestDefaultsToNil() {
+    let values = EnvironmentValues()
+    #expect(values.nomiActivityRequest == nil)
+  }
 }
