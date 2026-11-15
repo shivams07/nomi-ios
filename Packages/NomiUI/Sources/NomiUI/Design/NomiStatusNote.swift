@@ -68,6 +68,8 @@ public struct NomiStatusNote: View {
             .nomiTextStyle(.label)
             .underline()
             .foregroundStyle(ink)
+            .frame(minHeight: NomiSpacing.minTarget, alignment: .leading)
+            .contentShape(Rectangle())
             .buttonStyle(.plain)
         }
       }
