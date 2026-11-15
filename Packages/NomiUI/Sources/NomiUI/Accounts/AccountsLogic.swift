@@ -94,14 +94,14 @@ enum AccountTileSymbol {
   }
 }
 
-/// The second line of an account row: "HDFC Bank ••4471 · 42 txns". An empty
+/// The second line of an account row: "HDFC Bank ••4471 · 42 transactions". An empty
 /// institution or last four is left out rather than printed as a dangling
 /// separator (a wallet has no last four).
 enum AccountRowText {
   static func subtitle(institution: String, lastFour: String, transactionCount: Int) -> String {
     let maskedLastFour = lastFour.isEmpty ? "" : "••\(lastFour)"
     let identity = [institution, maskedLastFour].filter { !$0.isEmpty }.joined(separator: " ")
-    let count = transactionCount == 1 ? "1 txn" : "\(transactionCount) txns"
+    let count = String(localized: "\(transactionCount) transactions", bundle: .module)
     return identity.isEmpty ? count : identity + " · " + count
   }
 }
@@ -192,10 +192,8 @@ enum AccountDeleteConfirmation {
     switch transactionCount {
     case 0:
       subject = "It has no transactions."
-    case 1:
-      subject = "Its 1 transaction will be kept, unassigned from any account."
     default:
-      subject = "Its \(transactionCount) transactions will be kept, unassigned from any account."
+      subject = String(localized: "Its \(transactionCount) transactions will be kept, unassigned from any account.", bundle: .module)
     }
     return "\(subject) This can't be undone."
   }

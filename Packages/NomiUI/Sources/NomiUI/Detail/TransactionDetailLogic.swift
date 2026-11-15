@@ -42,9 +42,14 @@ public enum TransactionDetailLogic {
     var reasons: [String] = []
     if accountID == nil { reasons.append("No account assigned") }
     if needsReview { reasons.append(reviewReasonText(needsReviewReason)) }
-    if mergedCount > 1 { reasons.append("Merged from \(mergedCount) sources") }
+    if mergedCount > 1 { reasons.append(mergedSourcesText(mergedCount)) }
     if isTransfer { reasons.append("Transfer") }
     return reasons
+  }
+
+  /// "Merged from 2 sources", shared by the flag chip and the Source section.
+  static func mergedSourcesText(_ count: Int) -> String {
+    String(localized: "Merged from \(count) sources", bundle: .module)
   }
 
   /// The chip text for a flagged row, from the reason ingest stored on it
@@ -220,7 +225,7 @@ public enum SuggestionRow {
   public static func reasonText(reason: CategorySuggestion.Reason, merchantLabel: String, categoryName: String) -> String {
     switch reason {
     case .merchantHistory(let matches):
-      return "You filed \(merchantLabel) as \(categoryName) \(matches) time\(matches == 1 ? "" : "s")"
+      return String(localized: "You filed \(merchantLabel) as \(categoryName) \(matches) times", bundle: .module)
     case .rule:
       return "Matches your rule for \(merchantLabel)"
     }

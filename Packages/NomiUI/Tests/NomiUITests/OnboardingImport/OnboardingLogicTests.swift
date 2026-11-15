@@ -84,7 +84,7 @@ final class OnboardingLogicTests: XCTestCase {
   func testBackfillCompletionSummaryReportsCountersAsPlainCopy() {
     let summary = SyncSummary(scanned: 1200, created: 91, merged: 4, flagged: 6, packMatched: 70, heuristicMatched: 21, unmatchedSenders: [])
     let lines = BackfillCompletionSummary.lines(for: summary)
-    XCTAssertTrue(lines.contains("1200 emails scanned"))
+    XCTAssertTrue(lines.contains("1,200 emails scanned"))
     XCTAssertTrue(lines.contains("91 transactions found"))
     XCTAssertTrue(lines.contains("70 matched a known bank format, 21 matched generically"))
   }

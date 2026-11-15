@@ -108,8 +108,8 @@ enum BackfillMath {
 enum BackfillCompletionSummary {
   static func lines(for summary: SyncSummary) -> [String] {
     var lines = [
-      "\(summary.scanned) emails scanned",
-      "\(summary.created) transactions found",
+      String(localized: "\(summary.scanned) emails scanned", bundle: .module),
+      String(localized: "\(summary.created) transactions found", bundle: .module),
     ]
     lines.append(contentsOf: detailLines(for: summary))
     return lines

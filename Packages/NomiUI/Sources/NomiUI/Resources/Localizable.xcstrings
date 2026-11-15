@@ -24,6 +24,29 @@
         }
       }
     },
+    "%lld emails scanned" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld email scanned"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld emails scanned"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld subscriptions" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -40,6 +63,75 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld subscriptions"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld transactions" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld transaction"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld transactions"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld transactions found" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld transaction found"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld transactions found"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld transactions found so far. You can pick this up any time." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld transaction found so far. You can pick this up any time."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld transactions found so far. You can pick this up any time."
                 }
               }
             }
@@ -86,6 +178,85 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld uncategorized transactions"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Its %lld transactions will be kept, unassigned from any account." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Its %lld transaction will be kept, unassigned from any account."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Its %lld transactions will be kept, unassigned from any account."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Merged from %lld sources" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Merged from %lld source"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Merged from %lld sources"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "You filed %@ as %@ %lld times" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You filed %@ as %@ %#@times@"
+          },
+          "substitutions" : {
+            "times" : {
+              "argNum" : 3,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg time"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg times"
+                    }
+                  }
                 }
               }
             }
