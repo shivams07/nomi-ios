@@ -119,6 +119,29 @@ final class AccountOpeningBalanceFieldTests: XCTestCase {
   func testNonNumericTextIsInvalid() {
     XCTAssertFalse(AccountOpeningBalanceField.isValid("abc"))
   }
+
+  /// R8. Grouping is read per locale: the comma is grouping in en_IN.
+  func testGroupedNegativeParsesInLocale() {
+    let locale = Locale(identifier: "en_IN")
+    XCTAssertTrue(AccountOpeningBalanceField.isValid("-1,250.50", locale: locale))
+    XCTAssertEqual(AccountOpeningBalanceField.minorUnits(from: "-1,250.50", locale: locale), -125_050)
+  }
+
+  func testGarbageIsInvalidInLocaleAndParsesToNil() {
+    let locale = Locale(identifier: "en_IN")
+    XCTAssertFalse(AccountOpeningBalanceField.isValid("abc", locale: locale))
+    XCTAssertNil(AccountOpeningBalanceField.minorUnits(from: "abc", locale: locale))
+  }
+
+  /// R8. An opening balance may be zero or negative, down to -10^11 paise, and
+  /// no further.
+  func testOpeningBalanceBoundsMatchAmountRules() {
+    let locale = Locale(identifier: "en_IN")
+    XCTAssertEqual(AccountOpeningBalanceField.minorUnits(from: "-1000000000", locale: locale), -100_000_000_000)
+    XCTAssertNil(AccountOpeningBalanceField.minorUnits(from: "-1000000000.01", locale: locale))
+    XCTAssertFalse(AccountOpeningBalanceField.isValid("-1000000000.01", locale: locale))
+    XCTAssertEqual(AccountOpeningBalanceField.minorUnits(from: "0", locale: locale), 0)
+  }
 }
 
 final class AccountEditFormGateTests: XCTestCase {

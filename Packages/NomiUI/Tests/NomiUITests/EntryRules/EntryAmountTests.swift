@@ -50,6 +50,24 @@ final class EntryAmountTests: XCTestCase {
     XCTAssertEqual(EntryAmount.minorUnits(from: "99999999.99"), 9_999_999_999)
   }
 
+  /// R8. "1.999" is refused to zero in the entry field, as in every locale.
+  func testThreeDecimalsIsZero() {
+    XCTAssertEqual(EntryAmount.minorUnits(from: "1.999"), 0)
+  }
+
+  /// R8. A German device types "," as the decimal point. It must read as one,
+  /// not as grouping (which would make the amount 125000 in en_IN).
+  func testLocaleCommaDecimal() {
+    XCTAssertEqual(EntryAmount.minorUnits(from: "12,50", locale: Locale(identifier: "de_DE")), 1250)
+  }
+
+  /// R8. The bounds: ₹1,00,00,00,000.00 is the largest amount, and one paisa
+  /// above it is refused to zero, not wrapped.
+  func testMaximumIsAcceptedAndOneOverIsZero() {
+    XCTAssertEqual(EntryAmount.minorUnits(from: "1000000000", locale: Locale(identifier: "en_IN")), 100_000_000_000)
+    XCTAssertEqual(EntryAmount.minorUnits(from: "1000000000.01", locale: Locale(identifier: "en_IN")), 0)
+  }
+
   func testSanitizeStripsNonNumericCharacters() {
     XCTAssertEqual(EntryAmount.sanitizeInput("1a2b3"), "123")
   }

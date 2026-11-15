@@ -44,13 +44,8 @@ struct BudgetEditorSheet: View {
   /// The Remove row is offered only for a category that already has a budget.
   private var isExistingBudget: Bool { !isCreating && currentAmountMinor > 0 }
   private var amountMinor: Int { EntryAmount.minorUnits(from: amountText) }
-  private var canSave: Bool { BudgetFormGate.isValid(categoryID: selectedCategoryID) }
-  private var intent: BudgetSaveIntent { BudgetSaveIntent.resolve(amountMinor: amountMinor) }
-
-  /// Clearing the amount still turns Save into Remove, as shipped. The Remove
-  /// row is the second, explicit route.
-  private var saveTitle: String {
-    intent == .remove && !isCreating ? "Remove" : "Save"
+  private var canSave: Bool {
+    BudgetFormGate.isValid(categoryID: selectedCategoryID, amountMinor: amountMinor)
   }
 
   var body: some View {
@@ -61,13 +56,6 @@ struct BudgetEditorSheet: View {
           categoryCard
           sectionLabel("Monthly amount")
           amountCard
-          if intent == .remove {
-            Text("Setting the amount to ₹0 removes this budget.")
-              .nomiTextStyle(.footnote)
-              .foregroundStyle(NomiColor.inkSecondary)
-              .padding(.top, NomiSpacing.xs)
-              .padding(.horizontal, NomiSpacing.xxs)
-          }
           if let errorMessage {
             Text(errorMessage)
               .nomiTextStyle(.caption)
@@ -104,7 +92,7 @@ struct BudgetEditorSheet: View {
           Button {
             save()
           } label: {
-            Text(saveTitle)
+            Text("Save")
               .nomiTextStyle(.navActionStrong)
               .foregroundStyle(NomiColor.navy)
           }
@@ -112,7 +100,7 @@ struct BudgetEditorSheet: View {
           .opacity(canSave ? 1 : 0.4)
         }
       }
-      .alert("Remove budget?", isPresented: $isConfirmingRemove) {
+      .confirmationDialog("Remove this budget?", isPresented: $isConfirmingRemove, titleVisibility: .visible) {
         Button("Remove", role: .destructive) { remove() }
         Button("Cancel", role: .cancel) {}
       } message: {
@@ -195,15 +183,13 @@ struct BudgetEditorSheet: View {
 
   // MARK: - Actions
 
+  /// Only ever sets. Removal is `remove()`, behind the Remove row's confirmation.
   private func save() {
-    guard let categoryID = selectedCategoryID else { return }
+    guard let categoryID = selectedCategoryID,
+      case .set(let amount) = BudgetSaveIntent.resolve(amountMinor: amountMinor)
+    else { return }
     do {
-      switch intent {
-      case .remove:
-        try budgetStore.removeBudget(categoryID: categoryID)
-      case .set(let amount):
-        try budgetStore.setBudget(categoryID: categoryID, amountMinor: amount)
-      }
+      try budgetStore.setBudget(categoryID: categoryID, amountMinor: amount)
       onSaved?()
       dismiss()
     } catch {

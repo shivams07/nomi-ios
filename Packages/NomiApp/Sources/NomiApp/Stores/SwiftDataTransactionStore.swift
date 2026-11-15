@@ -57,6 +57,10 @@ public final class SwiftDataTransactionStore: TransactionStore {
   }
 
   public func add(_ draft: ManualTransactionDraft) throws -> Transaction {
+    // R8. Refused before anything is built, so a refused add writes nothing.
+    guard AmountRules.isValidTransactionAmount(draft.amountMinor) else {
+      throw AmountValidationError.outOfRange(amountMinor: draft.amountMinor)
+    }
     let timestamp = now()
     let normalized = normalizeDescription(draft.descriptionText)
 

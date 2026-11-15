@@ -29,8 +29,18 @@ public final class SwiftDataTransactionEditor: TransactionEditing {
     self.calendar = calendar
   }
 
+  /// R8. A new amount outside `AmountRules` is refused before any field is read or
+  /// written, so a refused edit leaves the row exactly as it was. An amount equal to
+  /// the stored one is never refused: a date-only edit re-sends the stored amount, and
+  /// an imported row can legitimately hold a value above the bound.
   public func update(_ id: UUID, amountMinor: Int, date: Date, descriptionText: String, note: String?) throws {
     guard let row = try row(id: id) else { return }
+    if amountMinor != row.amountMinor {
+      guard AmountRules.isValidTransactionAmount(amountMinor) else {
+        throw AmountValidationError.outOfRange(amountMinor: amountMinor)
+      }
+    }
+    let timestamp = now()
     let normalized = normalizeDescription(descriptionText)
 
     row.amountMinor = amountMinor
@@ -50,10 +60,47 @@ public final class SwiftDataTransactionEditor: TransactionEditing {
     // feeds `dedupeKey`/`normalizedDescription` (see `Transaction.note`'s
     // doc: two devices' notes on the same row must not split it in two).
     row.note = note
-    row.updatedAt = now()
+    row.updatedAt = timestamp
+
+    // R8. Checked after the field writes, so the pair is judged on the new amount
+    // and date. Only the categories this call touches are reported.
+    var affected: Set<UUID> = Set([row.categoryID].compactMap { $0 })
+    if let partner = try unpairIfNoLongerMatching(row, at: timestamp), let category = partner.categoryID {
+      affected.insert(category)
+    }
 
     try context.save()
-    coordinator.didWrite(affectedCategoryIDs: Set([row.categoryID].compactMap { $0 }))
+    coordinator.didWrite(affectedCategoryIDs: affected)
+  }
+
+  /// R8. An amount or date edit can leave a transfer pair that no longer matches.
+  /// Such a pair is unpaired: both legs go to `(nil, nil)`, never `rejected`. The
+  /// user changed a number; they did not reject the transfer, and the detector may
+  /// pair them again if they match again.
+  ///
+  /// Only a group of exactly two is judged. Zero, or more than two, members leave
+  /// the group alone, as does a `rejected` or unrecognised pair. Returns the partner
+  /// it unpaired, if any.
+  private func unpairIfNoLongerMatching(_ row: Transaction, at timestamp: Date) throws -> Transaction? {
+    let state = TransferRules.state(row.transferPair)
+    guard state == .auto || state == .manual, let group = row.transferGroupID else { return nil }
+
+    let target: UUID? = group
+    let rowID = row.id
+    let others = try context.fetch(
+      FetchDescriptor<Transaction>(
+        predicate: #Predicate<Transaction> { $0.transferGroupID == target && $0.id != rowID }
+      ))
+    guard others.count == 1, let partner = others.first else { return nil }
+    guard !TransferRules.matches(row.transferLeg, partner.transferLeg, calendar: calendar) else { return nil }
+
+    row.transferGroupID = nil
+    row.transferSource = nil
+    row.updatedAt = timestamp
+    partner.transferGroupID = nil
+    partner.transferSource = nil
+    partner.updatedAt = timestamp
+    return partner
   }
 
   /// DEC-05 R7. One write, one `WriteCoordinator` notification.

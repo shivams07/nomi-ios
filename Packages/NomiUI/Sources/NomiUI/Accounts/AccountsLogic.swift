@@ -137,58 +137,31 @@ enum AccountCreateFormGate {
 /// this field cannot reuse it) a leading `-` and an explicit `0` both parse
 /// to real values; only the empty string means "clear".
 ///
-/// `isValid` scans characters directly rather than sanitizing-then-checking,
-/// on purpose: a sanitize-first pass (`EntryAmount`'s approach, meant for a
-/// live keystroke filter, not a validity check) silently drops anything it
-/// doesn't recognise, so garbage like `"abc"` collapses to an empty string
-/// and reads as "cleared" instead of "invalid" — a real bug caught by CI, not
-/// reasoning, since there is no local Swift toolchain to run this against.
-/// The same run also showed `Decimal(string:)` parsing a bare `"-"` as a
-/// value instead of returning `nil`, which a sanitize-then-parse check would
-/// have missed entirely; the character scan below rejects it directly by
-/// requiring at least one digit.
+/// Validity and parsing are `AmountText` and `AmountRules` (R8, I-8), the same
+/// rules every amount field uses. Text is parsed as typed, not sanitised first:
+/// a sanitise-then-parse pass would turn `"abc"` into an empty string and read it
+/// as "cleared" rather than "invalid". An opening balance may be negative and
+/// zero, so this field uses `allowNegative: true` and `isValidOpeningBalance`.
 enum AccountOpeningBalanceField {
   static func string(minor: Int?) -> String {
     guard let minor else { return "" }
     return NSDecimalNumber(decimal: Decimal(minor) / 100).stringValue
   }
 
-  static func isValid(_ text: String) -> Bool {
-    guard !text.isEmpty else { return true }
-    let (digitCount, fractionDigitCount, isWellFormed) = scan(text)
-    return isWellFormed && digitCount > 0 && fractionDigitCount <= 2
+  /// Empty means "no opening balance" and is valid. Anything else must parse.
+  static func isValid(_ text: String, locale: Locale = .current) -> Bool {
+    text.isEmpty || AmountText.minorUnits(text, locale: locale, allowNegative: true) != nil
   }
 
-  /// Only meaningful once `isValid` has passed, same contract
-  /// `EntryAmount.minorUnits` keeps with `EntrySaveGate`.
-  static func minorUnits(from text: String) -> Int? {
-    guard !text.isEmpty, let decimal = Decimal(string: text) else { return nil }
-    let scaled = decimal * 100
-    var rounded = Decimal()
-    var mutableScaled = scaled
-    NSDecimalRound(&rounded, &mutableScaled, 0, .plain)
-    return NSDecimalNumber(decimal: rounded).intValue
-  }
-
-  /// A single optional leading `-`, digits, at most one `.`, at most two
-  /// digits after it. Any other character (including a second `-` or `.`)
-  /// fails `isWellFormed` immediately rather than being silently dropped.
-  private static func scan(_ text: String) -> (digitCount: Int, fractionDigitCount: Int, isWellFormed: Bool) {
-    var digitCount = 0
-    var fractionDigitCount = 0
-    var seenDecimalPoint = false
-    for (index, character) in text.enumerated() {
-      if character == "-" && index == 0 {
-        continue
-      } else if character.isNumber {
-        if seenDecimalPoint { fractionDigitCount += 1 } else { digitCount += 1 }
-      } else if character == "." && !seenDecimalPoint {
-        seenDecimalPoint = true
-      } else {
-        return (digitCount, fractionDigitCount, false)
-      }
-    }
-    return (digitCount, fractionDigitCount, true)
+  /// `nil` for empty and for anything invalid. Only meaningful once `isValid` has
+  /// passed, same contract `EntryAmount.minorUnits` keeps with `EntrySaveGate`.
+  static func minorUnits(from text: String, locale: Locale = .current) -> Int? {
+    guard
+      !text.isEmpty,
+      let minor = AmountText.minorUnits(text, locale: locale, allowNegative: true),
+      AmountRules.isValidOpeningBalance(minor)
+    else { return nil }
+    return minor
   }
 }
 
