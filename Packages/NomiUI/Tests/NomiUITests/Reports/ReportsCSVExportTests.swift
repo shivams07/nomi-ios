@@ -7,7 +7,7 @@ import NomiCore
 /// separator, header row always present) is owned and tested by
 /// `NomiCoreTests/Support/TransactionCSVExporterTests.swift` — not this
 /// unit's file boundary. What this unit owns is turning that `String` into a
-/// file `ShareLink` can present, which is exercisable with an empty
+/// file the share sheet can present, which is exercisable with an empty
 /// `[Transaction]` (same "construct zero, not one" pattern
 /// `TransactionCSVExporterTests.exportHeaderAlwaysPresentEvenForZeroRows`
 /// already uses) without needing an `@Model` instance under `swift test`.
@@ -29,13 +29,53 @@ final class ReportsCSVExportTests: XCTestCase {
     XCTAssertTrue(url.path.hasPrefix(FileManager.default.temporaryDirectory.path))
   }
 
-  func testConsecutiveWritesProduceDifferentURLsAndRemoveThePreviousFile() throws {
+  /// R12b (Y1): each export tap writes its own file, and the share sheet owns
+  /// that file until it closes. A second write must not delete the first.
+  func testConsecutiveWritesProduceDifferentURLsAndKeepBothFiles() throws {
     let first = try ReportsCSVExport.write([], names: names, periodLabel: "consecutive-test")
     let second = try ReportsCSVExport.write([], names: names, periodLabel: "consecutive-test")
-    defer { try? FileManager.default.removeItem(at: second) }
+    defer {
+      ReportsCSVExport.remove(first)
+      ReportsCSVExport.remove(second)
+    }
 
     XCTAssertNotEqual(first, second)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
+  }
+
+  /// R12b (Y1): the share sheet's dismissal removes exactly the file it showed.
+  func testRemoveDeletesOnlyTheGivenFile() throws {
+    let first = try ReportsCSVExport.write([], names: names, periodLabel: "remove-test")
+    let second = try ReportsCSVExport.write([], names: names, periodLabel: "remove-test")
+    defer { ReportsCSVExport.remove(second) }
+
+    ReportsCSVExport.remove(first)
+
     XCTAssertFalse(FileManager.default.fileExists(atPath: first.path))
     XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
+  }
+
+  /// R12b Y1 (mutant V2): dismissing the sheet removes the file it showed.
+  /// Without the `remove` call in `dismiss`, the file stays in `tmp`.
+  func testShareCleanupRemovesTheShownFileOnDismiss() throws {
+    var cleanup = ReportsShareCleanup()
+    let url = try ReportsCSVExport.write([], names: names, periodLabel: "cleanup-test")
+    cleanup.show(url)
+
+    cleanup.dismiss()
+
+    XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    XCTAssertNil(cleanup.shown)
+  }
+
+  func testShareCleanupDismissWithNothingShownLeavesOtherFilesAlone() throws {
+    let other = try ReportsCSVExport.write([], names: names, periodLabel: "cleanup-other")
+    defer { ReportsCSVExport.remove(other) }
+    var cleanup = ReportsShareCleanup()
+
+    cleanup.dismiss()
+
+    XCTAssertTrue(FileManager.default.fileExists(atPath: other.path))
   }
 }

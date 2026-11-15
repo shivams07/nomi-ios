@@ -121,24 +121,28 @@ enum ReportsPeriod {
       return "All time"
     }
   }
+}
 
-  /// The trend window per basis — 6 trailing months on the calendar-month
-  /// toggle, 12 on the financial-year toggle, matching the design note
-  /// ("6 or 12 months"). Both windows are still trailing-from-now, not
-  /// aligned to the selected period; `InsightsStore.trend(months:)` has no
-  /// other shape to request from.
-  static func trendMonths(for basis: PeriodBasis) -> Int {
-    switch basis {
-    case .calendarMonth: return 6
-    case .financialYear: return 12
-    }
+/// Which body the Insights screen shows. Decided here, not in the view, so the
+/// empty rule is testable. `transactionCount` is `nil` when the period read
+/// failed. A completed financial year with no transactions is `.empty`: the
+/// empty state and no bars, the same as any other period with no transactions.
+enum ReportsBodyPlan: Equatable {
+  case loadFailed
+  case empty
+  case content(basis: PeriodBasis)
+
+  static func make(basis: PeriodBasis, transactionCount: Int?) -> ReportsBodyPlan {
+    guard let transactionCount else { return .loadFailed }
+    guard transactionCount > 0 else { return .empty }
+    return .content(basis: basis)
   }
 }
 
 /// The bar chart's series, pure so the day arithmetic is testable. A calendar
-/// month shows one bar per day; a financial year shows the trend's monthly
-/// debit bars instead (the trend rule above), because 365 bars carry no
-/// readable shape.
+/// month shows one bar per day; a financial year shows one bar per month of
+/// that year (`InsightsStore.monthlyTrend(for:)`, R12b Y2), because 365 bars
+/// carry no readable shape.
 enum ReportsSpendSeries {
   /// Day-of-month debit totals, index 0 = day 1, zero-filled. `nil` for any
   /// period that is not a calendar month.

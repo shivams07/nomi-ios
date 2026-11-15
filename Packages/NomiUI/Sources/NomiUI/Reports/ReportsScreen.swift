@@ -31,8 +31,13 @@ public struct ReportsScreen: View {
 
   @State private var basis: PeriodBasis
   @State private var anchor: Date
-  @State private var exportURL: URL?
-  @State private var exportAllTimeURL: URL?
+  /// `true` until the user picks a period, and again when a picked period
+  /// contains today. Decides whether a refresh moves `anchor` to now (R12b, Y1).
+  @State private var followsToday = true
+  /// The CSV the export menu just wrote. Presented once, then removed when the
+  /// share sheet closes.
+  @State private var shareItem: ReportsShareItem?
+  @State private var shareCleanup = ReportsShareCleanup()
   @State private var exportError = false
   /// Bumped by a load-failed card's Retry, so the body reads the store again.
   @State private var retryToken = 0
@@ -63,16 +68,16 @@ public struct ReportsScreen: View {
     return ReportsViewModelBuilder.make(period: period, insights: insights, trend: [])
   }
 
-  /// The financial-year basis draws monthly bars from the trend (the trend rule
-  /// in `ReportsPeriod.trendMonths`). A calendar month draws its daily bars
-  /// from the period itself, so it never reads the trend. A read that failed is
-  /// not a read that found nothing, so `.failed` is its own case.
+  /// The financial-year basis draws one bar per month of the selected year
+  /// (`InsightsStore.monthlyTrend(for:)`, zero-filled, R12b Y2). A calendar
+  /// month draws its daily bars from the period itself, so it never reads the
+  /// monthly series. A read that failed is not a read that found nothing, so
+  /// `.failed` is its own case.
   private var monthlyTrend: DashboardWiring.Load<[MonthBucket]>? {
     _ = retryToken
     guard basis == .financialYear else { return nil }
     do {
-      let buckets = try insightsStore.trend(months: ReportsPeriod.trendMonths(for: basis))
-      return .loaded(buckets.sorted { $0.id < $1.id })
+      return .loaded(try ReportsMonthlyBars.buckets(for: period, store: insightsStore))
     } catch {
       return .failed
     }
@@ -94,18 +99,19 @@ public struct ReportsScreen: View {
   public var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: NomiSpacing.xs) {
-        if let viewModel {
-          if viewModel.transactionCount == 0 {
-            emptyState
-          } else {
+        switch ReportsBodyPlan.make(basis: basis, transactionCount: viewModel?.transactionCount) {
+        case .loadFailed:
+          NomiLoadFailedCard(message: "Insights didn’t load.") {
+            retryToken += 1
+          }
+        case .empty:
+          emptyState
+        case .content:
+          if let viewModel {
             summaryCard(viewModel)
             barsCard(viewModel)
             ReportsCategoryBreakdownCard(slices: viewModel.categories)
             TopMerchantsCard(merchants: viewModel.topMerchants)
-          }
-        } else {
-          NomiLoadFailedCard(message: "Insights didn’t load.") {
-            retryToken += 1
           }
         }
         // Independent of `viewModel`/`period` on purpose — a one-off,
@@ -131,6 +137,12 @@ public struct ReportsScreen: View {
     .alert("Could not export CSV", isPresented: $exportError) {
       Button("OK", role: .cancel) {}
     }
+    .sheet(item: $shareItem, onDismiss: { shareCleanup.dismiss() }) { item in
+      ReportsShareSheet(url: item.url)
+    }
+    .onChange(of: refreshToken) { _, _ in
+      anchor = PeriodAnchorPolicy.anchorAfterRefresh(current: anchor, followsToday: followsToday, now: Date())
+    }
   }
 
   /// The period pill's menu: the basis, then the recent periods on that basis
@@ -145,6 +157,7 @@ public struct ReportsScreen: View {
       ForEach(ReportsPeriod.recentAnchors(basis: basis, now: Date()), id: \.self) { candidate in
         Button(ReportsPeriod.label(for: ReportsPeriod.period(basis: basis, anchor: candidate))) {
           anchor = candidate
+          followsToday = PeriodAnchorPolicy.followsToday(afterPicking: candidate, basis: basis, now: Date(), calendar: .current)
         }
       }
     }
@@ -235,24 +248,15 @@ public struct ReportsScreen: View {
     date.formatted(.dateTime.month(.wide).year().locale(Locale(identifier: "en_IN")))
   }
 
-  /// One control, two actions. Each action keeps its own `@State` URL: the first
-  /// tap writes the CSV, the next opens the share sheet for it. Both actions
-  /// are the shipped ones, unchanged.
+  /// One control, two actions. Each tap writes a fresh CSV and opens the share
+  /// sheet for it at once (R12b, Y1).
   private var exportRow: some View {
     Menu {
-      if let exportURL {
-        ShareLink("This period", item: exportURL)
-      } else {
-        Button("This period") {
-          exportURL = writeExport(for: period)
-        }
+      Button("This period") {
+        share(period)
       }
-      if let exportAllTimeURL {
-        ShareLink("All time", item: exportAllTimeURL)
-      } else {
-        Button("All time") {
-          exportAllTimeURL = writeExport(for: .allTime)
-        }
+      Button("All time") {
+        share(.allTime)
       }
     } label: {
       HStack(spacing: NomiSpacing.xs) {
@@ -276,22 +280,31 @@ public struct ReportsScreen: View {
     .accessibilityLabel("Export")
   }
 
-  /// Shared by both export actions. `ReportsCSVExport.write` tracks only one
-  /// "last written file" across every call regardless of period, so writing
-  /// one export after the other still deletes the first one's file on disk
-  /// even though both `@State` URLs remain set — a pre-existing limitation
-  /// of that single tracker, not something this restyle touches.
-  private func writeExport(for exportPeriod: InsightPeriod) -> URL? {
+  /// Writes the CSV for `exportPeriod` and opens the share sheet on it. A read
+  /// or write failure raises the export alert and opens no sheet.
+  private func share(_ exportPeriod: InsightPeriod) {
     guard let transactions = try? insightsStore.transactions(in: exportPeriod) else {
       exportError = true
-      return nil
+      return
     }
     let names = CSVNameMaps(categories: categoryNames, accounts: accountNames)
-    guard let url = try? ReportsCSVExport.write(transactions, names: names, periodLabel: ReportsPeriod.label(for: exportPeriod)) else {
+    do {
+      let url = try ReportsCSVExport.write(transactions, names: names, periodLabel: ReportsPeriod.label(for: exportPeriod))
+      shareCleanup.show(url)
+      shareItem = ReportsShareItem(url: url)
+    } catch {
       exportError = true
-      return nil
     }
-    return url
+  }
+}
+
+/// The FY bars' source: `monthlyTrend(for:)` for the selected period, one bucket
+/// per month, zero-filled. Its own function so a test can pin that the bars read
+/// it, and not `trend(months:)` (R12b, Y2).
+@MainActor
+enum ReportsMonthlyBars {
+  static func buckets(for period: InsightPeriod, store: InsightsStore) throws -> [MonthBucket] {
+    try store.monthlyTrend(for: period)
   }
 }
 
@@ -371,14 +384,15 @@ private func reportsCSVExportPreviewContainer() -> ModelContainer {
 /// `ReportsPreviewSupport` isn't in this unit's file list, so this stays
 /// local rather than adding a throwing mode there — same "small file-local
 /// throwing fake" pattern `error-surfacing-screens` used for its own
-/// failed-load previews. Delegates everything except `trend` to a real
-/// preview store so the rest of the screen still renders normally.
+/// failed-load previews. Delegates everything except `monthlyTrend(for:)` to a
+/// real preview store so the rest of the screen still renders normally.
 @MainActor
 private final class TrendFailingInsightsStore: InsightsStore {
   private let base: InsightsStore
   init(wrapping base: InsightsStore) { self.base = base }
   func insights(for period: InsightPeriod) throws -> PeriodInsights { try base.insights(for: period) }
-  func trend(months: Int) throws -> [MonthBucket] { throw PreviewLoadError.forcedFailure }
+  func trend(months: Int) throws -> [MonthBucket] { try base.trend(months: months) }
+  func monthlyTrend(for period: InsightPeriod) throws -> [MonthBucket] { throw PreviewLoadError.forcedFailure }
   func accountSummaries(includeArchived: Bool) throws -> [AccountSummary] { try base.accountSummaries(includeArchived: includeArchived) }
   func budgetProgress(year: Int, month: Int) throws -> [BudgetProgress] { try base.budgetProgress(year: year, month: month) }
   // `Transaction` alone is ambiguous with `SwiftUI.Transaction` in a file that

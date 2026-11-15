@@ -241,6 +241,9 @@ public struct DashboardView: View {
 
   @State private var basis: PeriodBasis = .calendarMonth
   @State private var anchor: Date = Date()
+  /// `true` until the user picks a period, and again when a picked period
+  /// contains today. Decides whether a refresh moves `anchor` to now (R12b, Y1).
+  @State private var followsToday = true
   @State private var mailState: MailConnectionState = .disconnected
 
   /// Bumped by every "tap to retry" — a stored property changing is what
@@ -358,6 +361,9 @@ public struct DashboardView: View {
         mailState = state
       }
     }
+    .onChange(of: refreshToken) { _, _ in
+      anchor = PeriodAnchorPolicy.anchorAfterRefresh(current: anchor, followsToday: followsToday, now: Date())
+    }
   }
 
   // MARK: - Hero
@@ -390,6 +396,7 @@ public struct DashboardView: View {
     ForEach(DashboardPeriod.recentAnchors(basis: basis, now: Date()), id: \.self) { candidate in
       Button(DashboardPeriod.label(for: DashboardPeriod.period(basis: basis, anchor: candidate))) {
         anchor = candidate
+        followsToday = PeriodAnchorPolicy.followsToday(afterPicking: candidate, basis: basis, now: Date(), calendar: .current)
       }
     }
   }
