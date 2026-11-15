@@ -131,7 +131,7 @@ final class MailSyncCursorTests: XCTestCase {
 
     let backfill = Task { try await engine.backfill(months: 6) }
     do {
-      _ = try await backfill.value
+      _ = try await withTestTimeout { try await backfill.value }
       XCTFail("a cancelled backfill was supposed to throw")
     } catch {
       XCTAssertTrue(error is CancellationError, "got \(error)")
@@ -148,14 +148,13 @@ final class MailSyncCursorTests: XCTestCase {
   func testCancelledBackfillDoesNotYieldFailed() async throws {
     let fetcher = HoldInSearch()
     let service = makeService(fetcher: fetcher)
-    var states = service.state.makeAsyncIterator()
 
     try await service.connect(CursorTestCredentials.credentials)
     let backfill = Task { try await service.startBackfill(months: 6) }
-    await fetcher.waitUntilSearching()
+    try await withTestTimeout { await fetcher.waitUntilSearching() }
     backfill.cancel()
     do {
-      _ = try await backfill.value
+      _ = try await withTestTimeout { try await backfill.value }
       XCTFail("a cancelled backfill was supposed to throw")
     } catch {
       XCTAssertTrue(error is CancellationError, "got \(error)")
@@ -163,10 +162,7 @@ final class MailSyncCursorTests: XCTestCase {
 
     let connected = MailConnectionState.connected(
       address: CursorTestCredentials.credentials.address, lastSync: nil)
-    var seen: [MailConnectionState] = []
-    for _ in 0..<4 {
-      if let next = await states.next() { seen.append(next) }
-    }
+    let seen = try await collect(service.state, count: 4)
     XCTAssertEqual(seen, [.disconnected, .connecting, connected, connected])
   }
 
@@ -176,14 +172,13 @@ final class MailSyncCursorTests: XCTestCase {
   func testCancelledSyncDoesNotReconnect() async throws {
     let fetcher = HoldInSearch()
     let service = makeService(fetcher: fetcher)
-    var states = service.state.makeAsyncIterator()
 
     try await service.connect(CursorTestCredentials.credentials)
     let sync = Task { try await service.syncNow() }
-    await fetcher.waitUntilSearching()
+    try await withTestTimeout { await fetcher.waitUntilSearching() }
     sync.cancel()
     do {
-      _ = try await sync.value
+      _ = try await withTestTimeout { try await sync.value }
       XCTFail("a cancelled sync was supposed to throw")
     } catch {
       XCTAssertTrue(error is CancellationError, "got \(error)")
@@ -192,10 +187,7 @@ final class MailSyncCursorTests: XCTestCase {
     XCTAssertEqual(fetcher.connectCount, 1, "a cancelled sync is not a dead socket")
     let connected = MailConnectionState.connected(
       address: CursorTestCredentials.credentials.address, lastSync: nil)
-    var seen: [MailConnectionState] = []
-    for _ in 0..<4 {
-      if let next = await states.next() { seen.append(next) }
-    }
+    let seen = try await collect(service.state, count: 4)
     XCTAssertEqual(seen, [.disconnected, .connecting, connected, connected])
   }
 
