@@ -42,6 +42,10 @@ public final class SwiftDataTransactionStore: TransactionStore {
   /// The one save `addTransfer` makes (I-11). A seam for the same reason: a test makes it fail
   /// and proves neither leg is left behind. Production passes the real `save()`.
   private let saveTransferWrite: (ModelContext) throws -> Void
+  /// The one save `delete` makes when the row is a transfer leg (B9). A seam for the same
+  /// reason: a test makes it fail and proves neither the delete nor the unpairing persists.
+  /// Production passes the real `save()`.
+  private let saveDeleteUnpairWrite: (ModelContext) throws -> Void
 
   public init(
     context: ModelContext,
@@ -50,7 +54,8 @@ public final class SwiftDataTransactionStore: TransactionStore {
     transferCalendar: Calendar = .current,
     now: @escaping () -> Date = { Date() },
     saveAccountWrite: @escaping (ModelContext) throws -> Void = { try $0.save() },
-    saveTransferWrite: @escaping (ModelContext) throws -> Void = { try $0.save() }
+    saveTransferWrite: @escaping (ModelContext) throws -> Void = { try $0.save() },
+    saveDeleteUnpairWrite: @escaping (ModelContext) throws -> Void = { try $0.save() }
   ) {
     self.context = context
     self.coordinator = coordinator
@@ -59,6 +64,7 @@ public final class SwiftDataTransactionStore: TransactionStore {
     self.now = now
     self.saveAccountWrite = saveAccountWrite
     self.saveTransferWrite = saveTransferWrite
+    self.saveDeleteUnpairWrite = saveDeleteUnpairWrite
   }
 
   public func add(_ draft: ManualTransactionDraft) throws -> Transaction {
@@ -503,15 +509,49 @@ public final class SwiftDataTransactionStore: TransactionStore {
       ))
   }
 
+  /// Deletes one row. A transfer leg also unpairs its partner (B9): the partner loses its
+  /// group and its source in the same save, so it becomes an ordinary row and counts in the
+  /// period totals again. Both changes persist or neither does. A row that is not a leg
+  /// deletes as it always did.
   public func delete(_ id: UUID) throws {
     guard let row = try row(id: id) else { return }
     let categoryID = row.categoryID
+    guard let group = row.transferGroupID else {
+      context.delete(row)
+      try context.save()
+      // Deleting spend can only move a budget *down*, never across a threshold,
+      // so this cannot fire an alert — but the progress bar and every total on
+      // the dashboard do change, and that is what the invalidation is for.
+      coordinator.didWrite(affectedCategoryIDs: Set([categoryID].compactMap { $0 }))
+      return
+    }
+
+    // The partners are read before the first mutation. A group with no other stored
+    // member (its partner was already deleted) finds none, and only the row goes.
+    let target: UUID? = group
+    let rowID = row.id
+    let partners = try context.fetch(
+      FetchDescriptor<Transaction>(
+        predicate: #Predicate<Transaction> { $0.transferGroupID == target && $0.id != rowID }
+      ))
+    let timestamp = now()
+    for partner in partners {
+      partner.transferGroupID = nil
+      partner.transferSourceRaw = nil
+      partner.updatedAt = timestamp
+    }
     context.delete(row)
-    try context.save()
-    // Deleting spend can only move a budget *down*, never across a threshold,
-    // so this cannot fire an alert — but the progress bar and every total on
-    // the dashboard do change, and that is what the invalidation is for.
-    coordinator.didWrite(affectedCategoryIDs: Set([categoryID].compactMap { $0 }))
+    do {
+      try saveDeleteUnpairWrite(context)
+    } catch {
+      // Neither the delete nor the unpairing stays dirty for a later save to flush.
+      context.rollback()
+      throw error
+    }
+    // Both legs' categories moved: the deleted one lost a row, the partner gained one.
+    var affected = Set([categoryID].compactMap { $0 })
+    affected.formUnion(partners.compactMap(\.categoryID))
+    coordinator.didWrite(affectedCategoryIDs: affected)
   }
 
   /// Same membership as `FakeTransactionStore`: merged rows, flagged rows, and
