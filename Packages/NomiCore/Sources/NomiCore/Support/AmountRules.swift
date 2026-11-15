@@ -26,6 +26,17 @@ public enum AmountValidationError: Error, Sendable, Equatable {
   case outOfRange(amountMinor: Int)
 }
 
+/// Why `AmountText.parse` refused a text. R8b, I-8 amendment.
+public enum AmountTextRejection: Error, Sendable, Equatable {
+  /// Empty, no digit, a character outside the rule, a second decimal separator, or a
+  /// grouping character after the decimal separator.
+  case notANumber
+  /// More than two digits after the decimal separator.
+  case tooManyFractionDigits
+  /// More than ten significant whole digits, or beyond `maximumMinor`.
+  case outOfRange
+}
+
 /// Reads amount text typed into a field, in any locale. R8, I-8.
 public enum AmountText {
   /// Display filter for an amount field: Unicode decimal digits become ASCII, the
@@ -49,17 +60,25 @@ public enum AmountText {
     return result
   }
 
-  /// Minor units of `text`, or `nil` when the text is empty or holds no digit; when
-  /// it holds any character other than digits (any script), decimal separators,
-  /// grouping characters and, only with `allowNegative` and only at index 0, "-";
-  /// when it has two decimal separators or more than two fraction digits; when its
-  /// whole part is longer than ten digits; or when it is beyond `maximumMinor` in
-  /// magnitude. It does not filter: callers pass field text that `filtered` has
-  /// already produced.
-  ///
-  /// Grouping characters are accepted anywhere, as the rule states, including after
-  /// the decimal separator.
+  /// Minor units of `text`, or `nil` wherever `parse` refuses it. `parse` is the rule.
   public static func minorUnits(_ text: String, locale: Locale, allowNegative: Bool) -> Int? {
+    try? parse(text, locale: locale, allowNegative: allowNegative).get()
+  }
+
+  /// Minor units of `text`, or the reason it is refused. It does not filter: callers pass
+  /// field text that `filtered` has already produced.
+  ///
+  /// Checks run in this order and the first failure wins:
+  /// 1. a character outside the rule (digits in any script, decimal separators, grouping
+  ///    characters, and "-" only at index 0 with `allowNegative`), a second decimal
+  ///    separator, or a grouping character after the decimal separator: `.notANumber`;
+  /// 2. no digit at all: `.notANumber`;
+  /// 3. more than two digits after the decimal separator: `.tooManyFractionDigits`;
+  /// 4. more than ten significant whole digits, leading zeros not counted: `.outOfRange`;
+  /// 5. a magnitude beyond `AmountRules.maximumMinor`: `.outOfRange`.
+  ///
+  /// Zero is `.success(0)`; callers decide whether zero is allowed.
+  public static func parse(_ text: String, locale: Locale, allowNegative: Bool) -> Result<Int, AmountTextRejection> {
     let decimals = decimalSeparators(locale)
     let grouping = groupingSeparators(locale, decimals: decimals)
     var isNegative = false
@@ -71,20 +90,23 @@ public enum AmountText {
       if let digit = digitValue(character) {
         if seenDecimal { fraction.append(digit) } else { whole.append(digit) }
       } else if decimals.contains(character) {
-        guard !seenDecimal else { return nil }
+        guard !seenDecimal else { return .failure(.notANumber) }
         seenDecimal = true
       } else if grouping.contains(character) {
-        continue
+        // "1.2 5" is not 1.25: grouping after the decimal separator is not a number.
+        guard !seenDecimal else { return .failure(.notANumber) }
       } else if character == "-" && index == 0 && allowNegative {
         isNegative = true
       } else {
-        return nil
+        return .failure(.notANumber)
       }
     }
 
-    guard !(whole.isEmpty && fraction.isEmpty) else { return nil }
-    // Checked before any arithmetic, so a long entry is refused rather than wrapped.
-    guard whole.count <= 10, fraction.count <= 2 else { return nil }
+    guard !(whole.isEmpty && fraction.isEmpty) else { return .failure(.notANumber) }
+    guard fraction.count <= 2 else { return .failure(.tooManyFractionDigits) }
+    // Leading zeros are not significant: "00000000001.50" is 150. Checked before any
+    // arithmetic, so a long entry is refused rather than wrapped.
+    guard whole.drop(while: { $0 == 0 }).count <= 10 else { return .failure(.outOfRange) }
 
     var rupees = 0
     for digit in whole { rupees = rupees * 10 + digit }
@@ -93,8 +115,8 @@ public enum AmountText {
     if fraction.count == 1 { paise *= 10 }
 
     let magnitude = rupees * 100 + paise
-    guard magnitude <= AmountRules.maximumMinor else { return nil }
-    return isNegative ? -magnitude : magnitude
+    guard magnitude <= AmountRules.maximumMinor else { return .failure(.outOfRange) }
+    return .success(isNegative ? -magnitude : magnitude)
   }
 
   /// "." is always a decimal separator. The locale's own, when it is a single

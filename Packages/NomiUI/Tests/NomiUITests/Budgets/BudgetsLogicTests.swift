@@ -172,4 +172,75 @@ final class BudgetsLogicTests: XCTestCase {
       "Food & Dining stops tracking against a monthly limit. Your transactions are not changed."
     )
   }
+
+  // MARK: - R8b: the amount hint
+
+  /// R8b, ruling 5. The hint under the amount says why Save is disabled, and stays
+  /// silent for text that is only half typed.
+  @MainActor
+  func testBudgetAmountHintTable() {
+    let en = Locale(identifier: "en_IN")
+    let rows: [(text: String, expected: String?)] = [
+      ("", nil),
+      (".", nil),
+      ("500", nil),
+      ("0", BudgetAmountHint.outOfRange),
+      ("0.00", BudgetAmountHint.outOfRange),
+      ("1000000000.01", BudgetAmountHint.outOfRange),
+      ("1.999", BudgetAmountHint.tooPrecise),
+      ("0.01", nil),
+    ]
+    for row in rows {
+      XCTAssertEqual(BudgetAmountHint.text(for: row.text, locale: en), row.expected, "hint for \(row.text)")
+    }
+  }
+
+  func testBudgetAmountHintCopyIsExact() {
+    XCTAssertEqual(BudgetAmountHint.outOfRange, "Enter an amount from ₹0.01 to ₹1,00,00,00,000.")
+    XCTAssertEqual(BudgetAmountHint.tooPrecise, "Amounts can have at most two decimal places.")
+  }
+
+  // MARK: - R8b: Save never removes a budget
+
+  /// The mutant "save() calls removeBudget" survived R8. Save is now a decision a
+  /// test can drive: every refused amount and a missing category change nothing.
+  @MainActor
+  func testSaveNeverRemovesABudget() throws {
+    let spy = SpyBudgetStore()
+    let category = UUID()
+    for amount in [0, -500, 100_000_000_001] {
+      XCTAssertFalse(try BudgetSaveAction.perform(categoryID: category, amountMinor: amount, store: spy), "amount \(amount)")
+    }
+    XCTAssertFalse(try BudgetSaveAction.perform(categoryID: nil, amountMinor: 500_00, store: spy))
+    XCTAssertTrue(spy.sets.isEmpty, "a refused Save reached setBudget")
+    XCTAssertTrue(spy.removals.isEmpty, "Save must never call removeBudget")
+  }
+
+  @MainActor
+  func testSaveSetsAValidAmountAndStillNeverRemoves() throws {
+    let spy = SpyBudgetStore()
+    let category = UUID()
+    XCTAssertTrue(try BudgetSaveAction.perform(categoryID: category, amountMinor: 1, store: spy))
+    XCTAssertTrue(try BudgetSaveAction.perform(categoryID: category, amountMinor: 100_000_000_000, store: spy))
+    XCTAssertEqual(spy.sets.map { $0.amountMinor }, [1, 100_000_000_000])
+    XCTAssertTrue(spy.sets.allSatisfy { $0.categoryID == category })
+    XCTAssertTrue(spy.removals.isEmpty)
+  }
+}
+
+/// Records every call Save makes on the store, so a test can see a removal.
+@MainActor
+private final class SpyBudgetStore: BudgetStore {
+  private(set) var sets: [(categoryID: UUID, amountMinor: Int)] = []
+  private(set) var removals: [UUID] = []
+
+  func setBudget(categoryID: UUID, amountMinor: Int) throws {
+    sets.append((categoryID: categoryID, amountMinor: amountMinor))
+  }
+
+  func removeBudget(categoryID: UUID) throws {
+    removals.append(categoryID)
+  }
+
+  func budgets() throws -> [Budget] { [] }
 }

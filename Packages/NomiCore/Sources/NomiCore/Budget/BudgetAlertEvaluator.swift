@@ -73,9 +73,9 @@ public struct BudgetAlertEvaluator: Sendable {
   /// `>=`, so the spec's "90%" fires at exactly 90% rather than a paisa past it.
   ///
   /// `fraction` is trusted as given. The two guards are not defensive noise:
-  /// `setBudget(amountMinor: 0)` means *remove*, and a zero denominator reaching
-  /// here as `.infinity` would satisfy any threshold and fire an alert for a
-  /// budget the user deleted.
+  /// setBudget refuses zero since R8b; the guard stays for budget rows written by older
+  /// builds and synced in. A zero denominator reaching here as `.infinity` would satisfy
+  /// any threshold and fire an alert for a budget the user deleted.
   private func hasCrossed(_ progress: BudgetProgress, threshold: Double) -> Bool {
     guard progress.budgetMinor > 0, progress.fraction.isFinite else { return false }
     return progress.fraction >= threshold

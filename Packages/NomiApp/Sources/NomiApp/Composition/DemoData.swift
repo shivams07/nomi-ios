@@ -161,13 +161,13 @@ struct DemoDataset: Equatable, Sendable {
 
   // MARK: - Money
 
-  /// Rupees, parsed through the same `Decimal` path an intent amount takes, so
-  /// every figure in this file is exact and goes through minor units. A bad
-  /// literal here is a programming error, so it traps rather than being skipped.
+  /// Rupees, parsed by the same parser an intent amount takes, so every figure in this
+  /// file is exact and goes through minor units. A bad literal here is a programming
+  /// error, so it traps rather than being skipped.
   static func minor(_ rupees: String) -> Int {
     guard
-      case .success(let value) = IntentDraftMapping.decimal(from: rupees),
-      case .success(let paise) = IntentDraftMapping.minorUnits(from: value)
+      case .success(let paise) = IntentDraftMapping.minorUnits(
+        fromText: rupees, locale: Locale(identifier: "en_IN"))
     else {
       preconditionFailure("DemoData amount is not a rupee amount: \(rupees)")
     }

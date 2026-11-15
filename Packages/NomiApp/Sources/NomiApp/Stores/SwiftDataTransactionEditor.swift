@@ -16,17 +16,22 @@ public final class SwiftDataTransactionEditor: TransactionEditing {
   /// The device calendar (DEC-05 R6): the transfer window is three calendar days
   /// in the user's own calendar, not the India calendar the dedupe key uses.
   private let calendar: Calendar
+  /// The one save `update` and `setTransfer` make. Production passes the real `save()`;
+  /// a test passes a closure that throws, to prove the rollback.
+  private let saveEdit: (ModelContext) throws -> Void
 
   public init(
     context: ModelContext,
     coordinator: WriteCoordinator,
     now: @escaping () -> Date = { Date() },
-    calendar: Calendar = .current
+    calendar: Calendar = .current,
+    saveEdit: @escaping (ModelContext) throws -> Void = { try $0.save() }
   ) {
     self.context = context
     self.coordinator = coordinator
     self.now = now
     self.calendar = calendar
+    self.saveEdit = saveEdit
   }
 
   /// R8. A new amount outside `AmountRules` is refused before any field is read or
@@ -69,7 +74,9 @@ public final class SwiftDataTransactionEditor: TransactionEditing {
       affected.insert(category)
     }
 
-    try context.save()
+    // A failed save rolls the context back, so neither the field writes nor an unpairing
+    // stay dirty for a later save to flush (R8b, the TR4 shape `setAccount` uses).
+    do { try saveEdit(context) } catch { context.rollback(); throw error }
     coordinator.didWrite(affectedCategoryIDs: affected)
   }
 
@@ -149,7 +156,9 @@ public final class SwiftDataTransactionEditor: TransactionEditing {
 
     row.updatedAt = timestamp
     touched.insert(row, at: 0)
-    try context.save()
+    // A failed save rolls the context back, so neither the field writes nor an unpairing
+    // stay dirty for a later save to flush (R8b, the TR4 shape `setAccount` uses).
+    do { try saveEdit(context) } catch { context.rollback(); throw error }
     coordinator.didWrite(affectedCategoryIDs: Set(touched.compactMap(\.categoryID)))
   }
 

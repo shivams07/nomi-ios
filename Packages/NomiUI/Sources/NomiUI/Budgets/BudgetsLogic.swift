@@ -35,6 +35,43 @@ enum BudgetSaveIntent: Equatable {
   }
 }
 
+/// The hint shown under the amount when Save is disabled by the amount. R8b, ruling 5.
+/// Silent for text still being typed ("" and a lone ".") and for any valid amount.
+enum BudgetAmountHint {
+  static let outOfRange = "Enter an amount from ₹0.01 to ₹1,00,00,00,000."
+  static let tooPrecise = "Amounts can have at most two decimal places."
+
+  static func text(for amountText: String, locale: Locale = .current) -> String? {
+    guard !amountText.isEmpty else { return nil }
+    switch AmountText.parse(amountText, locale: locale, allowNegative: false) {
+    case .success(let value):
+      // Only zero reaches here as an invalid value: the parser already caps the magnitude.
+      return AmountRules.isValidTransactionAmount(value) ? nil : outOfRange
+    case .failure(.outOfRange):
+      return outOfRange
+    case .failure(.tooManyFractionDigits):
+      return tooPrecise
+    case .failure(.notANumber):
+      return nil
+    }
+  }
+}
+
+/// The budget editor's Save, as a decision a test can drive with a spy store. R8b.
+/// Save only ever sets. It never calls `removeBudget`: removal is the Remove row's
+/// confirmed action, which the View reaches separately.
+enum BudgetSaveAction {
+  /// Sets the budget and returns true, or changes nothing and returns false.
+  @MainActor
+  static func perform(categoryID: UUID?, amountMinor: Int, store: BudgetStore) throws -> Bool {
+    guard let categoryID, case .set(let amount) = BudgetSaveIntent.resolve(amountMinor: amountMinor) else {
+      return false
+    }
+    try store.setBudget(categoryID: categoryID, amountMinor: amount)
+    return true
+  }
+}
+
 /// The budget editor's Save gate: a category, and an amount that is a valid
 /// transaction amount. Zero is not a budget, so it does not pass.
 enum BudgetFormGate {
