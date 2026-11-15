@@ -272,10 +272,9 @@ public struct ConnectMailScreen: View {
       .padding(.horizontal, NomiSpacing.screenGutter)
       .padding(.bottom, NomiSpacing.sm)
     }
-    .confirmationDialog(
+    .alert(
       "Disconnect mail?",
-      isPresented: $model.isConfirmingDisconnect,
-      titleVisibility: .visible
+      isPresented: $model.isConfirmingDisconnect
     ) {
       Button("Disconnect", role: .destructive) { model.confirmDisconnect() }
       Button("Cancel", role: .cancel) { model.cancelDisconnect() }

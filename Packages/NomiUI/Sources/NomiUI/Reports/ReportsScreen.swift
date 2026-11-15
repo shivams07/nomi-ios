@@ -95,6 +95,9 @@ public struct ReportsScreen: View {
     Dictionary(accounts.map { ($0.id, $0.displayName) }, uniquingKeysWith: { first, _ in first })
   }
 
+  /// The bottom reserve for the Insights tab (F3b). 0 on a pushed screen.
+  @Environment(\.nomiTabBarReserve) private var tabBarReserve
+
   public var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: NomiSpacing.xs) {
@@ -123,6 +126,8 @@ public struct ReportsScreen: View {
       .padding(.top, NomiSpacing.xs)
       .padding(.bottom, NomiSpacing.sm)
     }
+    // The Export row clears the floating tab bar in both orientations (Andrews, PR #194).
+    .contentMargins(.bottom, tabBarReserve, for: .scrollContent)
     .background(NomiColor.ground)
     .navigationTitle("Insights")
     #if os(iOS)

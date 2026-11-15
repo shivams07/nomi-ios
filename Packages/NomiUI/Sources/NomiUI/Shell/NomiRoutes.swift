@@ -7,6 +7,12 @@ import SwiftUI
 public enum HomeRoute: Hashable, Sendable {
   case settings
   case connectMail
+  /// Settings > Organize > Accounts. Pushed from Settings, not from a tab.
+  case accounts
+  /// Import from file, pushed by `nomiOpenImport` and by Settings.
+  case importStatement
+  /// The first scan's progress, pushed when Connect mail starts it.
+  case backfill
 }
 
 /// Opens the transaction entry sheet from anywhere in the app. The root sets it

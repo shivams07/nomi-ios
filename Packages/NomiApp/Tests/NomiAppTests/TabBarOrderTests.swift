@@ -2,16 +2,16 @@
 import Testing
 @testable import NomiApp
 
-/// The five-slot bar as assertions (SIMP §0, "Tab bar"): Home, Ledger, the
-/// centre `+`, Insights, Accounts. Swift-testing, so it also runs in the CLT
+/// The five-slot bar as assertions (SIMP §0, "Tab bar"): Home, Activity, the
+/// centre `+`, Insights, Plan. Swift-testing, so it also runs in the CLT
 /// harness (V2) and not only under Xcode.
 @Suite("Tab bar order")
 struct TabBarOrderTests {
 
-  @Test("bar order is Home, Ledger, add, Insights, Accounts")
+  @Test("bar order is Home, Activity, add, Insights, Plan")
   func barOrder() {
     #expect(
-      TabBarLayout.items == [.tab(.home), .tab(.ledger), .add, .tab(.insights), .tab(.accounts)]
+      TabBarLayout.items == [.tab(.home), .tab(.activity), .add, .tab(.insights), .tab(.plan)]
     )
   }
 
@@ -21,10 +21,10 @@ struct TabBarOrderTests {
     #expect(TabBarLayout.items.firstIndex(of: .add) == 2)
   }
 
-  @Test("four tabs, no Budgets or Settings slot")
+  @Test("four tabs, no Budgets, Accounts or Settings slot")
   func fourTabs() {
     #expect(RootTab.allCases.count == 4)
-    #expect(RootTab.allCases == [.home, .ledger, .insights, .accounts])
+    #expect(RootTab.allCases == [.home, .activity, .insights, .plan])
   }
 
   @Test("every tab has a non-empty title and symbol, and titles and symbols are unique")
@@ -39,7 +39,7 @@ struct TabBarOrderTests {
 
   @Test("the tab titles are the artboard labels")
   func titlesMatchArtboards() {
-    #expect(RootTab.allCases.map(\.title) == ["Home", "Ledger", "Insights", "Accounts"])
+    #expect(RootTab.allCases.map(\.title) == ["Home", "Activity", "Insights", "Plan"])
   }
 
   @Test("the bar is visible only on a tab root")

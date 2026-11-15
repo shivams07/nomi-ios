@@ -297,6 +297,21 @@ public struct SettingsScreen: View {
           CategoriesScreen(categoryStore: categoryStore)
         }
         rowDivider
+        // Accounts moved here from the tab bar (I-15). It is a value link, so it
+        // pushes onto Home's stack, where `HomeRoute.accounts` is handled.
+        NavigationLink(value: HomeRoute.accounts) {
+          HStack(spacing: NomiSpacing.xs) {
+            Text("Accounts")
+              .nomiTextStyle(.rowBody)
+              .foregroundStyle(NomiColor.ink)
+            Spacer(minLength: 0)
+            RowChevron()
+          }
+          .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        rowDivider
         if let budgets = budgetsScreen() {
           navigationRow("Budgets") {
             budgets

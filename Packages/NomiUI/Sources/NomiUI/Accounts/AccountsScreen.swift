@@ -107,13 +107,12 @@ public struct AccountsScreen: View {
         Text(AccountBalanceDisplay.archiveMessage)
       }
     )
-    .confirmationDialog(
+    .alert(
       "Delete \(deletingAccount?.displayName ?? "account")?",
       isPresented: Binding(
         get: { deletingAccount != nil },
         set: { if !$0 { deletingAccount = nil } }
       ),
-      titleVisibility: .visible,
       presenting: deletingAccount,
       actions: { account in
         Button("Archive instead") { routeDeleteChoice(.archiveInstead, for: account) }
@@ -494,7 +493,7 @@ private final class FailingAccountSummariesStore: InsightsStore {
     .foregroundStyle(NomiColor.ink)
     .padding()
     .background(NomiColor.card)
-    .confirmationDialog("Delete ICICI Credit Card?", isPresented: .constant(true), titleVisibility: .visible) {
+    .alert("Delete ICICI Credit Card?", isPresented: .constant(true)) {
       Button("Archive instead") {}
       Button("Delete", role: .destructive) {}
       Button("Cancel", role: .cancel) {}
