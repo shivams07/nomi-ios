@@ -139,11 +139,9 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
     XCTAssertEqual(store.saveCount, 1)
     XCTAssertFalse(store.isEmpty)
 
-    var seen: [MailConnectionState] = []
-    for await state in service.state.prefix(3) { seen.append(state) }
-    // Compared as a whole rather than element by element: `prefix(3)` yields
-    // *at most* three, so a stream that ends early leaves `seen[2]` trapping —
-    // and a trap takes the whole test process down with it.
+    let seen = try await collect(service.state, count: 3)
+    // Compared as a whole rather than element by element: a short list then fails
+    // with every element in the message, instead of trapping on an index.
     XCTAssertEqual(
       seen,
       [.disconnected, .connecting, .connected(address: "shivam@example.com", lastSync: nil)])
@@ -201,8 +199,7 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
       XCTAssertEqual(store.deleteCount, 0, "\(failure) must not remove the password")
       XCTAssertEqual(try store.load()?.password, "app-password", "\(failure)")
 
-      var seen: [MailConnectionState] = []
-      for await state in service.state.prefix(3) { seen.append(state) }
+      let seen = try await collect(service.state, count: 3)
       if case .failed = seen.last {
         // expected: the failure is reported, and the credential is kept
       } else {
@@ -227,8 +224,7 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
     }
 
     XCTAssertFalse(store.isEmpty)
-    var seen: [MailConnectionState] = []
-    for await state in service.state.prefix(3) { seen.append(state) }
+    let seen = try await collect(service.state, count: 3)
     XCTAssertEqual(seen, [.disconnected, .connecting, .failed(.connectionFailed)])
   }
 
@@ -254,7 +250,7 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
   ///
   /// `MailError` is deliberately not given a new case: the copy is the whole
   /// payload here, and a case nothing switches on is a case that goes stale.
-  func testALineBreakInTheCredentialSurfacesAsReadableCopyAndStoresNothing() async {
+  func testALineBreakInTheCredentialSurfacesAsReadableCopyAndStoresNothing() async throws {
     let fetcher = FlakyFetcher()
     fetcher.connectError = IMAPTransportError.invalidCredentials(
       "The password contains a line break.")
@@ -270,8 +266,7 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
     XCTAssertTrue(store.isEmpty, "a credential that cannot be sent is not kept")
     XCTAssertEqual(store.deleteCount, 1)
 
-    var seen: [MailConnectionState] = []
-    for await state in service.state.prefix(3) { seen.append(state) }
+    let seen = try await collect(service.state, count: 3)
     XCTAssertEqual(
       seen,
       [
@@ -281,15 +276,14 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
       "not .authenticationFailed - the server never saw it, so 'wrong password' would be a lie")
   }
 
-  func testAFailedConnectReportsAuthenticationFailureRatherThanAGenericOne() async {
+  func testAFailedConnectReportsAuthenticationFailureRatherThanAGenericOne() async throws {
     let fetcher = FlakyFetcher()
     fetcher.connectError = IMAPTransportError.authenticationFailed("Invalid credentials")
     let (service, _, _, _) = makeService(fetcher: fetcher)
 
     try? await service.connect(credentials)
 
-    var seen: [MailConnectionState] = []
-    for await state in service.state.prefix(3) { seen.append(state) }
+    let seen = try await collect(service.state, count: 3)
     XCTAssertEqual(seen[2], .failed(.authenticationFailed))
   }
 
@@ -332,8 +326,7 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
 
     XCTAssertEqual(fetcher.connectCount, 2, "one retry, not a loop")
 
-    var seen: [MailConnectionState] = []
-    for await state in service.state.prefix(4) { seen.append(state) }
+    let seen = try await collect(service.state, count: 4)
     XCTAssertEqual(seen.last, .failed(.connectionFailed))
   }
 
@@ -407,8 +400,7 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
     try await service.connect(credentials)
     _ = try await service.syncNow()
 
-    var seen: [MailConnectionState] = []
-    for await state in service.state.prefix(4) { seen.append(state) }
+    let seen = try await collect(service.state, count: 4)
     XCTAssertEqual(
       seen[3],
       .connected(
@@ -430,13 +422,12 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
     try await service.connect(credentials)
     try await service.startBackfill(months: 6)
 
-    var progress: [BackfillProgress] = []
-    for await tick in service.backfillProgress.prefix(3) { progress.append(tick) }
+    let progress = try await collect(service.backfillProgress, count: 3)
 
     // The service's own "started, total unknown" tick, then the engine's — the
     // total as soon as the windowed search resolves, then one per batch (§2.17).
-    // Mapped and compared whole: `prefix(3)` yields at most three, so indexing
-    // a short stream traps and takes every later suite down with it.
+    // Mapped and compared whole: a short stream fails here with every tick in the
+    // message, rather than trapping on an index.
     XCTAssertEqual(progress.map(\.scanned), [0, 0, 2])
     XCTAssertEqual(progress.map(\.total), [0, 2, 2])
     XCTAssertEqual(progress.last?.created, 2)
@@ -460,8 +451,7 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
     try await service.connect(credentials)
     try await service.startBackfill(months: 6)
 
-    var progress: [BackfillProgress] = []
-    for await tick in service.backfillProgress.prefix(5) { progress.append(tick) }
+    let progress = try await collect(service.backfillProgress, count: 5)
 
     XCTAssertEqual(progress.map(\.scanned), [0, 0, 50, 100, 150])
     XCTAssertEqual(progress.map(\.total), [0, 150, 150, 150, 150])
