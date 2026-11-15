@@ -110,62 +110,30 @@ final class ImportLogicTests: XCTestCase {
     XCTAssertTrue(ImportFileTypes.allowed.contains { html.conforms(to: $0) })
   }
 
-  // MARK: - IM: done-state copy (ImportDone artboard)
+  // MARK: - I-12 Amendment 1: the Done lines come from commit's counts
 
-  /// The nine title cases from the ruling: created 0, 1 and many, against
-  /// skipped 0, 1 and many. `merged` does not affect the title.
-  func testDoneTitleTable() {
-    let cases: [(created: Int, skipped: Int, expected: String)] = [
-      (0, 0, "No new transactions"),
-      (0, 1, "No new transactions, 1 skipped"),
-      (0, 2, "No new transactions, 2 skipped"),
-      (1, 0, "1 transaction imported"),
-      (1, 1, "1 transaction imported, 1 skipped"),
-      (1, 2, "1 transaction imported, 2 skipped"),
-      (24, 0, "24 transactions imported"),
-      (24, 1, "24 transactions imported, 1 skipped"),
-      (24, 2, "24 transactions imported, 2 skipped"),
-    ]
-    for testCase in cases {
-      let summary = ImportSummary(created: testCase.created, merged: 0, skipped: testCase.skipped)
-      XCTAssertEqual(
-        ImportDoneCopy.title(summary), testCase.expected,
-        "created \(testCase.created), skipped \(testCase.skipped)")
-    }
+  /// One line per non-zero count; a zero draws no line.
+  func testDoneLinesOmitZeroCounts() {
+    XCTAssertEqual(
+      ImportDoneCopy.lines(ImportSummary(created: 24, merged: 0, skipped: 2)),
+      ["24 added", "2 rows skipped"]
+    )
+    XCTAssertEqual(
+      ImportDoneCopy.lines(ImportSummary(created: 0, merged: 24, skipped: 0, matchedExisting: 24, repeatedInFile: 0)),
+      ["24 matched transactions already in Nomi"]
+    )
   }
 
-  func testDoneDetailNamesTheAccount() {
-    let summary = ImportSummary(created: 24, merged: 0, skipped: 2)
-    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: "HDFC Savings"), "HDFC Savings")
+  func testDoneLinesNameEachNonZeroCountOnceInOrder() {
+    let summary = ImportSummary(created: 1, merged: 3, skipped: 1, matchedExisting: 2, repeatedInFile: 1)
+    XCTAssertEqual(
+      ImportDoneCopy.lines(summary),
+      ["1 added", "2 matched transactions already in Nomi", "1 repeat in this file combined", "1 row skipped"]
+    )
   }
 
-  func testDoneDetailCountsOneMatchAfterTheAccount() {
-    let summary = ImportSummary(created: 5, merged: 1, skipped: 0)
-    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: "HDFC Savings"), "HDFC Savings · 1 matched an existing transaction")
-    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: nil), "1 matched an existing transaction")
-  }
-
-  func testDoneDetailCountsManyMatchesAfterTheAccount() {
-    let summary = ImportSummary(created: 5, merged: 3, skipped: 0)
-    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: "HDFC Savings"), "HDFC Savings · 3 matched existing transactions")
-    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: nil), "3 matched existing transactions")
-  }
-
-  /// The re-import case: every parsed row matched, so nothing was created.
-  func testDoneDetailForAReimportNamesTheAccountAndAllMatches() {
-    let summary = ImportSummary(created: 0, merged: 24, skipped: 0)
-    XCTAssertEqual(ImportDoneCopy.detail(summary, accountName: "HDFC Savings"), "HDFC Savings · 24 matched existing transactions")
-    XCTAssertEqual(ImportDoneCopy.title(summary), "No new transactions")
-  }
-
-  func testDoneDetailIsNilWhenThereIsNothingToSay() {
-    let summary = ImportSummary(created: 24, merged: 0, skipped: 2)
-    XCTAssertNil(ImportDoneCopy.detail(summary, accountName: nil))
-  }
-
-  func testDoneDetailIgnoresAnEmptyAccountName() {
-    let summary = ImportSummary(created: 24, merged: 0, skipped: 2)
-    XCTAssertNil(ImportDoneCopy.detail(summary, accountName: ""))
+  func testDoneLinesAreEmptyWhenCommitReportsNothing() {
+    XCTAssertTrue(ImportDoneCopy.lines(ImportSummary(created: 0, merged: 0, skipped: 0)).isEmpty)
   }
 
   // MARK: - UF1: column-mapping sheet close (Cancel discards, Save writes back)
@@ -206,11 +174,12 @@ final class ImportLogicTests: XCTestCase {
 
   // MARK: - S11: the check screen's copy and gates
 
-  /// The primary button's count is a catalog plural: "Import 1 transaction", not "1 transactions".
-  func testImportTitleUsesCatalogPluralsForZeroOneAndTwo() {
-    XCTAssertEqual(ImportLogic.importTitle(newCount: 0), "Import 0 transactions")
-    XCTAssertEqual(ImportLogic.importTitle(newCount: 1), "Import 1 transaction")
-    XCTAssertEqual(ImportLogic.importTitle(newCount: 2), "Import 2 transactions")
+  /// The primary button counts the rows that will be created, a catalog plural:
+  /// "Import 1 transaction", not "1 transactions". With none it says so instead.
+  func testImportTitleUsesCatalogPluralsForOneAndTwoAndNothingAtZero() {
+    XCTAssertEqual(ImportLogic.importTitle(createCount: 0), "Nothing new to import")
+    XCTAssertEqual(ImportLogic.importTitle(createCount: 1), "Import 1 transaction")
+    XCTAssertEqual(ImportLogic.importTitle(createCount: 2), "Import 2 transactions")
   }
 
   func testSkippedNoteUsesCatalogPluralsForOneAndTwo() {
@@ -218,10 +187,32 @@ final class ImportLogicTests: XCTestCase {
     XCTAssertEqual(ImportLogic.skippedNote(count: 2), "2 rows could not be read and will be skipped.")
   }
 
-  /// I-12: a stated zero never offers Import, and nothing is counted as new when nothing is new.
-  func testImportIsOfferedOnlyWhenSomethingIsNew() {
-    XCTAssertFalse(ImportLogic.canImport(newCount: 0))
-    XCTAssertTrue(ImportLogic.canImport(newCount: 1))
+  /// I-12: a stated zero never offers Import. Rows already in Nomi and repeats do not count.
+  func testImportIsOfferedOnlyWhenSomethingWillBeCreated() {
+    XCTAssertFalse(ImportLogic.canImport(createCount: 0))
+    XCTAssertTrue(ImportLogic.canImport(createCount: 1))
+  }
+
+  /// The repeat note appears only when a row repeats another row, and pins the repeat count.
+  func testRepeatNoteOnlyWhenRepeats() {
+    let none = ImportDryRun(createCount: 2, matchExistingCount: 2, repeatInFileCount: 0, unreadable: [], sample: [])
+    XCTAssertNil(ImportLogic.repeatNote(for: none))
+    let one = ImportDryRun(createCount: 2, matchExistingCount: 2, repeatInFileCount: 1, unreadable: [], sample: [])
+    XCTAssertEqual(ImportLogic.repeatNote(for: one), "1 row repeats another row in this file and will be added once.")
+    let two = ImportDryRun(createCount: 5, matchExistingCount: 0, repeatInFileCount: 2, unreadable: [], sample: [])
+    XCTAssertEqual(ImportLogic.repeatNote(for: two), "2 rows repeat another row in this file and will be added once.")
+  }
+
+  /// The could-not-read note takes its count from the unreadable rows and nothing else
+  /// (Lim's M5: a mutant that reads another count survived before this pin).
+  func testCouldNotReadNoteCountIsTheUnreadableCount() {
+    let dry = ImportDryRun(
+      createCount: 7, matchExistingCount: 9, repeatInFileCount: 4,
+      unreadable: [["a"], ["b"], ["c"]], sample: []
+    )
+    XCTAssertEqual(ImportLogic.couldNotReadNote(for: dry), "3 rows could not be read and will be skipped.")
+    let none = ImportDryRun(createCount: 7, matchExistingCount: 9, repeatInFileCount: 4, unreadable: [], sample: [])
+    XCTAssertNil(ImportLogic.couldNotReadNote(for: none))
   }
 
   func testFileSubtitleNamesTheFormatAndTheSampleRange() {

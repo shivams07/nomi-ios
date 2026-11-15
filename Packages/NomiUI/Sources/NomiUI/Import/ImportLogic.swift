@@ -91,54 +91,71 @@ enum ImportFileTypes {
   ]
 }
 
-/// Copy for the done state (`ImportDone` artboard). Every number is a count
-/// straight from `ImportSummary`; nothing here adds up money. Wording follows
-/// the "Import Done copy ruling" (2026-11-09) in the build plan, unit IM.
+/// The Done screen's lines (`ImportDone` artboard, I-12 Amendment 1). Every number is
+/// a count from commit's `ImportSummary`, never from the dry run, so a line can only
+/// say what the import did. A zero count draws no line.
 enum ImportDoneCopy {
-  /// "24 transactions imported, 2 skipped". `created` is what landed as new
-  /// transactions. A zero clause is never shown, so "0 skipped" does not appear.
-  static func title(_ summary: ImportSummary) -> String {
-    let landed: String
-    if summary.created == 0 {
-      landed = String(localized: "No new transactions", bundle: .module)
-    } else {
-      landed = String(localized: "\(summary.created) transactions imported", bundle: .module)
+  /// One line per non-zero count, in this order: "2 added", "2 matched transactions
+  /// already in Nomi", "1 repeats in this file combined", "3 rows skipped".
+  static func lines(_ summary: ImportSummary) -> [String] {
+    var lines: [String] = []
+    if summary.created > 0 {
+      lines.append(String(localized: "\(summary.created) added", bundle: .module))
     }
-    guard summary.skipped > 0 else { return landed }
-    return "\(landed), \(String(localized: "\(summary.skipped) skipped", bundle: .module))"
+    if summary.matchedExisting > 0 {
+      lines.append(String(localized: "\(summary.matchedExisting) matched transactions already in Nomi", bundle: .module))
+    }
+    if summary.repeatedInFile > 0 {
+      lines.append(String(localized: "\(summary.repeatedInFile) repeats in this file combined", bundle: .module))
+    }
+    if summary.skipped > 0 {
+      lines.append(String(localized: "\(summary.skipped) rows skipped", bundle: .module))
+    }
+    return lines
   }
 
-  /// The account the rows went to, then how many rows matched existing
-  /// transactions. Nil when there is neither, so the screen draws no line.
-  static func detail(_ summary: ImportSummary, accountName: String?) -> String? {
-    var parts: [String] = []
-    if let accountName, !accountName.isEmpty {
-      parts.append(accountName)
-    }
-    if summary.merged > 0 {
-      parts.append(String(localized: "\(summary.merged) matched existing transactions", bundle: .module))
-    }
-    return parts.isEmpty ? nil : parts.joined(separator: " · ")
-  }
+  /// The Done screen when commit reports no line at all.
+  static let nothingAdded = String(localized: "Nothing was added.", bundle: .module)
 }
 
 /// The check screen's gate and copy (S11, I-12). Every count in copy is a catalog
 /// plural, so a translation can pick its own forms. Nothing here adds up money.
 enum ImportLogic {
-  /// Import is offered only when at least one row is new. Rows already in Nomi
-  /// are merged on commit, so they never make Import available on their own.
-  static func canImport(newCount: Int) -> Bool {
-    newCount > 0
+  /// Import is offered only when at least one row will be created. Rows already in
+  /// Nomi and repeats are folded on commit, so they never make Import available alone.
+  static func canImport(createCount: Int) -> Bool {
+    createCount > 0
   }
 
-  /// The primary button: "Import 38 transactions", "Import 1 transaction".
-  static func importTitle(newCount: Int) -> String {
-    String(localized: "Import \(newCount) transactions", bundle: .module)
+  /// The primary button: "Import 38 transactions", "Import 1 transaction". With
+  /// nothing to create the button says so instead.
+  static func importTitle(createCount: Int) -> String {
+    guard createCount > 0 else {
+      return String(localized: "Nothing new to import", bundle: .module)
+    }
+    return String(localized: "Import \(createCount) transactions", bundle: .module)
   }
 
   /// The warning under the tiles, naming the rows "Show them" lists.
   static func skippedNote(count: Int) -> String {
     String(localized: "\(count) rows could not be read and will be skipped.", bundle: .module)
+  }
+
+  /// The could-not-read note for a dry run: nil when no row is unreadable, otherwise the
+  /// unreadable count and nothing else (pinned by test; a mutant that reads another count fails it).
+  static func couldNotReadNote(for dry: ImportDryRun) -> String? {
+    guard !dry.unreadable.isEmpty else { return nil }
+    return skippedNote(count: dry.unreadable.count)
+  }
+
+  /// The repeat note: nil when no row repeats another row in the file. Otherwise the
+  /// repeat count and nothing else.
+  static func repeatNote(for dry: ImportDryRun) -> String? {
+    guard dry.repeatInFileCount > 0 else { return nil }
+    return String(
+      localized: "\(dry.repeatInFileCount) rows repeat another row in this file and will be added once.",
+      bundle: .module
+    )
   }
 
   /// The explanation under the tiles when some rows are already in Nomi.

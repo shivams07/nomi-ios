@@ -1,6 +1,29 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%lld added" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld added"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld added"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld days" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -47,7 +70,7 @@
         }
       }
     },
-    "%lld matched existing transactions" : {
+    "%lld matched transactions already in Nomi" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
@@ -56,13 +79,59 @@
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld matched an existing transaction"
+                  "value" : "%lld matched transaction already in Nomi"
                 }
               },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld matched existing transactions"
+                  "value" : "%lld matched transactions already in Nomi"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld payment has no account. Assign it so balances stay right." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld payment has no account. Assign it so balances stay right."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld payments have no account. Assign them so balances stay right."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld repeats in this file combined" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld repeat in this file combined"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld repeats in this file combined"
                 }
               }
             }
@@ -116,7 +185,7 @@
         }
       }
     },
-    "%lld skipped" : {
+    "%lld rows repeat another row in this file and will be added once." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
@@ -125,13 +194,36 @@
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld skipped"
+                  "value" : "%lld row repeats another row in this file and will be added once."
                 }
               },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld skipped"
+                  "value" : "%lld rows repeat another row in this file and will be added once."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld rows skipped" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld row skipped"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld rows skipped"
                 }
               }
             }
@@ -155,29 +247,6 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld subscriptions"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "%lld payment has no account. Assign it so balances stay right." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld payment has no account. Assign it so balances stay right."
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld payments have no account. Assign them so balances stay right."
                 }
               }
             }
@@ -247,29 +316,6 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld transactions found so far. You can pick this up any time."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "%lld transactions imported" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld transaction imported"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld transactions imported"
                 }
               }
             }

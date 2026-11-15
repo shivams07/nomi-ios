@@ -19,7 +19,11 @@ final class ImportCheckSpy: FileImportService, @unchecked Sendable {
   private var commitCalls = 0
   private var saves: [(signature: String, bankLabel: String)] = []
 
-  init(inspect: @escaping Inspect, dryRun: @escaping DryRun, commit: @escaping Commit = { ImportSummary(created: 0, merged: 0, skipped: 0) }) {
+  init(
+    inspect: @escaping Inspect,
+    dryRun: @escaping DryRun,
+    commit: @escaping Commit = { ImportSummary(created: 0, merged: 0, skipped: 0) }
+  ) {
     self.inspectScript = inspect
     self.dryRunScript = dryRun
     self.commitScript = commit
@@ -88,10 +92,13 @@ final class ImportCheckModelTests: XCTestCase {
     )
   }
 
-  nonisolated private static func counts(new: Int, already: Int = 0, unreadable: Int = 0) -> ImportDryRun {
+  /// A dry run with the given counts. `create` rows will be created, `match` rows fold into
+  /// transactions already in Nomi, `repeats` rows fold into a row this import creates.
+  nonisolated private static func counts(create: Int, match: Int = 0, repeats: Int = 0, unreadable: Int = 0) -> ImportDryRun {
     ImportDryRun(
-      newCount: new,
-      alreadyImportedCount: already,
+      createCount: create,
+      matchExistingCount: match,
+      repeatInFileCount: repeats,
       unreadable: Array(repeating: ["", "UPI-SWIGGY", "", "REF9"], count: unreadable),
       sample: []
     )
@@ -102,7 +109,7 @@ final class ImportCheckModelTests: XCTestCase {
   func testKnownFormatGoesStraightToReady() async {
     let spy = ImportCheckSpy(
       inspect: { Self.preview(suggested: Self.saved) },
-      dryRun: { _ in Self.counts(new: 38, already: 9, unreadable: 2) }
+      dryRun: { _ in Self.counts(create: 38, match: 9, unreadable: 2) }
     )
     let model = ImportCheckModel(service: spy, url: Self.url)
 
@@ -111,8 +118,8 @@ final class ImportCheckModelTests: XCTestCase {
     guard case .ready(_, let dry, _) = model.state else {
       return XCTFail("a format with a suggested mapping goes straight to the check, got \(model.state)")
     }
-    XCTAssertEqual(dry.newCount, 38)
-    XCTAssertEqual(dry.alreadyImportedCount, 9)
+    XCTAssertEqual(dry.createCount, 38)
+    XCTAssertEqual(dry.matchExistingCount, 9)
     XCTAssertEqual(dry.unreadable.count, 2)
     XCTAssertEqual(spy.dryRunCount, 1)
   }
@@ -120,7 +127,7 @@ final class ImportCheckModelTests: XCTestCase {
   func testUnknownFormatNeedsColumnsFirst() async {
     let spy = ImportCheckSpy(
       inspect: { Self.preview(suggested: nil) },
-      dryRun: { _ in Self.counts(new: 5) }
+      dryRun: { _ in Self.counts(create: 5) }
     )
     let model = ImportCheckModel(service: spy, url: Self.url)
 
@@ -137,7 +144,7 @@ final class ImportCheckModelTests: XCTestCase {
   func testCountAfterMappingIsTheDryRunCount() async {
     let spy = ImportCheckSpy(
       inspect: { Self.preview(suggested: nil) },
-      dryRun: { mapping in Self.counts(new: mapping == Self.saved ? 3 : 0) },
+      dryRun: { mapping in Self.counts(create: mapping == Self.saved ? 3 : 0) },
       commit: { ImportSummary(created: 3, merged: 0, skipped: 0) }
     )
     let model = ImportCheckModel(service: spy, url: Self.url)
@@ -148,30 +155,53 @@ final class ImportCheckModelTests: XCTestCase {
     guard case .ready(_, let dry, let mapping) = model.state else {
       return XCTFail("a mapping that parses rows lands on the check, got \(model.state)")
     }
-    XCTAssertEqual(dry.newCount, 3)
+    XCTAssertEqual(dry.createCount, 3)
     XCTAssertEqual(mapping, Self.saved, "the sheet's mapping is the one the count used")
     XCTAssertFalse(model.isCounting)
   }
 
-  func testCountAgreesWithWhatTheCommitDoes() async {
+  /// Lim's file on PR #216: a repeated reference plus two previously imported rows.
+  /// The dry run says new 2 / already 2 / repeat 1. Commit must say the same, and the
+  /// Done lines must say 2 added, 2 matched and 1 repeat, never 3 matches.
+  func testDoneLinesUseCommitCounts() async {
     let spy = ImportCheckSpy(
       inspect: { Self.preview(suggested: Self.saved) },
-      dryRun: { _ in Self.counts(new: 4, already: 2) },
-      commit: { ImportSummary(created: 3, merged: 3, skipped: 0) }
+      dryRun: { _ in Self.counts(create: 2, match: 2, repeats: 1) },
+      commit: { ImportSummary(created: 2, merged: 3, skipped: 0, matchedExisting: 2, repeatedInFile: 1) }
     )
     let model = ImportCheckModel(service: spy, url: Self.url)
     await model.load()
-    guard case .ready(_, let dry, _) = model.state else { return XCTFail("expected ready") }
+    guard case .ready(_, let dry, _) = model.state else { return XCTFail("expected ready, got \(model.state)") }
+    XCTAssertEqual(dry.createCount, 2)
+    XCTAssertEqual(dry.matchExistingCount, 2)
+    XCTAssertEqual(dry.repeatInFileCount, 1)
 
     await model.importNow(accountID: nil)
 
     guard case .done(let summary) = model.state else {
       return XCTFail("a successful commit ends on the Done screen, got \(model.state)")
     }
-    // The dry run's new count can differ from created: an in-file duplicate folds
-    // into an earlier row and lands in merged. What must hold is that every parsed
-    // row is accounted for once (I-12's invariant).
-    XCTAssertEqual(dry.newCount + dry.alreadyImportedCount, summary.created + summary.merged)
+    XCTAssertEqual(
+      ImportDoneCopy.lines(summary),
+      ["2 added", "2 matched transactions already in Nomi", "1 repeat in this file combined"]
+    )
+    XCTAssertFalse(ImportDoneCopy.lines(summary).contains { $0.hasPrefix("3 matched") }, "a repeat is never a match")
+  }
+
+  /// The Done screen shows commit's counts even when they differ from the dry run's.
+  func testDoneLinesFollowCommitWhenItDiffersFromTheCount() async {
+    let spy = ImportCheckSpy(
+      inspect: { Self.preview(suggested: Self.saved) },
+      dryRun: { _ in Self.counts(create: 3) },
+      commit: { ImportSummary(created: 2, merged: 1, skipped: 0, matchedExisting: 0, repeatedInFile: 1) }
+    )
+    let model = ImportCheckModel(service: spy, url: Self.url)
+    await model.load()
+
+    await model.importNow(accountID: nil)
+
+    guard case .done(let summary) = model.state else { return XCTFail("expected done, got \(model.state)") }
+    XCTAssertEqual(ImportDoneCopy.lines(summary), ["2 added", "1 repeat in this file combined"])
   }
 
   // MARK: - Saving the mapping happens only after a commit
@@ -179,7 +209,7 @@ final class ImportCheckModelTests: XCTestCase {
   func testApplyingAMappingDoesNotSaveIt() async {
     let spy = ImportCheckSpy(
       inspect: { Self.preview(suggested: nil) },
-      dryRun: { _ in Self.counts(new: 3) }
+      dryRun: { _ in Self.counts(create: 3) }
     )
     let model = ImportCheckModel(service: spy, url: Self.url)
     await model.load()
@@ -195,7 +225,7 @@ final class ImportCheckModelTests: XCTestCase {
   func testMappingSavedOnlyAfterCommitSucceeds() async {
     let spy = ImportCheckSpy(
       inspect: { Self.preview(suggested: nil) },
-      dryRun: { _ in Self.counts(new: 3) },
+      dryRun: { _ in Self.counts(create: 3) },
       commit: { throw ImportError.malformedStructure(reason: "column count changes after row 12") }
     )
     let model = ImportCheckModel(service: spy, url: Self.url)
@@ -210,13 +240,13 @@ final class ImportCheckModelTests: XCTestCase {
     guard case .ready(_, let dry, _) = model.state else {
       return XCTFail("a failed commit keeps the check on screen, got \(model.state)")
     }
-    XCTAssertEqual(dry.newCount, 3, "the counts stay on screen after a failed commit")
+    XCTAssertEqual(dry.createCount, 3, "the counts stay on screen after a failed commit")
   }
 
   func testMappingSavedAfterASuccessfulCommit() async {
     let spy = ImportCheckSpy(
       inspect: { Self.preview(suggested: nil) },
-      dryRun: { _ in Self.counts(new: 3) },
+      dryRun: { _ in Self.counts(create: 3) },
       commit: { ImportSummary(created: 3, merged: 0, skipped: 0) }
     )
     let model = ImportCheckModel(service: spy, url: Self.url)
@@ -236,23 +266,23 @@ final class ImportCheckModelTests: XCTestCase {
   func testZeroNewDisablesImport() async {
     let spy = ImportCheckSpy(
       inspect: { Self.preview(suggested: Self.saved) },
-      dryRun: { _ in Self.counts(new: 0, already: 9) }
+      dryRun: { _ in Self.counts(create: 0, match: 9) }
     )
     let model = ImportCheckModel(service: spy, url: Self.url)
     await model.load()
 
     await model.importNow(accountID: nil)
 
-    XCTAssertEqual(spy.commitCount, 0, "nothing new means Import never reaches commit")
+    XCTAssertEqual(spy.commitCount, 0, "nothing to create means Import never reaches commit")
     guard case .ready = model.state else {
-      return XCTFail("a zero-new count stays on the check with Import off, got \(model.state)")
+      return XCTFail("a zero-create count stays on the check with Import off, got \(model.state)")
     }
   }
 
   func testImportIsRefusedWhileTheMappingIsStillNeeded() async {
     let spy = ImportCheckSpy(
       inspect: { Self.preview(suggested: nil) },
-      dryRun: { _ in Self.counts(new: 3) }
+      dryRun: { _ in Self.counts(create: 3) }
     )
     let model = ImportCheckModel(service: spy, url: Self.url)
     await model.load()
@@ -289,7 +319,7 @@ final class ImportCheckModelTests: XCTestCase {
       inspect: { Self.preview(suggested: Self.saved) },
       dryRun: { _ in
         if attempts.next() == 1 { throw SpyFailure() }
-        return Self.counts(new: 38, already: 9)
+        return Self.counts(create: 38, match: 9)
       }
     )
     let model = ImportCheckModel(service: spy, url: Self.url)
@@ -301,7 +331,7 @@ final class ImportCheckModelTests: XCTestCase {
     guard case .ready(_, let dry, _) = model.state else {
       return XCTFail("Try again must count the file again, got \(model.state)")
     }
-    XCTAssertEqual(dry.newCount, 38)
+    XCTAssertEqual(dry.createCount, 38)
   }
 
   /// A count for an earlier mapping that finishes after a newer one must not
@@ -315,9 +345,9 @@ final class ImportCheckModelTests: XCTestCase {
       dryRun: { mapping in
         if mapping == first {
           try await Task.sleep(nanoseconds: 300_000_000)
-          return Self.counts(new: 1)
+          return Self.counts(create: 1)
         }
-        return Self.counts(new: 5)
+        return Self.counts(create: 5)
       }
     )
     let model = ImportCheckModel(service: spy, url: Self.url)
@@ -332,7 +362,7 @@ final class ImportCheckModelTests: XCTestCase {
       return XCTFail("expected the newer mapping's counts, got \(model.state)")
     }
     XCTAssertEqual(mapping, second)
-    XCTAssertEqual(dry.newCount, 5, "the late count for the first mapping must not win")
+    XCTAssertEqual(dry.createCount, 5, "the late count for the first mapping must not win")
     XCTAssertFalse(model.isCounting)
   }
 }

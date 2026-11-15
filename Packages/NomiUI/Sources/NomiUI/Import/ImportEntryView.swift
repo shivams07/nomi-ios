@@ -169,12 +169,16 @@ public struct ImportEntryView: View {
           .padding(.top, NomiSpacing.xs)
         countTiles(dry)
           .padding(.top, NomiSpacing.md)
-        if dry.alreadyImportedCount > 0 {
+        if dry.matchExistingCount > 0 {
           Text(ImportLogic.alreadyInNomiNote)
             .nomiTextStyle(.caption)
             .foregroundStyle(NomiColor.inkSecondary)
             .padding(.top, NomiSpacing.xs)
             .padding(.horizontal, NomiSpacing.xxs)
+        }
+        if let repeatNote = ImportLogic.repeatNote(for: dry) {
+          NomiStatusNote(repeatNote, tone: .ok, systemImage: "arrow.triangle.2.circlepath")
+            .padding(.top, NomiSpacing.xs)
         }
         accountRow
           .padding(.top, NomiSpacing.md)
@@ -182,9 +186,9 @@ public struct ImportEntryView: View {
         if !dry.sample.isEmpty {
           sampleRowsCard(dry.sample)
         }
-        if !dry.unreadable.isEmpty {
+        if let skipped = ImportLogic.couldNotReadNote(for: dry) {
           NomiStatusNote(
-            ImportLogic.skippedNote(count: dry.unreadable.count),
+            skipped,
             tone: .warning,
             systemImage: "exclamationmark.circle",
             actionTitle: String(localized: "Show them", bundle: .module)
@@ -204,8 +208,8 @@ public struct ImportEntryView: View {
     }
     .safeAreaInset(edge: .bottom) {
       pinnedPrimary(
-        ImportLogic.importTitle(newCount: dry.newCount),
-        isEnabled: ImportLogic.canImport(newCount: dry.newCount) && !model.isCounting
+        ImportLogic.importTitle(createCount: dry.createCount),
+        isEnabled: ImportLogic.canImport(createCount: dry.createCount) && !model.isCounting
       ) {
         Task { await model.importNow(accountID: selectedAccountID) }
       }
@@ -255,11 +259,19 @@ public struct ImportEntryView: View {
             .accessibilityHidden(true)
 
           VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-            Text(ImportDoneCopy.title(summary))
-              .nomiTextStyle(.headline)
-              .foregroundStyle(NomiColor.ink)
-            if let detail = ImportDoneCopy.detail(summary, accountName: selectedAccountName) {
-              Text(detail)
+            let lines = ImportDoneCopy.lines(summary)
+            if lines.isEmpty {
+              Text(ImportDoneCopy.nothingAdded)
+                .nomiTextStyle(.headline)
+                .foregroundStyle(NomiColor.ink)
+            }
+            ForEach(lines.indices, id: \.self) { index in
+              Text(lines[index])
+                .nomiTextStyle(index == 0 ? .headline : .caption)
+                .foregroundStyle(index == 0 ? NomiColor.ink : NomiColor.inkSecondary)
+            }
+            if let name = selectedAccountName {
+              Text(name)
                 .nomiTextStyle(.caption)
                 .foregroundStyle(NomiColor.inkSecondary)
             }
@@ -390,8 +402,8 @@ public struct ImportEntryView: View {
       ? AnyLayout(VStackLayout(alignment: .leading, spacing: NomiSpacing.xs))
       : AnyLayout(HStackLayout(alignment: .top, spacing: NomiSpacing.xs))
     return layout {
-      countTile(dry.newCount, String(localized: "new", bundle: .module), tint: NomiColor.ink)
-      countTile(dry.alreadyImportedCount, String(localized: "already in Nomi", bundle: .module), tint: NomiColor.ink)
+      countTile(dry.createCount, String(localized: "new", bundle: .module), tint: NomiColor.ink)
+      countTile(dry.matchExistingCount, String(localized: "already in Nomi", bundle: .module), tint: NomiColor.ink)
       countTile(
         dry.unreadable.count,
         String(localized: "could not read", bundle: .module),

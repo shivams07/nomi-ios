@@ -52,12 +52,13 @@ enum ImportPreviewSupport {
     parseableRowCount: 18
   )
 
-  /// The check screen's numbers (38 new, 9 already in Nomi, 2 could not read) and its
-  /// three sample rows. They match `FakeFileImportService.dryRun`, so the previews
-  /// show the same numbers as the board.
+  /// The check screen's numbers (38 new, 9 already in Nomi, none repeated, 2 could not
+  /// read) and its three sample rows. They match `FakeFileImportService.dryRun`, so the
+  /// previews show the same numbers as the board.
   static let readyCounts = ImportDryRun(
-    newCount: 38,
-    alreadyImportedCount: 9,
+    createCount: 38,
+    matchExistingCount: 9,
+    repeatInFileCount: 0,
     unreadable: [
       ["10/11/2026", "CHARGES FOR SMS ALERT", "", "REF020"],
       ["11/11/2026", "REVERSAL HOLD", "", "REF021"],
@@ -77,8 +78,9 @@ enum ImportPreviewSupport {
 
   /// Every row unreadable: Import is off and the mapping is the way out.
   static let unreadableOnlyCounts = ImportDryRun(
-    newCount: 0,
-    alreadyImportedCount: 0,
+    createCount: 0,
+    matchExistingCount: 0,
+    repeatInFileCount: 0,
     unreadable: [
       ["01-Apr-2026", "SWIGGY BANGALORE", "450.00"],
       ["02-Apr-2026", "AMAZON PAY", "320.00"],

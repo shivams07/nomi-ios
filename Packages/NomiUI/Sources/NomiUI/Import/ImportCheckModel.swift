@@ -99,7 +99,7 @@ final class ImportCheckModel {
   /// that mapping. A commit that throws keeps the counts on screen with a note.
   func importNow(accountID: UUID?) async {
     guard case .ready(let preview, let dry, let mapping) = state,
-          ImportLogic.canImport(newCount: dry.newCount),
+          ImportLogic.canImport(createCount: dry.createCount),
           !isCounting else { return }
     commitNote = nil
     state = .importing
@@ -147,7 +147,7 @@ final class ImportCheckModel {
       let dry = try await accessing { try await service.dryRun(url, mapping: mapping) }
       guard token == generation else { return }
       isCounting = false
-      if opensMappingOnZero && dry.newCount + dry.alreadyImportedCount == 0 {
+      if opensMappingOnZero && dry.createCount + dry.matchExistingCount + dry.repeatInFileCount == 0 {
         state = .needsColumns(preview)
       } else {
         state = .ready(preview, dry, mapping)
