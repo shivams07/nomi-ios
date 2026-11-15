@@ -115,7 +115,9 @@ public struct BringDataScreen: View {
       symbol: "message",
       title: "Bank SMS alerts",
       detail: "No password · from today onward",
-      note: "You add one automation in the Shortcuts app. Nomi only receives the bank messages it sends over.",
+      note: String(
+        localized: "You add one automation in the Shortcuts app. Nomi only receives the bank messages it sends over.",
+        bundle: .module),
       isOn: $smsOn
     )
   }
@@ -125,7 +127,7 @@ public struct BringDataScreen: View {
       symbol: "envelope",
       title: "Bank alert emails",
       detail: "Needs an app password · includes the last 6 months",
-      note: "Works with Gmail, Yahoo and iCloud Mail. Nomi keeps only the amount, merchant and date.",
+      note: OnboardingRoutes.emailRouteNote(),
       isOn: $emailOn
     )
   }
@@ -235,7 +237,8 @@ private struct RouteCard: View {
   let symbol: String
   let title: LocalizedStringKey
   let detail: LocalizedStringKey
-  let note: LocalizedStringKey
+  /// Already localised by the caller (`String(localized:bundle:)`), so it is shown verbatim.
+  let note: String
   @Binding var isOn: Bool
 
   private var shape: RoundedRectangle {
@@ -266,7 +269,7 @@ private struct RouteCard: View {
           .frame(maxWidth: .infinity, alignment: .leading)
           checkTile
         }
-        Text(note, bundle: .module)
+        Text(verbatim: note)
           .nomiTextStyle(.footnote)
           .foregroundStyle(NomiColor.inkSecondary)
           .fixedSize(horizontal: false, vertical: true)

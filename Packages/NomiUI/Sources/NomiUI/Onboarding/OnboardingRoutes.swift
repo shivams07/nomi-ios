@@ -7,6 +7,25 @@ public enum OnboardingRoutes {
   /// (redesign plan section 8).
   public static let smsAvailable = false
 
+  /// The email card's note. The provider names come from `MailProvider`, the
+  /// same list the connect step offers, so the copy cannot name a provider the
+  /// app does not support. The canvas said "Gmail, Yahoo and iCloud Mail"; Yahoo
+  /// has no provider here, so it is not named.
+  static func emailRouteNote(providers: [MailProvider] = MailProvider.allCases) -> String {
+    let names = providerList(providers)
+    return String(
+      localized: "Works with \(names). Nomi keeps only the amount, merchant and date.",
+      bundle: .module)
+  }
+
+  /// Joins provider names as an English list: "A, B and C".
+  static func providerList(_ providers: [MailProvider] = MailProvider.allCases) -> String {
+    let names = providers.map(\.displayName)
+    guard let last = names.last else { return "" }
+    guard names.count > 1 else { return last }
+    return names.dropLast().joined(separator: ", ") + " and " + last
+  }
+
   /// The pill's title when the email route is on. It is also the title the
   /// disabled pill shows when no automatic route is on.
   static var emailTitle: String {

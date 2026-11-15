@@ -1,5 +1,7 @@
 import Combine
 import Foundation
+import NomiCore
+import SwiftData
 
 /// Where the app opens. The whole of §2.18(2)'s "nothing decides
 /// onboarding-vs-main".
@@ -39,9 +41,34 @@ public final class FirstRunGate: ObservableObject {
   /// persisted flag is the source of truth; this mirrors it.
   @Published public private(set) var route: AppRoute
 
-  public init(store: any KeyValueStoring) {
+  /// `hasStoredData` is consulted only while the flag is absent. It answers
+  /// whether the database already holds rows (see `storeHoldsData(in:)`), so an
+  /// install whose data came back without the flag, such as an iCloud restore,
+  /// is not sent through onboarding.
+  public init(store: any KeyValueStoring, hasStoredData: @MainActor () -> Bool = { false }) {
     self.store = store
-    self.route = Self.initialRoute(hasCompletedFirstRun: store.bool(forKey: PreferenceKey.hasCompletedFirstRun))
+    let flagged = store.bool(forKey: PreferenceKey.hasCompletedFirstRun)
+    let completed = flagged || hasStoredData()
+    if completed && !flagged {
+      // Written once, so later launches read the flag and never check the store.
+      // The write goes to the store this gate was given: in a non-persistent
+      // launch that is the in-memory store.
+      store.set(true, forKey: PreferenceKey.hasCompletedFirstRun)
+    }
+    self.route = Self.initialRoute(hasCompletedFirstRun: completed)
+  }
+
+  /// Whether the store already holds a transaction or an account. A cheap
+  /// existence check: each fetch asks for one row. A failed fetch counts as
+  /// data, because sending someone with data back to onboarding is the one wrong
+  /// answer here that hurts a user, and onboarding can be skipped anyway.
+  public static func storeHoldsData(in context: ModelContext) -> Bool {
+    func hasRow<Model: PersistentModel>(_ model: Model.Type) -> Bool {
+      var descriptor = FetchDescriptor<Model>()
+      descriptor.fetchLimit = 1
+      return ((try? context.fetchCount(descriptor)) ?? 1) > 0
+    }
+    return hasRow(NomiCore.Transaction.self) || hasRow(NomiCore.Account.self)
   }
 
   /// Pure, and the reason this is a static rather than an instance method: it

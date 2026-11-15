@@ -25,6 +25,27 @@ final class OnboardingRoutesTests: XCTestCase {
       "Continue with SMS and email")
   }
 
+  /// The email note names only the providers the app offers on the connect
+  /// step (MailProvider), not the canvas's Yahoo, which the app has no provider for.
+  func testEmailNoteNamesOnlyTheProvidersTheAppSupports() {
+    let note = OnboardingRoutes.emailRouteNote()
+    for provider in MailProvider.allCases {
+      XCTAssertTrue(note.contains(provider.displayName), "missing \(provider.displayName) in \(note)")
+    }
+    XCTAssertFalse(note.contains("Yahoo"))
+    XCTAssertTrue(note.hasSuffix("Nomi keeps only the amount, merchant and date."))
+  }
+
+  func testProviderListJoinsWithCommasAndAnd() {
+    XCTAssertEqual(
+      OnboardingRoutes.providerList([.gmail, .icloud, .zoho]),
+      "Gmail, iCloud Mail and Zoho Mail")
+  }
+
+  func testProviderListOfOneNameHasNoJoin() {
+    XCTAssertEqual(OnboardingRoutes.providerList([.gmail]), "Gmail")
+  }
+
   /// No automatic route selected: the pill is disabled, so there is no title.
   func testNoRouteSelectedHasNoContinueTitle() {
     XCTAssertNil(OnboardingRoutes.continueTitle(smsOn: false, emailOn: false))

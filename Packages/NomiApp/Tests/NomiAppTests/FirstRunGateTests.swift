@@ -1,3 +1,5 @@
+import NomiCore
+import SwiftData
 import XCTest
 
 @testable import NomiApp
@@ -31,6 +33,90 @@ final class FirstRunGateTests: XCTestCase {
 
     let second = FirstRunGate(store: store)
     XCTAssertEqual(second.route, .main)
+  }
+
+  // MARK: - Data already on the device (an iCloud restore brings rows, not the flag)
+
+  /// The restore case: CloudKit has brought transactions back, the flag has not
+  /// come with them. The user must not be sent to onboarding.
+  func testFlagAbsentWithStoredDataOpensOnTheAppAndSetsTheFlag() {
+    let store = InMemoryKeyValueStore()
+
+    let gate = FirstRunGate(store: store, hasStoredData: { true })
+
+    XCTAssertEqual(gate.route, .main)
+    XCTAssertTrue(store.bool(forKey: PreferenceKey.hasCompletedFirstRun))
+  }
+
+  func testFlagAbsentWithAnEmptyStoreOpensOnWelcome() {
+    let store = InMemoryKeyValueStore()
+
+    let gate = FirstRunGate(store: store, hasStoredData: { false })
+
+    XCTAssertEqual(gate.route, .onboarding(.welcome))
+    XCTAssertFalse(store.bool(forKey: PreferenceKey.hasCompletedFirstRun))
+  }
+
+  /// The check runs once. Once the flag is set, a launch reads the flag and
+  /// does not touch the store.
+  func testTheStoreIsNotCheckedOnceTheFlagIsSet() {
+    let store = InMemoryKeyValueStore()
+    store.set(true, forKey: PreferenceKey.hasCompletedFirstRun)
+    var checks = 0
+
+    let gate = FirstRunGate(store: store, hasStoredData: {
+      checks += 1
+      return false
+    })
+
+    XCTAssertEqual(gate.route, .main)
+    XCTAssertEqual(checks, 0)
+  }
+
+  /// Detected data sets the flag, so the next launch needs no check at all.
+  func testDetectedDataStaysDismissedOnRelaunchWithoutTheCheck() {
+    let store = InMemoryKeyValueStore()
+    _ = FirstRunGate(store: store, hasStoredData: { true })
+
+    let relaunch = FirstRunGate(store: store, hasStoredData: { false })
+
+    XCTAssertEqual(relaunch.route, .main)
+  }
+
+  /// The store the gate is given is the only one it writes. In a
+  /// non-persistent launch that is the in-memory store, so the flag reaches
+  /// `UserDefaults` only from a persistent launch (StoreWorkGateTests pins that).
+  func testDetectedDataWritesOnlyToTheStoreItIsGiven() throws {
+    let suite = "s12a.firstrun.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let inMemory = InMemoryKeyValueStore()
+
+    _ = FirstRunGate(store: inMemory, hasStoredData: { true })
+
+    XCTAssertTrue(inMemory.bool(forKey: PreferenceKey.hasCompletedFirstRun))
+    XCTAssertFalse(defaults.bool(forKey: PreferenceKey.hasCompletedFirstRun))
+  }
+
+  /// The probe, against a real stack: an empty store has nothing, and a single
+  /// account or transaction row is enough to count as data.
+  func testAnEmptyStoreHoldsNoData() throws {
+    let stack = try InMemoryStack()
+    XCTAssertFalse(FirstRunGate.storeHoldsData(in: stack.context))
+  }
+
+  func testAnAccountRowCountsAsData() throws {
+    let stack = try InMemoryStack()
+    stack.context.insert(Account(displayName: "HDFC Savings"))
+    try stack.context.save()
+    XCTAssertTrue(FirstRunGate.storeHoldsData(in: stack.context))
+  }
+
+  func testATransactionRowCountsAsData() throws {
+    let stack = try InMemoryStack()
+    stack.context.insert(Transaction())
+    try stack.context.save()
+    XCTAssertTrue(FirstRunGate.storeHoldsData(in: stack.context))
   }
 
   // MARK: - The Welcome and Bring in your data steps
