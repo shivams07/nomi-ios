@@ -4,163 +4,94 @@ import UIKit
 import XCTest
 @testable import NomiUI
 
-/// TB1 on UIKit: the real `NomiTabBar` hosted in a `UIHostingController` at the
-/// phone width, with RootView's margins (24 pt sides, 22 pt bottom), the registered
-/// Inter fonts, and the UIKit content-size trait set per case. Every number is read
-/// from rendered frames, not estimated.
-///
-/// Frames come from `NomiTabBarFramesKey`, which the bar publishes in global
-/// coordinates. The hosted accessibility tree does not expose SwiftUI's labels in a
-/// test host, so it is not used.
+/// F3a on UIKit: the real icon-only `NomiTabBar` hosted in a `UIHostingController` at
+/// phone widths, centred the way RootView places it, with the UIKit content-size
+/// category set per case. Every number is read from rendered frames: circle and bar
+/// frames come from `NomiTabBarFramesKey` (global coordinates), and the height the
+/// screen receives comes from `onHeightChange`.
 ///
 /// This file is iOS-only. `swift test` on macOS compiles it out. Run it with
-/// `xcodebuild test -scheme NomiUI -destination 'platform=iOS Simulator,name=iPhone 18 Pro Max'`.
+/// `xcodebuild test -scheme NomiUI -destination 'platform=iOS Simulator,name=iPhone 18 Pro'`.
 @MainActor
 final class NomiTabBarLayoutTests: XCTestCase {
-  override class func setUp() {
-    super.setUp()
-    NomiFont.registerIfNeeded()
-  }
-
-  private static let tabTitles = ["Home", "Ledger", "Insights", "Accounts"]
   private static let widths: [CGFloat] = [375, 390, 402, 440]
-  private static let checkedSizes: [(name: String, category: UIContentSizeCategory)] = [
-    ("large", .large),
-    ("xxLarge", .extraExtraLarge),
-    ("xxxLarge", .extraExtraExtraLarge),
-    ("accessibilityMedium", .accessibilityMedium),
-    ("accessibilityXXXLarge", .accessibilityExtraExtraExtraLarge),
-  ]
-  /// Every size, for the width table. Widths do not depend on the screen width.
-  private static let tableSizes: [(name: String, category: UIContentSizeCategory)] = [
+  /// From the default size to the largest accessibility size. The bar must not change
+  /// across any of them.
+  private static let sizes: [(name: String, category: UIContentSizeCategory)] = [
     ("large", .large),
     ("xLarge", .extraLarge),
-    ("xxLarge", .extraExtraLarge),
     ("xxxLarge", .extraExtraExtraLarge),
     ("accessibilityMedium", .accessibilityMedium),
-    ("accessibilityLarge", .accessibilityLarge),
-    ("accessibilityExtraLarge", .accessibilityExtraLarge),
-    ("accessibilityExtraExtraLarge", .accessibilityExtraExtraLarge),
     ("accessibilityXXXLarge", .accessibilityExtraExtraExtraLarge),
   ]
-  /// The category at `NomiTabBarSizing.maximumTypeSize`. Sizes above it must measure as this one.
-  private static let capCategory: UIContentSizeCategory = .extraExtraLarge
+  /// Left to right, as RootView lays them out: two leading tabs, the `+`, two trailing tabs.
+  private static let slotNames = ["slot:home", "slot:activity", "slot:add", "slot:insights", "slot:plan"]
 
   // MARK: - Tests
 
-  func testEveryTabLabelIsOneLineAtEveryCheckedSizeAndWidth() {
+  func testBarIs308By68AtEveryWidthAndSize() {
     for width in Self.widths {
-      for size in Self.checkedSizes {
-        let measured = measure(width: width, category: size.category)
-        let oneLine = oneLineHeight(size.category)
-        for title in Self.tabTitles {
-          guard let label = measured.frame("label:\(title)") else {
-            XCTFail("no label frame for \(title) at \(size.name), \(width) pt")
-            continue
-          }
-          XCTAssertLessThan(
-            label.height, 1.5 * oneLine,
-            "\(title) wraps at \(size.name), \(width) pt: label \(label.height) pt, one line is \(oneLine) pt"
-          )
-        }
+      for size in Self.sizes {
+        let bar = measure(width: width, category: size.category).frame("bar")
+        XCTAssertEqual(bar?.width ?? -1, 308, accuracy: 0.5, "bar width at \(size.name), \(width) pt")
+        XCTAssertEqual(bar?.height ?? -1, 68, accuracy: 0.5, "bar height at \(size.name), \(width) pt")
       }
     }
   }
 
-  /// The bar is 64 pt, its minimum. Content taller than that would grow it, so this
-  /// is the bound: 64 pt at every checked size and width.
-  func testBarHeightIsBoundedAt64AtEveryCheckedSizeAndWidth() {
+  func testBarIsCentredAtEveryWidth() {
     for width in Self.widths {
-      for size in Self.checkedSizes {
-        let bar = measure(width: width, category: size.category).bar
-        XCTAssertEqual(
-          bar.height, 64, accuracy: 0.5,
-          "bar is \(bar.height) pt at \(size.name), \(width) pt"
-        )
-      }
+      let bar = measure(width: width, category: .large).frame("bar")
+      XCTAssertEqual(bar?.midX ?? -1, width / 2, accuracy: 0.5, "bar is not centred at \(width) pt")
     }
   }
 
-  func testFiveSlotsFitInsideTheBarWithoutClippingOrOverlap() {
-    let order = ["slot:Home", "slot:Ledger", "slot:add", "slot:Insights", "slot:Accounts"]
+  func testFiveCirclesAre54PointsWithSixPointGapsAndFitInTheBar() {
     for width in Self.widths {
-      for size in Self.checkedSizes {
+      for size in Self.sizes {
         let measured = measure(width: width, category: size.category)
         guard let bar = measured.frame("bar") else {
           XCTFail("no bar frame at \(size.name), \(width) pt")
           continue
         }
-        XCTAssertGreaterThan(bar.width, width - 60, "bar not inset as in RootView at \(width) pt")
         var previous: CGRect?
-        for name in order {
+        for name in Self.slotNames {
           guard let slot = measured.frame(name) else {
-            XCTFail("no slot frame \(name) at \(size.name), \(width) pt")
+            XCTFail("no circle frame \(name) at \(size.name), \(width) pt")
             continue
           }
-          XCTAssertGreaterThanOrEqual(slot.minX, bar.minX - 0.5, "\(name) clipped on the left at \(size.name), \(width) pt")
-          XCTAssertLessThanOrEqual(slot.maxX, bar.maxX + 0.5, "\(name) clipped on the right at \(size.name), \(width) pt")
+          XCTAssertEqual(slot.width, 54, accuracy: 0.5, "\(name) width at \(size.name), \(width) pt")
+          XCTAssertEqual(slot.height, 54, accuracy: 0.5, "\(name) height at \(size.name), \(width) pt")
+          XCTAssertGreaterThanOrEqual(slot.minX, bar.minX + 6.5, "\(name) inside the padding, left, \(width) pt")
+          XCTAssertLessThanOrEqual(slot.maxX, bar.maxX - 6.5, "\(name) inside the padding, right, \(width) pt")
           if let previous {
-            XCTAssertLessThanOrEqual(previous.maxX, slot.minX + 0.5, "\(name) overlaps its neighbour at \(size.name), \(width) pt")
+            XCTAssertEqual(slot.minX - previous.maxX, 6, accuracy: 0.5, "gap before \(name) at \(size.name), \(width) pt")
           }
           previous = slot
         }
-        for title in Self.tabTitles {
-          guard let label = measured.frame("label:\(title)"), let slot = measured.frame("slot:\(title)") else {
-            XCTFail("no label or slot for \(title) at \(size.name), \(width) pt")
-            continue
-          }
-          XCTAssertGreaterThanOrEqual(label.minX, slot.minX - 0.5, "\(title) label outside its slot at \(size.name), \(width) pt")
-          XCTAssertLessThanOrEqual(label.maxX, slot.maxX + 0.5, "\(title) label outside its slot at \(size.name), \(width) pt")
-        }
       }
     }
   }
 
-  /// The cap holds in the real view: above `xxLarge` the labels and the bar measure
-  /// exactly as they do at `xxLarge`. Removing the cap makes this fail.
-  func testCapHoldsLabelWidthsAndBarAboveTheCap() {
+  func testPlusIsTheCentreOfFive() {
     for width in Self.widths {
-      let atCap = measure(width: width, category: Self.capCategory)
-      for category in [UIContentSizeCategory.extraExtraExtraLarge, .accessibilityMedium, .accessibilityExtraExtraExtraLarge] {
-        let above = measure(width: width, category: category)
-        for title in Self.tabTitles {
-          let capWidth = atCap.frame("label:\(title)")?.width ?? -1
-          let aboveWidth = above.frame("label:\(title)")?.width ?? -2
-          XCTAssertEqual(aboveWidth, capWidth, accuracy: 0.5, "\(title) grows above the cap at \(width) pt, \(category.rawValue)")
-        }
-        XCTAssertEqual(above.frame("bar")?.height ?? -1, atCap.frame("bar")?.height ?? -2, accuracy: 0.5, "bar grows above the cap at \(width) pt, \(category.rawValue)")
-      }
+      let measured = measure(width: width, category: .large)
+      let plus = measured.frame("slot:add")
+      let bar = measured.frame("bar")
+      XCTAssertEqual(plus?.midX ?? -1, bar?.midX ?? -2, accuracy: 0.5, "+ is not the centre circle at \(width) pt")
+      let tabsLeftOfPlus = Self.slotNames.prefix(2).compactMap { measured.frame($0) }
+      XCTAssertEqual(tabsLeftOfPlus.count, 2, "missing leading tabs at \(width) pt")
+      XCTAssertTrue(tabsLeftOfPlus.allSatisfy { $0.maxX <= (plus?.minX ?? -1) }, "a leading tab is not left of + at \(width) pt")
     }
   }
 
-  /// The rule in `NomiTabBarSizing` fed with the widths the device drew, at every
-  /// size up to the cap. The rule must say they fit at 375 pt.
-  func testMeasuredLabelWidthsAgreeWithTheSizingRuleAtNarrowestWidth() {
-    let budget = NomiTabBarSizing.tabSpaceBudget(screenWidth: 375, sideMargin: 24)
-    for size in Self.tableSizes {
-      let measured = measure(width: 440, category: size.category)
-      let widths = Self.tabTitles.compactMap { measured.frame("label:\($0)")?.width }
-      XCTAssertEqual(widths.count, 4, "missing label widths at \(size.name)")
-      if NomiTabBarSizing.effectiveTypeSize(typeSize(size.category)) == typeSize(size.category) {
-        XCTAssertTrue(
-          NomiTabBarSizing.labelsFitOneLine(labelWidths: widths, budget: budget),
-          "rule says labels do not fit at 375 pt, \(size.name), widths \(widths)"
-        )
-      }
-    }
-  }
-
-  /// Prints the measured widths and heights at every size. Not an assertion: the
-  /// source of the table in `NomiTabBarSizing` and in the PR body.
-  func testPrintsMeasuredWidthTable() {
-    for size in Self.tableSizes {
-      let measured = measure(width: 440, category: size.category)
-      let row = Self.tabTitles.map { title -> String in
-        let label = measured.frame("label:\(title)")
-        return "\(title)=\(String(format: "%.1f", label?.width ?? -1))/h\(String(format: "%.1f", label?.height ?? -1))"
-      }.joined(separator: " ")
-      let bar = measured.frame("bar")?.height ?? -1
-      print("TB1TABLE \(size.name) \(row) barH=\(String(format: "%.1f", bar)) oneLineH=\(String(format: "%.2f", oneLineHeight(size.category)))")
+  /// The screen pads its content from the height the bar reports. #169 found the
+  /// preference path reads 0 at RootView, so the callback is what F3b relies on.
+  func testReportedHeightIs68AtEveryWidth() {
+    for width in Self.widths {
+      let measured = measure(width: width, category: .large)
+      XCTAssertFalse(measured.reportedHeights.isEmpty, "onHeightChange never fired at \(width) pt")
+      XCTAssertEqual(measured.reportedHeights.last ?? -1, 68, accuracy: 0.5, "reported height at \(width) pt")
     }
   }
 
@@ -168,10 +99,7 @@ final class NomiTabBarLayoutTests: XCTestCase {
 
   private struct Measured {
     let frames: [NomiTabBarFrame]
-
-    var bar: CGRect {
-      frame("bar") ?? .zero
-    }
+    let reportedHeights: [CGFloat]
 
     func frame(_ name: String) -> CGRect? {
       frames.first { $0.name == name }?.frame
@@ -180,28 +108,29 @@ final class NomiTabBarLayoutTests: XCTestCase {
 
   private final class Capture {
     var frames: [NomiTabBarFrame] = []
+    var heights: [CGFloat] = []
   }
 
-  /// Hosts the real bar at `width`, inside RootView's margins, with the category set
-  /// through UIKit's trait override. Lays it out and returns the published frames.
+  /// Hosts the real bar at `width` with its frame centred in the window, as RootView
+  /// places it, with the category set through UIKit's trait override. Lays it out,
+  /// lets the run loop deliver the geometry callbacks, and returns what was published.
   private func measure(width: CGFloat, category: UIContentSizeCategory) -> Measured {
     let capture = Capture()
     let bar = NomiTabBar(
       leading: [
         NomiTabBarItem(id: "home", title: "Home", symbolName: "house"),
-        NomiTabBarItem(id: "ledger", title: "Ledger", symbolName: "list.bullet.rectangle"),
+        NomiTabBarItem(id: "activity", title: "Activity", symbolName: "text.alignleft"),
       ],
       trailing: [
-        NomiTabBarItem(id: "insights", title: "Insights", symbolName: "chart.pie"),
-        NomiTabBarItem(id: "accounts", title: "Accounts", symbolName: "creditcard"),
+        NomiTabBarItem(id: "insights", title: "Insights", symbolName: "chart.bar"),
+        NomiTabBarItem(id: "plan", title: "Plan", symbolName: "target"),
       ],
       selectedID: "home",
       onSelect: { _ in },
-      onAdd: {}
+      onAdd: {},
+      onHeightChange: { capture.heights.append($0) }
     )
-    // RootView's margins: 24 pt on the sides, 22 pt from the bottom.
-    .padding(.horizontal, 24)
-    .padding(.bottom, 22)
+    .frame(maxWidth: .infinity)
     .onPreferenceChange(NomiTabBarFramesKey.self) { capture.frames = $0 }
 
     let controller = UIHostingController(rootView: AnyView(bar))
@@ -215,33 +144,7 @@ final class NomiTabBarLayoutTests: XCTestCase {
     controller.view.layoutIfNeeded()
     RunLoop.main.run(until: Date().addingTimeInterval(0.1))
     window.isHidden = true
-    return Measured(frames: capture.frames)
-  }
-
-  /// One line of the tab label at `category`, from the scaled font the system uses.
-  private func oneLineHeight(_ category: UIContentSizeCategory) -> CGFloat {
-    let base = UIFont(name: NomiFont.interMedium, size: 10.5) ?? UIFont.systemFont(ofSize: 10.5)
-    let traits = UITraitCollection(preferredContentSizeCategory: category)
-    return UIFontMetrics(forTextStyle: .caption2).scaledFont(for: base, compatibleWith: traits).lineHeight
-  }
-
-  /// The `DynamicTypeSize` a UIKit category maps to, for `NomiTabBarSizing.effectiveTypeSize`.
-  private func typeSize(_ category: UIContentSizeCategory) -> DynamicTypeSize {
-    switch category {
-    case .extraSmall: return .xSmall
-    case .small: return .small
-    case .medium: return .medium
-    case .large: return .large
-    case .extraLarge: return .xLarge
-    case .extraExtraLarge: return .xxLarge
-    case .extraExtraExtraLarge: return .xxxLarge
-    case .accessibilityMedium: return .accessibility1
-    case .accessibilityLarge: return .accessibility2
-    case .accessibilityExtraLarge: return .accessibility3
-    case .accessibilityExtraExtraLarge: return .accessibility4
-    case .accessibilityExtraExtraExtraLarge: return .accessibility5
-    default: return .large
-    }
+    return Measured(frames: capture.frames, reportedHeights: capture.heights)
   }
 }
 #endif
