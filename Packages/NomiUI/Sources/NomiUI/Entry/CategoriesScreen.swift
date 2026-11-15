@@ -22,6 +22,13 @@ enum CategoryRowRules {
   static func canDelete<T: SystemFlagged>(_ item: T) -> Bool {
     !item.isSystem
   }
+
+  /// The offsets a swipe-delete may act on: those that name a row in `items`
+  /// and whose row is deletable. A system row never survives, so the delete path
+  /// cannot ask the store to remove one even if the list hands over its offset.
+  static func deletableOffsets<T: SystemFlagged>(_ offsets: IndexSet, in items: [T]) -> IndexSet {
+    IndexSet(offsets.filter { items.indices.contains($0) && canDelete(items[$0]) })
+  }
 }
 
 /// The category delete copy, shared by the list's delete alert and the editor's
@@ -167,17 +174,21 @@ public struct CategoriesScreen: View {
     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
   }
 
+  /// A swipe on a system row is filtered out by `CategoryRowRules`, so it shows
+  /// nothing. `.deleteDisabled` already keeps the swipe off those rows.
   private func delete(at offsets: IndexSet) {
-    for index in offsets {
-      let category = categories[index]
-      // A system row has no swipe action (`.deleteDisabled`), so this guard only
-      // backs the list up. It stays silent: nothing is offered, nothing shown.
-      guard CategoryRowRules.canDelete(category) else { continue }
-      pendingDeletion = category
-    }
+    let deletable = CategoryRowRules.deletableOffsets(offsets, in: categories)
+    guard let index = deletable.first else { return }
+    pendingDeletion = categories[index]
   }
 
   private func confirmDelete(_ category: NomiCore.Category) {
+    // Defence in depth: a system category never reaches the store, whatever the
+    // row or the alert did. The store refuses it too.
+    guard CategoryRowRules.canDelete(category) else {
+      pendingDeletion = nil
+      return
+    }
     do {
       try categoryStore.delete(category.id)
     } catch {
