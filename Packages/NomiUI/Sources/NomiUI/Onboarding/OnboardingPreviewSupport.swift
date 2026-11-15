@@ -49,6 +49,33 @@ actor FailedFakeMailConnectionService: MailConnectionService {
   }
 }
 
+/// A connection that was made before and has now failed, with the password still
+/// saved: the state the "Try again" offer is for. `reconnectWithStoredCredential`
+/// does nothing, so the preview stays on the offer.
+actor SavedCredentialFailedFakeMailConnectionService: MailConnectionService {
+  nonisolated let state: AsyncStream<MailConnectionState>
+  nonisolated let backfillProgress: AsyncStream<BackfillProgress>
+  nonisolated let history = MailConnectionHistory(hasEverConnected: true, lastSync: nil)
+  nonisolated var hasStoredCredential: Bool { true }
+
+  init() {
+    state = AsyncStream { continuation in
+      continuation.yield(.failed(.connectionFailed))
+    }
+    backfillProgress = AsyncStream { _ in }
+  }
+
+  func connect(_ credentials: IMAPCredentials) async throws {}
+  func disconnect() async throws {}
+  func reconnectWithStoredCredential() async throws {}
+  @discardableResult func syncNow() async throws -> SyncSummary {
+    SyncSummary(scanned: 0, created: 0, merged: 0, flagged: 0, packMatched: 0, heuristicMatched: 0, unmatchedSenders: [])
+  }
+  @discardableResult func startBackfill(months: Int) async throws -> SyncSummary {
+    SyncSummary(scanned: 0, created: 0, merged: 0, flagged: 0, packMatched: 0, heuristicMatched: 0, unmatchedSenders: [])
+  }
+}
+
 actor ConnectingFakeMailConnectionService: MailConnectionService {
   nonisolated let state: AsyncStream<MailConnectionState>
   nonisolated let backfillProgress: AsyncStream<BackfillProgress>

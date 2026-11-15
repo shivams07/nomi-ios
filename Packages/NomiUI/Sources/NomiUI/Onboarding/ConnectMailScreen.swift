@@ -27,6 +27,11 @@ public struct ConnectMailScreen: View {
   /// history in `init`, so a relaunch does not start from "never connected".
   @State private var hadConnection: Bool
   @State private var lastKnownSync: Date?
+  /// A password is saved on this device. Read in `init`, and again on every
+  /// state change: connecting saves one, disconnecting deletes it, and a
+  /// screen that outlives either would otherwise show a stale offer.
+  @State private var hasSaved: Bool
+  @State private var isConfirmingDisconnect = false
 
   public init(mailConnectionService: MailConnectionService, onBackfillStart: (() -> Void)? = nil) {
     self.mailConnectionService = mailConnectionService
@@ -36,6 +41,7 @@ public struct ConnectMailScreen: View {
     let seed = MailAttentionSeed(history: mailConnectionService.history)
     _hadConnection = State(initialValue: seed.hadConnection)
     _lastKnownSync = State(initialValue: seed.lastSync)
+    _hasSaved = State(initialValue: mailConnectionService.hasStoredCredential)
   }
 
   private var canConnect: Bool {
@@ -89,6 +95,7 @@ public struct ConnectMailScreen: View {
 
   private func observe(_ state: MailConnectionState) {
     connectionState = state
+    hasSaved = mailConnectionService.hasStoredCredential
     if case .connected(_, let lastSync) = state {
       hadConnection = true
       if let lastSync { lastKnownSync = lastSync }
@@ -116,6 +123,14 @@ public struct ConnectMailScreen: View {
           MailAttentionCard(copy: attention)
             .padding(.bottom, NomiSpacing.xxs)
         }
+        if ReconnectOffer.isShown(
+          state: connectionState,
+          hadConnection: hadConnection,
+          hasStoredCredential: hasSaved
+        ) {
+          reconnectCard
+            .padding(.bottom, NomiSpacing.xxs)
+        }
         sectionLabel("Provider", isFirst: true)
         providerCard
         sectionLabel("Account")
@@ -137,6 +152,24 @@ public struct ConnectMailScreen: View {
     .safeAreaInset(edge: .bottom) {
       connectFooter
     }
+  }
+
+  /// The offer to reuse the saved password. The form below stays for a new one.
+  private var reconnectCard: some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.sm) {
+      Text("Your saved password is still on this device.")
+        .nomiTextStyle(.body)
+        .foregroundStyle(NomiColor.ink)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+      Button("Try again") {
+        reconnect()
+      }
+      .buttonStyle(NomiPrimaryButtonStyle(height: 52))
+    }
+    .padding(NomiSpacing.sm)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .nomiCard(padding: EdgeInsets())
   }
 
   private func sectionLabel(_ title: String, isFirst: Bool = false) -> some View {
@@ -275,7 +308,7 @@ public struct ConnectMailScreen: View {
             .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
             .padding(.horizontal, NomiSpacing.sm)
           cardDivider
-          NomiDestructiveRow(title: "Disconnect") { disconnect() }
+          NomiDestructiveRow(title: "Disconnect") { isConfirmingDisconnect = true }
             .padding(.horizontal, NomiSpacing.sm)
         }
         .nomiCard(padding: EdgeInsets())
@@ -291,9 +324,35 @@ public struct ConnectMailScreen: View {
       .padding(.horizontal, NomiSpacing.screenGutter)
       .padding(.bottom, NomiSpacing.sm)
     }
+    .confirmationDialog(
+      "Disconnect mail?",
+      isPresented: $isConfirmingDisconnect,
+      titleVisibility: .visible
+    ) {
+      Button("Disconnect", role: .destructive) { disconnect() }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("Nomi stops scanning this mailbox and forgets the saved password. Your transactions stay in Nomi.")
+    }
   }
 
   // MARK: - Actions
+
+  /// Try again: reconnects with the saved password, with the same flags as
+  /// `connect()`. The thrown error is discarded on purpose, as `connect()` does:
+  /// the failure reaches the screen as `.failed` on the state stream (I-3). The
+  /// offer is re-read afterwards, so a rejected password that was deleted hides it.
+  private func reconnect() {
+    didAttemptOnce = true
+    isConnecting = true
+    Task {
+      defer {
+        isConnecting = false
+        hasSaved = mailConnectionService.hasStoredCredential
+      }
+      try? await mailConnectionService.reconnectWithStoredCredential()
+    }
+  }
 
   private func connect() {
     didAttemptOnce = true
@@ -333,6 +392,18 @@ public struct ConnectMailScreen: View {
       } catch {
         errorMessage = "Couldn't disconnect right now. Try again in a moment."
       }
+    }
+  }
+}
+
+/// Whether the "Try again" offer shows (R5e, X15). Pure, so the rule is tested
+/// without a view.
+enum ReconnectOffer {
+  static func isShown(state: MailConnectionState, hadConnection: Bool, hasStoredCredential: Bool) -> Bool {
+    guard hasStoredCredential && hadConnection else { return false }
+    switch state {
+    case .failed, .disconnected: return true
+    case .connecting, .connected: return false
     }
   }
 }
@@ -396,6 +467,12 @@ private struct MailAttentionCard: View {
 #Preview("Connect mail — connecting") {
   NavigationStack {
     ConnectMailScreen(mailConnectionService: ConnectingFakeMailConnectionService())
+  }
+}
+
+#Preview("Connect mail — try again") {
+  NavigationStack {
+    ConnectMailScreen(mailConnectionService: SavedCredentialFailedFakeMailConnectionService())
   }
 }
 

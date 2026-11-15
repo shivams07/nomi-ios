@@ -25,6 +25,18 @@ enum BackfillLifecycle {
   }
 }
 
+/// Starts a scan after the one before it has finished (R5e, X14). Pulled out of
+/// `BackfillScreen.start()` so the rule is testable without a view.
+enum BackfillSchedule {
+  static func next(after previous: Task<Void, Never>?, _ scan: @escaping () async -> Void) -> Task<Void, Never> {
+    Task {
+      await previous?.value
+      guard !Task.isCancelled else { return }
+      await scan()
+    }
+  }
+}
+
 /// The scan, pulled out so it is spy-testable in the same shape as
 /// `SettingsActions.rescan`: it must call `startBackfill(months:)` and nothing
 /// else — specifically never `syncNow()`. The screen used to end its progress
@@ -279,10 +291,15 @@ public struct BackfillScreen: View {
     }
   }
 
+  /// Resume and Retry come here. A cancelled scan can still be winding down at
+  /// its next batch boundary, so the new one waits for it: the service never
+  /// sees two scans at once (X14).
   private func start() {
     isCancelled = false
     didFail = false
-    backfillTask = Task {
+    let previous = backfillTask
+    previous?.cancel()
+    backfillTask = BackfillSchedule.next(after: previous) {
       do {
         completionSummary = try await BackfillActions.scan(
           using: mailConnectionService, months: months)
