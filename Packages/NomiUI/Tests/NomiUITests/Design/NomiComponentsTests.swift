@@ -86,6 +86,28 @@ struct NomiComponentsTests {
     #expect(NomiAmountFormat.parts(minor: 100, showPlus: false).sign == "")
   }
 
+  // MARK: - Decimals opacity (F2a, I-17; wave-1 Correction 4)
+
+  @Test func decimalsOpacityIsHalfAtLargeSizes() {
+    #expect(NomiAmountText.decimalsOpacity(for: .heroAmount) == 0.5)
+    #expect(NomiAmountText.decimalsOpacity(for: .displayValue) == 0.5)
+    #expect(NomiAmountText.decimalsOpacity(for: .summaryValue) == 0.5)
+  }
+
+  @Test func decimalsOpacityIsSixtyFivePercentBelowTwentyFourPoints() {
+    #expect(NomiAmountText.decimalsOpacity(for: .amount) == 0.65)
+    #expect(NomiAmountText.decimalsOpacity(for: .amountStrong) == 0.65)
+    #expect(NomiAmountText.decimalsOpacity(for: .amountLarge) == 0.65)
+  }
+
+  @Test func amountAndTitleStylesHaveTheirPointSizes() {
+    #expect(NomiTextStyle.amount.pointSize == 16)
+    #expect(NomiTextStyle.amountLarge.pointSize == 20)
+    #expect(NomiTextStyle.heroAmount.pointSize == 46)
+    #expect(NomiTextStyle.pageTitle.pointSize == 30)
+    #expect(NomiTextStyle.pageTitle.tracking == -0.8)
+  }
+
   // MARK: - Hero button contrast (DEC-09, A-09 item 2)
 
   @Test func heroButtonContrast() {
