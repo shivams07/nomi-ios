@@ -70,6 +70,8 @@ private struct EntryForm: View {
   let onSaved: (() -> Void)?
 
   @Environment(\.dismiss) private var dismiss
+  /// The shell's import action (F3b). Nil in a preview, where no link is drawn.
+  @Environment(\.nomiOpenImport) private var openImport
   @FocusState private var isAmountFocused: Bool
 
   @State private var isCategoryPickerPresented = false
@@ -419,6 +421,20 @@ private struct EntryForm: View {
       }
       .buttonStyle(NomiPrimaryButtonStyle(height: 54))
       .disabled(!model.canSave)
+      if let openImport {
+        // S5 follow-up. The one thing the link does is call the shell's import action.
+        Button {
+          EntryImportLink.activate(openImport)
+        } label: {
+          Text(EntryImportLink.title)
+            .nomiTextStyle(.body)
+            .foregroundStyle(NomiColor.primary)
+            .underline()
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget)
+        }
+        .buttonStyle(.plain)
+      }
     }
     .padding(.horizontal, NomiSpacing.screenGutter)
     .padding(.top, NomiSpacing.xs)
@@ -430,6 +446,18 @@ private struct EntryForm: View {
     guard model.save() else { return }
     onSaved?()
     dismiss()
+  }
+}
+
+/// The "Import a bank statement instead" link under Save (the S5 follow-up, drawn
+/// as the Add artboard's link). `activate` is all it does: it calls the shell's
+/// import action once. A test passes a spy as the action.
+enum EntryImportLink {
+  static let title = "Import a bank statement instead"
+
+  @MainActor
+  static func activate(_ action: NomiShellAction?) {
+    action?()
   }
 }
 

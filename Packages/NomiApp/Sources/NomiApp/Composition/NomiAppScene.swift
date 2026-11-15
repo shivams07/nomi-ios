@@ -56,7 +56,7 @@ enum AppServices {
     let opened = environment.storage
     return AppEnvironment(
       container: opened.container, storageMode: opened.mode,
-      preferences: preferenceStore(persistent: opened.persistent, defaults: defaults),
+      preferences: launchPreferences(persistent: opened.persistent, defaults: defaults),
       credentials: credentials, mailFetcher: mailFetcher, scheduler: scheduler,
       accountProbe: accountProbe)
   }
@@ -73,6 +73,38 @@ enum AppServices {
     }
     return ReadThroughKeyValueStore(reading: UserDefaultsKeyValueStore(defaults: defaults))
   }
+
+  /// The preference store for this launch: `preferenceStore`, except that a Debug
+  /// simulator launch with `NOMI_DEMO_DATA=1` completes first run here, in memory.
+  /// The demo overlay reads through and writes only to its overlay, so the real
+  /// `UserDefaults` never sees the flag. A launch whose `NOMI_START_ROUTE` opens
+  /// Welcome or Bring in your data keeps first run open. Every other build is
+  /// `preferenceStore`.
+  static func launchPreferences(persistent: Bool, defaults: UserDefaults) -> any KeyValueStoring {
+    #if DEBUG && targetEnvironment(simulator)
+      return launchPreferences(
+        persistent: persistent, defaults: defaults, environment: ProcessInfo.processInfo.environment)
+    #else
+      return preferenceStore(persistent: persistent, defaults: defaults)
+    #endif
+  }
+
+  #if DEBUG && targetEnvironment(simulator)
+    /// `launchPreferences` for a given launch environment. Internal so a test can
+    /// drive it with its own suite and environment.
+    static func launchPreferences(
+      persistent: Bool, defaults: UserDefaults, environment: [String: String]
+    ) -> any KeyValueStoring {
+      guard DemoDataSeeder.isRequested(in: environment) else {
+        return preferenceStore(persistent: persistent, defaults: defaults)
+      }
+      let overlay = ReadThroughKeyValueStore(reading: UserDefaultsKeyValueStore(defaults: defaults))
+      if DevLaunchRoute.demoCompletesFirstRun(for: DevLaunchRoute.parse(environment: environment)) {
+        overlay.set(true, forKey: PreferenceKey.hasCompletedFirstRun)
+      }
+      return overlay
+    }
+  #endif
 
   /// Whether the device's data protection lets this process read its files.
   /// Before first unlock, a background launch cannot open the store.
@@ -278,6 +310,11 @@ struct RootContainerView: View {
     .task {
       await environment.bootstrap()
     }
+    #if DEBUG && targetEnvironment(simulator)
+    .task {
+      applyOnboardingLaunchRoute()
+    }
+    #endif
     .task {
       await observeRemoteChanges()
     }
@@ -288,6 +325,19 @@ struct RootContainerView: View {
       await environment.storageMonitor.run()
     }
   }
+
+  #if DEBUG && targetEnvironment(simulator)
+    /// `NOMI_START_ROUTE=bringData` opens Bring in your data. From Welcome, that is
+    /// one step on. Welcome itself needs nothing, and the shell routes are applied
+    /// by `RootView` once it appears.
+    @MainActor
+    private func applyOnboardingLaunchRoute() {
+      guard DevLaunchRoute.launch == .bringData else { return }
+      if case .onboarding(.welcome) = firstRun.route {
+        firstRun.start()
+      }
+    }
+  #endif
 
   /// R5's reconcile, on the event that causes the corruption it fixes.
   ///
