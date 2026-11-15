@@ -13,6 +13,9 @@ struct RouteTokens: Equatable {
   let settings: Int
   let reports: Int
   let plan: Int
+  /// The Activity tab's token. `TabRootKey` carries it, so a cache change still rebuilds
+  /// the Activity root once that root sits in an equatable host.
+  let ledger: Int
 
   init(generation: Int) {
     dashboard = generation
@@ -21,5 +24,6 @@ struct RouteTokens: Equatable {
     settings = generation
     reports = generation
     plan = generation
+    ledger = generation
   }
 }

@@ -15,9 +15,10 @@ public struct NomiTabBarItem: Identifiable, Equatable, Sendable {
   }
 }
 
-/// Publishes the tab bar's height through a preference. RootView still reads it. The
-/// value does not reach RootView (#169), so F3b reads `NomiTabBar`'s `onHeightChange`
-/// instead, and this key goes with it.
+/// Declared but unused. The bar's height reaches RootView through `NomiTabBar`'s
+/// `onHeightChange` callback, which fires on appearance and on every change, and
+/// RootView stores it in `tabBarHeight`. A preference did not reach RootView (#169), so
+/// the callback replaced it in F3b; this key is kept only so existing references compile.
 public struct NomiTabBarHeightKey: PreferenceKey {
   public static let defaultValue: CGFloat = 0
 
@@ -113,9 +114,19 @@ public struct NomiTabBar: View {
         tabSlot(item)
       }
     }
+    #if os(iOS)
+    // The touch layer (`NomiTabBarTouchOverlay`) takes every touch. The buttons keep
+    // drawing and VoiceOver, which activates them without a touch.
+    .allowsHitTesting(false)
+    #endif
     .padding(NomiTabBarMetrics.padding)
     .frame(width: NomiTabBarMetrics.barWidth, height: NomiTabBarMetrics.barHeight)
     .nomiGlass(.tabBar, in: Capsule())
+    #if os(iOS)
+    .overlay {
+      NomiTabBarTouchOverlay(items: touchItems, onSelectIndex: selectSlot)
+    }
+    #endif
     .background {
       frameReporter("bar")
     }
@@ -132,6 +143,26 @@ public struct NomiTabBar: View {
       }
     }
   }
+
+  #if os(iOS)
+  /// The five slots left to right, the `+` in the middle, for `NomiTabBarTouchOverlay`.
+  private var touchItems: [(title: String, symbolName: String)] {
+    leading.map { (title: $0.title, symbolName: $0.symbolName) }
+      + [(title: "Add transaction", symbolName: "plus")]
+      + trailing.map { (title: $0.title, symbolName: $0.symbolName) }
+  }
+
+  /// Acts on slot `index` from the touch layer: the `+` opens Add, the rest select a tab.
+  private func selectSlot(_ index: Int) {
+    if index == leading.count {
+      onAdd()
+    } else if index < leading.count {
+      onSelect(leading[index].id)
+    } else if index - leading.count - 1 < trailing.count {
+      onSelect(trailing[index - leading.count - 1].id)
+    }
+  }
+  #endif
 
   private func tabSlot(_ item: NomiTabBarItem) -> some View {
     let isSelected = item.id == selectedID
