@@ -53,49 +53,6 @@ enum HeroSparkline {
   }
 }
 
-/// Legacy sparse step-line builders from the wave-1 hero (HM1). The S1a hero draws
-/// `HomeSparklineSeries` instead, so nothing in the app calls these. They stay only
-/// because `InsightsCreditDayConsumerTests` (no S1a file list entry, no other unit)
-/// still pins them. Remove them when that test moves to `HomeSparklineSeries`.
-extension HeroSparkline {
-  /// Sorted by day, cumulative `debitMinor`. `[]` when fewer than two spend days.
-  static func points(byDay: [DayBucket]) -> [Double] {
-    let spend = spendDays(byDay)
-    guard spend.count >= 2 else { return [] }
-    var running = 0
-    return spend.sorted { $0.id < $1.id }.map { bucket in
-      running += bucket.debitMinor
-      return Double(running)
-    }
-  }
-
-  /// The buckets that are spend days. Credit-only days carry a zero debit (I-10).
-  static func spendDays(_ byDay: [DayBucket]) -> [DayBucket] {
-    byDay.filter { $0.debitMinor != 0 }
-  }
-
-  /// One step of the legacy line, placed on the calendar.
-  struct Sample: Equatable {
-    let date: Date
-    let total: Double
-  }
-
-  /// The step line for `range`: zero on its first day, each spend day's running
-  /// total, and the final total held to the end. `[]` when `points` is empty.
-  static func samples(byDay: [DayBucket], range: Range<Date>) -> [Sample] {
-    let spend = spendDays(byDay)
-    let totals = points(byDay: spend)
-    guard let finalTotal = totals.last else { return [] }
-    let days = spend.sorted { $0.id < $1.id }.map(\.id)
-    var samples = [Sample(date: range.lowerBound, total: 0)]
-    for (day, total) in zip(days, totals) {
-      samples.append(Sample(date: day, total: total))
-    }
-    samples.append(Sample(date: range.upperBound, total: finalTotal))
-    return samples
-  }
-}
-
 /// The dense daily series behind the hero's lines (S1a, I-10). `byDay` is
 /// sparse, so the day-by-day values are filled here.
 enum HomeSparklineSeries {
