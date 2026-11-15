@@ -15,19 +15,32 @@ public enum NomiHeroGradient {
   /// The safe-area top the artboards were drawn at.
   public static let artboardSafeTop: CGFloat = 54
 
-  /// Artboard (y, hex): navyDeep at 0, navy at 150, blueMid at 290, track at 356.
+  /// Artboard points (y) where white hero text stops passing 4.5:1. White is
+  /// at or above 4.5:1 through y 299 and below it from y 300 (Moss ramp, plan
+  /// I-9 and Risks 1). Text may sit at or above this line.
+  public static let whiteTextFloor: CGFloat = 299
+
+  /// Artboard points (y) from which moss900 text passes 4.5:1 on the ramp.
+  /// It is at or above 4.5:1 from y 361 and below it at y 360. Text in the
+  /// band between `whiteTextFloor` and this value fails both colours.
+  public static let darkTextCeiling: CGFloat = 361
+
+  /// Artboard (y, hex) for the Moss Home hero (504 pt tall): heroRamp0 at 0,
+  /// heroRamp1 at 171, heroRamp2 at 313, heroRamp3 at 434, heroRamp4 at 504.
   public static let ramp: [(y: CGFloat, hex: UInt32)] = [
-    (0, NomiHex.navyDeep),
-    (150, NomiHex.navy),
-    (290, NomiHex.blueMid),
-    (356, NomiHex.track),
+    (0, NomiHex.heroRamp0),
+    (171, NomiHex.heroRamp1),
+    (313, NomiHex.heroRamp2),
+    (434, NomiHex.heroRamp3),
+    (504, NomiHex.heroRamp4),
   ]
 
-  /// Backfill's moment gradient: 0 navyDeep, 0.40 navy, 1.0 `backfillEnd`.
+  /// Backfill's moment gradient: heroRamp0 at 0, heroRamp1 at 0.45, heroRamp2
+  /// at 1.0 (canvas Backfill board).
   static let momentStops: [NomiHeroStop] = [
-    NomiHeroStop(location: 0, hex: NomiHex.navyDeep),
-    NomiHeroStop(location: 0.40, hex: NomiHex.navy),
-    NomiHeroStop(location: 1.0, hex: NomiHex.backfillEnd),
+    NomiHeroStop(location: 0, hex: NomiHex.heroRamp0),
+    NomiHeroStop(location: 0.45, hex: NomiHex.heroRamp1),
+    NomiHeroStop(location: 1.0, hex: NomiHex.heroRamp2),
   ]
 
   /// Stops for a hero `height` points tall, measured from the top of the screen.

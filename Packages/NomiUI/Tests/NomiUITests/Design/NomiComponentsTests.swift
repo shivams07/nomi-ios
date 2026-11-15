@@ -14,20 +14,20 @@ struct NomiComponentsTests {
 
   @Test func heroStopsAtArtboardInset() {
     let stops = NomiHeroGradient.stops(height: 356, safeTop: 54)
-    #expect(stops.map(\.hex) == [NomiHex.navyDeep, NomiHex.navy, NomiHex.blueMid, NomiHex.track])
-    expectLocations(stops, [0, 150.0 / 356.0, 290.0 / 356.0, 1])
+    #expect(stops.map(\.hex) == [NomiHex.heroRamp0, NomiHex.heroRamp1, NomiHex.heroRamp2, 0x799B70])
+    expectLocations(stops, [0, 171.0 / 356.0, 313.0 / 356.0, 1])
   }
 
-  @Test func accountsHeroEndsAt3972AC() {
+  @Test func accountsHeroEndsAt4C6F4B() {
     let stops = NomiHeroGradient.stops(height: 250, safeTop: 54)
-    #expect(stops.map(\.hex) == [NomiHex.navyDeep, NomiHex.navy, 0x3972AC])
-    expectLocations(stops, [0, 150.0 / 250.0, 1])
+    #expect(stops.map(\.hex) == [NomiHex.heroRamp0, NomiHex.heroRamp1, 0x4C6F4B])
+    expectLocations(stops, [0, 171.0 / 250.0, 1])
   }
 
   @Test func heroStopsShiftWithInset() {
     let stops = NomiHeroGradient.stops(height: 361, safeTop: 59)
-    #expect(stops.map(\.hex) == [NomiHex.navyDeep, NomiHex.navy, NomiHex.blueMid, NomiHex.track])
-    expectLocations(stops, [0, 155.0 / 361.0, 295.0 / 361.0, 1])
+    #expect(stops.map(\.hex) == [NomiHex.heroRamp0, NomiHex.heroRamp1, NomiHex.heroRamp2, 0x799B70])
+    expectLocations(stops, [0, 176.0 / 361.0, 318.0 / 361.0, 1])
   }
 
   @Test func heroStopsNeverExceedOne() {
@@ -42,9 +42,9 @@ struct NomiComponentsTests {
   }
 
   @Test func momentGradientEndpointsMatchBackfill() {
-    #expect(NomiHeroGradient.momentHex(atFraction: 0) == NomiHex.navyDeep)
-    #expect(NomiHeroGradient.momentHex(atFraction: 0.40) == NomiHex.navy)
-    #expect(NomiHeroGradient.momentHex(atFraction: 1) == 0x134883)
+    #expect(NomiHeroGradient.momentHex(atFraction: 0) == NomiHex.heroRamp0)
+    #expect(NomiHeroGradient.momentHex(atFraction: 0.45) == NomiHex.heroRamp1)
+    #expect(NomiHeroGradient.momentHex(atFraction: 1) == NomiHex.heroRamp2)
   }
 
   // MARK: - Amount parts (I-4 NomiAmountFormat)
@@ -99,7 +99,7 @@ struct NomiComponentsTests {
     #expect(abs(Double(token.blue) - Double(NomiHex.heroGlassTint & 0xFF) / 255) < 1e-4)
     let glassAlpha = Double(token.opacity)
 
-    let cases: [(CGFloat, Double)] = [(520, 10.98), (844, 10.11)]
+    let cases: [(CGFloat, Double)] = [(520, 9.79), (844, 7.69)]
     for (y, expected) in cases {
       let background = NomiHeroGradient.momentHex(atFraction: y / 844)
       let glass = NomiContrast.blend(NomiHex.heroGlassTint, over: background, alpha: glassAlpha)
@@ -109,7 +109,7 @@ struct NomiComponentsTests {
     }
     let primary = NomiContrast.ratio(NomiHex.navyDeep, NomiHex.white)
     #expect(primary >= 4.5)
-    #expect(abs(primary - 17.08) <= 0.01)
+    #expect(abs(primary - 13.53) <= 0.01)
   }
 
   // MARK: - Hero button tokens (DEC-09, A-09 item 1)

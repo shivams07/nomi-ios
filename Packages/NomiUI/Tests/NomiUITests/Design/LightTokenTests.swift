@@ -1,4 +1,5 @@
 // clt-harness: include
+import SwiftUI
 import Testing
 @testable import NomiUI
 
@@ -31,6 +32,8 @@ struct LightTokenTests {
       ("onPrimary on navy", NomiHex.onPrimary, NomiHex.navy),
       ("onPrimary on error", NomiHex.onPrimary, NomiHex.error),
       ("onPrimary on heroGlassSolid", NomiHex.onPrimary, NomiHex.heroGlassSolid),
+      ("warning on card", NomiHex.warning, NomiHex.card),
+      ("warning on warningTint", NomiHex.warning, NomiHex.warningTint),
     ]
     for (name, foreground, background) in pairs {
       let ratio = NomiContrast.ratio(foreground, background)
@@ -51,11 +54,11 @@ struct LightTokenTests {
   }
 
   @Test func knownRatiosMatchTheSpec() {
-    // SIMP §5 table and I-1 contrast column.
+    // Moss column of plan I-9, checked by the wave 1 F1 contrast figures.
     #expect(abs(NomiContrast.ratio(NomiHex.error, NomiHex.card) - 6.57) < 0.01)
-    #expect(abs(NomiContrast.ratio(NomiHex.inkSecondary, NomiHex.ground) - 5.84) < 0.01)
-    #expect(abs(NomiContrast.ratio(NomiHex.navy, NomiHex.track) - 9.66) < 0.01)
-    #expect(abs(NomiContrast.ratio(NomiHex.ink, NomiHex.card) - 18.35) < 0.01)
+    #expect(abs(NomiContrast.ratio(NomiHex.inkSecondary, NomiHex.ground) - 5.98) < 0.01)
+    #expect(abs(NomiContrast.ratio(NomiHex.navy, NomiHex.track) - 6.11) < 0.01)
+    #expect(abs(NomiContrast.ratio(NomiHex.ink, NomiHex.card) - 18.55) < 0.01)
   }
 
   @Test func contrastHelperMatchesWCAGReferencePoints() {
@@ -69,27 +72,30 @@ struct LightTokenTests {
 
   @Test func colourHexesArePinned() {
     let pinned: [(String, UInt32, UInt32)] = [
-      ("ground", NomiHex.ground, 0xF3F6FB),
+      ("ground", NomiHex.ground, 0xF3F5F0),
       ("card", NomiHex.card, 0xFFFFFF),
-      ("ink", NomiHex.ink, 0x0E1424),
-      ("inkDeep", NomiHex.inkDeep, 0x0A2150),
-      ("inkSecondary", NomiHex.inkSecondary, 0x53607A),
-      ("inkTab", NomiHex.inkTab, 0x3A4660),
-      ("dayHeader", NomiHex.dayHeader, 0x3D5486),
-      ("placeholder", NomiHex.placeholder, 0x5C6883),
-      ("navy", NomiHex.navy, 0x023571),
-      ("navyDeep", NomiHex.navyDeep, 0x04174B),
-      ("blueMid", NomiHex.blueMid, 0x4F8AC4),
-      ("track", NomiHex.track, 0xDCE8F5),
-      ("iconTile", NomiHex.iconTile, 0xE3EDFB),
-      ("iconGlyph", NomiHex.iconGlyph, 0x1B4290),
-      ("primary", NomiHex.primary, 0x06080F),
+      ("ink", NomiHex.ink, 0x111411),
+      ("inkDeep", NomiHex.inkDeep, 0x1F3320),
+      ("inkSecondary", NomiHex.inkSecondary, 0x566055),
+      ("inkTab", NomiHex.inkTab, 0x1F2A1F),
+      ("dayHeader", NomiHex.dayHeader, 0x3C5A38),
+      ("placeholder", NomiHex.placeholder, 0x566055),
+      ("navy", NomiHex.navy, 0x3C5A38),
+      ("navyDeep", NomiHex.navyDeep, 0x1F3320),
+      ("blueMid", NomiHex.blueMid, 0x6B8E5E),
+      ("track", NomiHex.track, 0xDDE8D3),
+      ("iconTile", NomiHex.iconTile, 0xEEF3E8),
+      ("iconGlyph", NomiHex.iconGlyph, 0x3C5A38),
+      ("primary", NomiHex.primary, 0x0C0F0C),
       ("onPrimary", NomiHex.onPrimary, 0xFFFFFF),
       ("error", NomiHex.error, 0xB42318),
       ("errorTint", NomiHex.errorTint, 0xFDECEA),
-      ("switchOff", NomiHex.switchOff, 0xC5CEDE),
-      ("heroGlassSolid", NomiHex.heroGlassSolid, 0x0E3972),
-      ("secondaryFill", NomiHex.secondaryFill, 0xEDF1F8),
+      ("warning", NomiHex.warning, 0x8A5300),
+      ("warningFill", NomiHex.warningFill, 0xD99A1F),
+      ("warningTint", NomiHex.warningTint, 0xFBF0DA),
+      ("heroGlassSolid", NomiHex.heroGlassSolid, 0x34543A),
+      ("heroGlassTint", NomiHex.heroGlassTint, 0x1F3320),
+      ("secondaryFill", NomiHex.secondaryFill, 0xEEF3E8),
     ]
     for (name, actual, expected) in pinned {
       #expect(actual == expected, "\(name) is \(String(actual, radix: 16)), expected \(String(expected, radix: 16))")
@@ -98,17 +104,63 @@ struct LightTokenTests {
 
   @Test func insightsSliceTintsArePinnedWithTheirContrast() {
     // IN, decisions Amendment 2 R3: the artboard's third and fourth donut slices.
-    #expect(NomiHex.chartTintMid == 0x8DB3EA)
-    #expect(NomiHex.chartTintLight == 0xBBD3EE)
-    #expect(abs(NomiContrast.ratio(NomiHex.chartTintMid, NomiHex.card) - 2.15) < 0.01)
-    #expect(abs(NomiContrast.ratio(NomiHex.chartTintLight, NomiHex.card) - 1.54) < 0.01)
+    #expect(NomiHex.chartTintMid == 0xA9C39B)
+    #expect(NomiHex.chartTintLight == 0xDDE8D3)
+    #expect(abs(NomiContrast.ratio(NomiHex.chartTintMid, NomiHex.card) - 1.91) < 0.01)
+    #expect(abs(NomiContrast.ratio(NomiHex.chartTintLight, NomiHex.card) - 1.27) < 0.01)
   }
 
   @Test func heroRampHexesArePinned() {
-    #expect(NomiHex.navyDeep == 0x04174B)
-    #expect(NomiHex.navy == 0x023571)
-    #expect(NomiHex.blueMid == 0x4F8AC4)
-    #expect(NomiHex.track == 0xDCE8F5)
+    #expect(NomiHex.heroRamp0 == 0x1E3325)
+    #expect(NomiHex.heroRamp1 == 0x34543A)
+    #expect(NomiHex.heroRamp2 == 0x5F8558)
+    #expect(NomiHex.heroRamp3 == 0xA9C39B)
+    #expect(NomiHex.heroRamp4 == 0xD9E5CF)
+  }
+
+  // MARK: - Hero text floors (plan I-9, Risks 1)
+
+  /// The hero colour at artboard `y`, read from the stops the gradient draws.
+  /// `stops(height:)` ends with the colour at its height.
+  private func heroHex(atY y: Int) -> UInt32 {
+    guard y > 0 else { return NomiHex.heroRamp0 }
+    return NomiHeroGradient.stops(height: CGFloat(y), safeTop: NomiHeroGradient.artboardSafeTop).last?.hex ?? NomiHex.heroRamp0
+  }
+
+  @Test func heroTextFloorsAreTight() {
+    // White text passes 4.5:1 through y 299 and fails from y 300.
+    for y in 0...299 {
+      let ratio = NomiContrast.ratio(NomiHex.white, heroHex(atY: y))
+      #expect(ratio >= 4.5, "white on the hero at y \(y) is \(ratio)")
+    }
+    #expect(NomiContrast.ratio(NomiHex.white, heroHex(atY: 300)) < 4.5)
+    #expect(NomiHeroGradient.whiteTextFloor == 299)
+    // moss900 text passes 4.5:1 from y 361 to the bottom of the 504 pt hero and fails at 360.
+    for y in 361...504 {
+      let ratio = NomiContrast.ratio(NomiHex.navyDeep, heroHex(atY: y))
+      #expect(ratio >= 4.5, "navyDeep on the hero at y \(y) is \(ratio)")
+    }
+    #expect(NomiContrast.ratio(NomiHex.navyDeep, heroHex(atY: 360)) < 4.5)
+    #expect(NomiHeroGradient.darkTextCeiling == 361)
+  }
+
+  @Test func heroTextSecondaryPassesToY264() {
+    // heroTextSecondary is white at 90%. Read the opacity from the token itself.
+    let token = NomiColor.heroTextSecondary.resolve(in: EnvironmentValues())
+    #expect(abs(Double(token.opacity) - 0.90) < 1e-4, "heroTextSecondary opacity is \(token.opacity), expected 0.90")
+    for y in 0...264 {
+      let background = heroHex(atY: y)
+      let text = NomiContrast.blend(NomiHex.white, over: background, alpha: 0.90)
+      let ratio = NomiContrast.ratio(text, background)
+      #expect(ratio >= 4.5, "white 90% on the hero at y \(y) is \(ratio)")
+    }
+  }
+
+  // MARK: - Warning (plan I-9)
+
+  @Test func warningTextPasses() {
+    #expect(NomiContrast.ratio(NomiHex.warning, NomiHex.card) >= 4.5)
+    #expect(NomiContrast.ratio(NomiHex.warning, NomiHex.warningTint) >= 4.5)
   }
 
   @Test func oneErrorRedAndNoCategoryRed() {
@@ -122,15 +174,15 @@ struct LightTokenTests {
 
   @Test func radiusScaleValues() {
     #expect(NomiRadius.tile == 8)
-    #expect(NomiRadius.inset == 16)
-    #expect(NomiRadius.card == 24)
+    #expect(NomiRadius.inset == 18)
+    #expect(NomiRadius.card == 28)
     #expect(NomiRadius.sheet == 32)
     #expect(NomiRadius.chip == 18)
     #expect(NomiRadius.control == 22)
   }
 
   @Test func spacingLayoutValues() {
-    #expect(NomiSpacing.screenGutter == 20)
+    #expect(NomiSpacing.screenGutter == 16)
     #expect(NomiSpacing.tabBarSideMargin == 24)
     #expect(NomiSpacing.tabBarBottomMargin == 22)
     #expect(NomiSpacing.minTarget == 44)
@@ -176,11 +228,12 @@ struct LightTokenTests {
       NomiColor.inkSecondary, NomiColor.inkTab, NomiColor.dayHeader, NomiColor.placeholder,
       NomiColor.navy, NomiColor.navyDeep, NomiColor.blueMid, NomiColor.track,
       NomiColor.iconTile, NomiColor.iconGlyph, NomiColor.primary, NomiColor.onPrimary,
-      NomiColor.error, NomiColor.errorTint, NomiColor.switchOff, NomiColor.separator,
-      NomiColor.scrim, NomiColor.heroText, NomiColor.heroTextSecondary, NomiColor.heroGlassFill,
+      NomiColor.error, NomiColor.errorTint, NomiColor.warning, NomiColor.warningFill,
+      NomiColor.warningTint, NomiColor.chartMuted, NomiColor.chartHighlight, NomiColor.separator,
+      NomiColor.heroText, NomiColor.heroTextSecondary, NomiColor.heroGlassFill,
       NomiColor.heroGlassBorder, NomiColor.heroGlassHighlight, NomiColor.heroGlassSolid,
       NomiColor.tabGlassTop, NomiColor.tabGlassBottom, NomiColor.tabGlassBorder,
     ]
-    #expect(names.count == 30)
+    #expect(names.count == 33)
   }
 }

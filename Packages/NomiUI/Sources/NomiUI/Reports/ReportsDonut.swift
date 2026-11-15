@@ -30,11 +30,6 @@ public struct ReportsDonut: View {
   /// not touched by this unit.
   static let displayOtherID = UUID(uuidString: "00000000-0000-0000-0000-0000000000fd")!
 
-  /// Alpha of the muted daily and monthly bars on the card, composited over the
-  /// card colour. 0.55 gives 3.30:1 against `card` and 3.64:1 against the full
-  /// `navy` highlight, so the bars clear WCAG 1.4.11 (decisions Amendment 2, R4).
-  static let mutedBarAlpha: Double = 0.55
-
   /// Slice fills in artboard order: navyDeep, blueMid, chartTintMid,
   /// chartTintLight. Four stops only, because `displaySlices` caps the count.
   static func color(at index: Int) -> Color {

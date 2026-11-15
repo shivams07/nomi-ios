@@ -5,8 +5,10 @@ import SwiftUI
 
 /// The bar card on Insights: "Daily spend" for a calendar month (one bar per
 /// day) or "Monthly spend" for a financial year (the trend's 12 months). Bars
-/// are navy at `ReportsDonut.mutedBarAlpha` (55%), with the highlighted bar (today, or the last bar) in full
-/// navy. Only the first and last tick are printed, under the chart.
+/// are `NomiColor.chartMuted`, with the highlighted bar (today, or the last bar)
+/// in `NomiColor.chartHighlight`. Both are solid colours, so the bars clear
+/// WCAG 1.4.11 without an alpha. Only the first and last tick are printed,
+/// under the chart.
 public struct ReportsTrendCard: View {
   public let title: String
   public let values: [Int]
@@ -57,7 +59,7 @@ public struct ReportsTrendCard: View {
           x: .value("Position", index + 1),
           y: .value("Spent", Double(amountMinor) / 100)
         )
-        .foregroundStyle(index == highlightIndex ? NomiColor.navy : NomiColor.navy.opacity(ReportsDonut.mutedBarAlpha))
+        .foregroundStyle(index == highlightIndex ? NomiColor.chartHighlight : NomiColor.chartMuted)
         .cornerRadius(3)
       }
     }

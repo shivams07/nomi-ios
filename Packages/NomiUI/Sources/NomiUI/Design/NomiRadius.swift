@@ -2,15 +2,15 @@
 import CoreGraphics
 import SwiftUI
 
-/// Radius scale (F1 of nomi-ios-build-plan, I-2): tile 8, inset 16, card 24,
-/// sheet 32, chip 18 (a 36-high chip), control 22 (a 44-high pill), and a full
-/// pill. Concentric rule: card 24 -> inset 16 -> tile 8.
+/// Radius scale (wave 1 F1, plan I-9): tile 8, inset 18, card 28, sheet 32,
+/// chip 18 (a 36-high chip), control 22 (a 44-high pill), and a full pill.
+/// Concentric rule: card 28 -> inset 18 -> tile 8.
 public enum NomiRadius {
   public static let tile: CGFloat = 8
   /// Tiles inside a card: hero Income and Expenses, ledger row cards,
   /// subscription row cards, per-category budget cards.
-  public static let inset: CGFloat = 16
-  public static let card: CGFloat = 24
+  public static let inset: CGFloat = 18
+  public static let card: CGFloat = 28
   /// Sheets, from the light restyle (presented by `nomiSheet`).
   public static let sheet: CGFloat = 32
   /// A 36-high chip.

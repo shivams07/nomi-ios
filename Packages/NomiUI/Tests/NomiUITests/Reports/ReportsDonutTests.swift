@@ -101,10 +101,9 @@ struct ReportsDonutTests {
 
   // MARK: - Muted bars (decisions Amendment 2, A-19.5)
 
-  @Test func mutedBarsClearThreeToOneOnCardAndAgainstNavy() {
-    #expect(ReportsDonut.mutedBarAlpha == 0.55)
-    let muted = NomiContrast.blend(NomiHex.navy, over: NomiHex.card, alpha: ReportsDonut.mutedBarAlpha)
-    #expect(NomiContrast.ratio(muted, NomiHex.card) >= 3.0)
-    #expect(NomiContrast.ratio(muted, NomiHex.navy) >= 3.0)
+  @Test func mutedBarsClearThreeToOneOnCardAndAgainstHighlight() {
+    // Solid chartMuted (blueMid) and chartHighlight (navyDeep), no alpha: 3.71 and 3.64.
+    #expect(NomiContrast.ratio(NomiHex.blueMid, NomiHex.card) >= 3.0)
+    #expect(NomiContrast.ratio(NomiHex.blueMid, NomiHex.navyDeep) >= 3.0)
   }
 }
