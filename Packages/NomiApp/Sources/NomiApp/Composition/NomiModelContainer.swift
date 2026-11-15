@@ -370,7 +370,12 @@ public enum NomiModelContainer {
   /// already copied. Internal so a test can point it at a file it has made
   /// unopenable or locked. The file is opened without CREATE, so a missing
   /// file is never turned into an empty database.
-  static func integrityProbe(of copy: URL) -> StoreFailureVerdict {
+  ///
+  /// `afterPrepare` runs once the check is prepared and before it is stepped.
+  /// Production passes nothing. A test uses it to take a lock that only the step
+  /// meets: prepare has already read the schema, so the step is the first call
+  /// that needs the file.
+  static func integrityProbe(of copy: URL, afterPrepare: () -> Void = {}) -> StoreFailureVerdict {
     var db: OpaquePointer?
     var stmt: OpaquePointer?
     defer {
@@ -396,6 +401,7 @@ public enum NomiModelContainer {
       return .retryLater(.integrityCheckInconclusive)
     }
 
+    afterPrepare()
     let stepCode = sqlite3_step(stmt) & 0xFF
     if stepCode == sqlitePrimaryCorrupt || stepCode == sqlitePrimaryNotADatabase {
       return .corrupt(.integrityCheckFailed)

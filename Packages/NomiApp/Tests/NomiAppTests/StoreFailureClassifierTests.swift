@@ -178,6 +178,36 @@ final class StoreFailureClassifierTests: XCTestCase {
     XCTAssertEqual(NomiModelContainer.integrityProbe(of: lockedURL), .retryLater(.integrityCheckInconclusive))
   }
 
+  /// Rule 7, the step branch. The check is prepared first, then another
+  /// connection takes an exclusive lock, so the step is the first call that
+  /// needs the file. The inconclusive verdict must come from the step, not from
+  /// prepare, which the test above already covers. `lockTaken` shows the lock
+  /// went in after a successful prepare. (Mutant R7b: the step-stage
+  /// inconclusive retry returns `.corrupt`.)
+  func testAnExclusiveLockTakenAfterPrepareIsInconclusiveAtTheStep() throws {
+    let lockedURL = directory.appendingPathComponent("stepLocked.store")
+
+    var writer: OpaquePointer?
+    XCTAssertEqual(sqlite3_open_v2(lockedURL.path, &writer, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil), SQLITE_OK)
+    defer { sqlite3_close_v2(writer) }
+    XCTAssertEqual(sqlite3_exec(writer, "CREATE TABLE t(x); INSERT INTO t VALUES (1);", nil, nil, nil), SQLITE_OK)
+
+    var holder: OpaquePointer?
+    XCTAssertEqual(sqlite3_open_v2(lockedURL.path, &holder, SQLITE_OPEN_READWRITE, nil), SQLITE_OK)
+    defer {
+      sqlite3_exec(holder, "ROLLBACK;", nil, nil, nil)
+      sqlite3_close_v2(holder)
+    }
+
+    var lockTaken = false
+    let verdict = NomiModelContainer.integrityProbe(of: lockedURL) {
+      lockTaken = sqlite3_exec(holder, "BEGIN EXCLUSIVE;", nil, nil, nil) == SQLITE_OK
+    }
+
+    XCTAssertTrue(lockTaken, "the lock was taken after prepare, so the probe reached the step")
+    XCTAssertEqual(verdict, .retryLater(.integrityCheckInconclusive))
+  }
+
   /// Size and modification date for each file, in a comparable form.
   private func snapshot(of urls: [URL]) throws -> [String] {
     try urls.map { url in

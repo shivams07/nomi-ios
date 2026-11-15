@@ -1,6 +1,8 @@
 import CoreData
 import NomiCore
+import NomiIngest
 import NomiUI
+import SwiftData
 import SwiftUI
 
 #if canImport(UIKit)
@@ -26,19 +28,38 @@ import SwiftUI
 /// (§2.18).
 @MainActor
 enum AppServices {
-  /// The store and how it was opened. Built once, on first access. Reading
-  /// `storage.persistent` is what constructs it, so the background gate below
-  /// reads it only after protected data is known to be available.
-  static let storage = NomiModelContainer.makeWithLocalFallback()
+  /// The one source of persistence and protected-data state (I-6 Amendment 1,
+  /// A4 to A6). The store opens the first time something reads it, so a
+  /// background launch that is refused before first unlock never opens it.
+  static let storeWork = StoreWorkEnvironment(
+    open: { NomiModelContainer.makeWithLocalFallback() },
+    protectedDataAvailable: { systemProtectedDataAvailable })
 
-  /// When the store is not persistent, preferences read through to what the
-  /// user last saved but nothing written this launch reaches `UserDefaults`
-  /// (I-6 Amendment 1, step A4).
-  static let shared: AppEnvironment = {
-    AppEnvironment(
-      container: storage.container, storageMode: storage.mode,
-      preferences: preferenceStore(persistent: storage.persistent))
-  }()
+  /// The app's environment, built by `make` from `storeWork`. Nothing is wired
+  /// here of its own: the preference choice, the container and the storage mode
+  /// all come from the factory that a test also calls.
+  static let shared: AppEnvironment = make(environment: storeWork)
+
+  /// The composition root for one store source. `shared` is the only production
+  /// call, with the real defaults. A test passes fakes and its own suite and gets
+  /// the same wiring. When the store is not persistent, preferences read through
+  /// to what the user last saved, and nothing written this launch reaches
+  /// `UserDefaults` (I-6 Amendment 1, A4).
+  static func make(
+    environment: StoreWorkEnvironment,
+    defaults: UserDefaults = .standard,
+    credentials: any MailCredentialStoring = KeychainCredentialStore(),
+    mailFetcher: any MailFetching = NWIMAPFetcher(),
+    scheduler: any BudgetNotificationScheduling = BudgetNotificationScheduler(),
+    accountProbe: any CloudKitAccountProbing = CKAccountProbe()
+  ) -> AppEnvironment {
+    let opened = environment.storage
+    return AppEnvironment(
+      container: opened.container, storageMode: opened.mode,
+      preferences: preferenceStore(persistent: opened.persistent, defaults: defaults),
+      credentials: credentials, mailFetcher: mailFetcher, scheduler: scheduler,
+      accountProbe: accountProbe)
+  }
 
   /// The preference store for this launch. A non-persistent launch reads through
   /// to what the user last saved, and every write stays in an overlay, so
@@ -52,19 +73,6 @@ enum AppServices {
     }
     return ReadThroughKeyValueStore(reading: UserDefaultsKeyValueStore(defaults: defaults))
   }
-
-  /// Whether a background task may run store work. The closure is the only way
-  /// to learn persistence, and it is not called without protected data: that is
-  /// what keeps the store from being constructed in a background launch before
-  /// first unlock (A4).
-  static func mayRunStoreWork(protectedDataAvailable: Bool, storeIsPersistent: () -> Bool) -> Bool {
-    guard protectedDataAvailable else { return false }
-    return storeIsPersistent()
-  }
-
-  /// Where the protected-data answer comes from at runtime. A test replaces it.
-  /// Read at the moment a background task runs, never cached.
-  static var protectedDataSource: () -> Bool = { systemProtectedDataAvailable }
 
   /// Whether the device's data protection lets this process read its files.
   /// Before first unlock, a background launch cannot open the store.
@@ -83,11 +91,10 @@ enum AppServices {
   /// next `.background` scene phase does (A5).
   static func runBackground(
     _ work: BackgroundWork,
-    storeIsPersistent: () -> Bool,
+    storeWork: StoreWorkEnvironment,
     perform: (BackgroundWork) async -> Void
   ) async {
-    guard mayRunStoreWork(protectedDataAvailable: protectedDataSource(), storeIsPersistent: storeIsPersistent)
-    else {
+    guard storeWork.mayRunStoreWork() else {
       work.setCompleted(success: false)
       return
     }
@@ -96,8 +103,8 @@ enum AppServices {
 
   /// The foreground sync on `.active`. A non-persistent store does not sync in the
   /// foreground either: its cursor writes would die with the process (A6).
-  static func runForegroundSync(storeIsPersistent: () -> Bool, didBecomeActive: () -> Void) {
-    guard storeIsPersistent() else { return }
+  static func runForegroundSync(_ storeWork: StoreWorkEnvironment, didBecomeActive: () -> Void) {
+    guard storeWork.isStorePersistent else { return }
     didBecomeActive()
   }
 
@@ -109,11 +116,58 @@ enum AppServices {
       Task { @MainActor in
         await AppServices.runBackground(
           work,
-          storeIsPersistent: { AppServices.storage.persistent },
+          storeWork: AppServices.storeWork,
           perform: { work in await AppServices.shared.sync.run(work) })
       }
     }
   }()
+}
+
+/// The one source of persistence and protected-data state for store work (I-6
+/// Amendment 1, A4 to A6). The foreground sync, the preference choice in
+/// `AppServices.make` and the background handler all read it, and nothing else
+/// decides whether store work may run.
+///
+/// Production builds one, from the real opening path. A test builds one the same
+/// way, with the opening path pointed at a file it made, so the gates run against
+/// the real classifier and the real in-memory fallback.
+///
+/// The store opens on the first read of `storage`, and only once. Protected data
+/// is read each time it is asked for, never cached.
+@MainActor
+final class StoreWorkEnvironment {
+  typealias OpenedStore = (container: ModelContainer, mode: StorageMode, persistent: Bool)
+
+  private let open: () -> OpenedStore
+  private let protectedDataProbe: () -> Bool
+  private var opened: OpenedStore?
+
+  init(open: @escaping () -> OpenedStore, protectedDataAvailable: @escaping () -> Bool) {
+    self.open = open
+    self.protectedDataProbe = protectedDataAvailable
+  }
+
+  /// The store and how it was opened. The first read opens it; later reads return
+  /// the same value.
+  var storage: OpenedStore {
+    if let opened { return opened }
+    let value = open()
+    opened = value
+    return value
+  }
+
+  /// Whether this process's store writes to disk. Reading it opens the store.
+  var isStorePersistent: Bool { storage.persistent }
+
+  /// Whether the device lets this process read its files now.
+  var isProtectedDataAvailable: Bool { protectedDataProbe() }
+
+  /// Whether background store work may run. Protected data is checked first, so
+  /// without it the store is not opened (c4).
+  func mayRunStoreWork() -> Bool {
+    guard isProtectedDataAvailable else { return false }
+    return isStorePersistent
+  }
 }
 
 /// The app's root scene. `App/Nomi.swift` is one line: `NomiAppScene()`.
@@ -159,7 +213,7 @@ public struct NomiAppScene: Scene {
       case .active:
         // A store that is not persistent never syncs in the foreground (A6).
         AppServices.runForegroundSync(
-          storeIsPersistent: { AppServices.storage.persistent },
+          AppServices.storeWork,
           didBecomeActive: { Task { await environment.sync.didBecomeActive() } })
         // U9b. `.CKAccountChanged` is not guaranteed to reach a process that
         // was backgrounded while the user signed in or out, so every

@@ -1,137 +1,183 @@
 import Foundation
+import NomiCore
+import SwiftData
 import XCTest
 
 @testable import NomiApp
 
 /// The gates that keep a non-persistent or locked process from doing store work
-/// (I-6 Amendment 1, steps A3 to A5), and the read-through preferences store
+/// (I-6 Amendment 1, steps A3 to A6), and the read-through preferences store
 /// that holds the non-persistent process's writes off disk.
 ///
-/// `@MainActor` because `AppServices` is. Every test uses its own
-/// `InMemoryKeyValueStore` as the base, never `UserDefaults.standard`, so the
-/// test runner's domain is never written.
+/// Every test builds its `StoreWorkEnvironment` the way production does, from
+/// the real opening path (`NomiModelContainer.makeWithLocalFallback`), and builds
+/// the app's wiring through `AppServices.make`, which `AppServices.shared` also
+/// calls. A non-persistent source is therefore the real in-memory fallback, not a
+/// stub. CloudKit always throws here, so no CloudKit container is constructed.
+///
+/// `@MainActor` because `AppServices` is. Every `UserDefaults` is a fresh suite,
+/// removed in tearDown, so the test runner's domain is never written.
 @MainActor
 final class StoreWorkGateTests: XCTestCase {
-  // MARK: - mayRunStoreWork (c3, c4)
+  private var directory: URL!
+  private var suiteNames: [String] = []
+  /// Every container and environment a test makes, held to the end of the test.
+  /// A `ModelContext` does not keep its container alive, so a container dropped
+  /// while its context is in use traps.
+  private var keepAlive: [AnyObject] = []
+  /// How many times the opening path ran in the current test.
+  private var opens = 0
 
-  /// (c4) Without protected data, the store is not consulted at all. The
-  /// closure reading persistence is what would construct the store, so it must
-  /// not run.
-  func testNoStoreWorkWithoutProtectedData() {
-    let allowed = AppServices.mayRunStoreWork(
-      protectedDataAvailable: false,
-      storeIsPersistent: {
-        XCTFail("the store was consulted before protected data was known to be available")
-        return true
-      })
-    XCTAssertFalse(allowed)
+  private struct Unavailable: Error {}
+
+  private struct InertAccountProbe: CloudKitAccountProbing {
+    func pauseReason() async -> SyncPauseReason? { nil }
+    func accountChanges() -> AsyncStream<Void> {
+      AsyncStream<Void> { continuation in continuation.finish() }
+    }
   }
 
-  /// (c3) With protected data but an in-memory store, background sync is not
-  /// allowed.
-  func testNoStoreWorkOnAnInMemoryStore() {
-    XCTAssertFalse(AppServices.mayRunStoreWork(protectedDataAvailable: true, storeIsPersistent: { false }))
+  override func setUpWithError() throws {
+    directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    opens = 0
+  }
+
+  override func tearDownWithError() throws {
+    keepAlive = []
+    for name in suiteNames {
+      UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
+    }
+    try? FileManager.default.removeItem(at: directory)
+  }
+
+  // MARK: - Helpers
+
+  private func makeDefaults() throws -> UserDefaults {
+    let name = UUID().uuidString
+    suiteNames.append(name)
+    return try XCTUnwrap(UserDefaults(suiteName: name))
+  }
+
+  /// The source as production builds it. The opening path is the real one, and
+  /// `opens` counts how often it runs. `persistent: false` leaves the store file
+  /// absent, so the path lands in the in-memory fallback through
+  /// `.retryLater(.noStoreFile)`. `persistent: true` lets the local store open the
+  /// file at `default.store`.
+  private func makeSource(persistent: Bool, protectedDataAvailable: Bool = true) throws -> StoreWorkEnvironment {
+    let storeURL = directory.appendingPathComponent("default.store")
+    let scratch: URL = directory
+    let recovery = try makeDefaults()
+    let source = StoreWorkEnvironment(
+      open: { [self] in
+        opens += 1
+        let local: () throws -> ModelContainer =
+          persistent ? { try NomiModelContainer.makeLocal(at: storeURL) } : { throw Unavailable() }
+        return NomiModelContainer.makeWithLocalFallback(
+          cloudKit: { throw Unavailable() },
+          local: local,
+          storeURL: storeURL,
+          recoveryDefaults: recovery,
+          scratchDirectory: scratch)
+      },
+      protectedDataAvailable: { protectedDataAvailable })
+    keepAlive.append(source)
+    return source
+  }
+
+  /// The app's wiring, built by the factory `AppServices.shared` is built by.
+  /// Only the fakes differ from production: credentials, the mail fetcher, the
+  /// notification scheduler and the CloudKit probe.
+  private func makeWiring(_ source: StoreWorkEnvironment, defaults: UserDefaults) -> AppEnvironment {
+    let environment = AppServices.make(
+      environment: source,
+      defaults: defaults,
+      credentials: MemoryCredentialStore(),
+      mailFetcher: OrderRecordingMailFetcher(),
+      scheduler: NoopNotificationScheduler(),
+      accountProbe: InertAccountProbe())
+    keepAlive.append(environment)
+    return environment
+  }
+
+  // MARK: - The gate that decides whether store work may run (c3, c4)
+
+  /// (c4) Without protected data the store is not opened at all. The source
+  /// counts every open, so a store constructed before protected data is known
+  /// would be seen.
+  func testNoStoreWorkWithoutProtectedData() throws {
+    let source = try makeSource(persistent: true, protectedDataAvailable: false)
+
+    XCTAssertFalse(source.mayRunStoreWork())
+    XCTAssertEqual(opens, 0, "the store was opened before protected data was known to be available")
+  }
+
+  /// (c3) With protected data but an in-memory store, store work is not allowed.
+  /// The store is opened once, to learn that it is not persistent.
+  func testNoStoreWorkOnAnInMemoryStore() throws {
+    let source = try makeSource(persistent: false)
+
+    XCTAssertFalse(source.mayRunStoreWork())
+    XCTAssertEqual(opens, 1)
   }
 
   /// A persistent store with protected data is the one case that runs.
-  func testStoreWorkOnAPersistentStore() {
-    XCTAssertTrue(AppServices.mayRunStoreWork(protectedDataAvailable: true, storeIsPersistent: { true }))
+  func testStoreWorkOnAPersistentStore() throws {
+    let source = try makeSource(persistent: true)
+
+    XCTAssertTrue(source.mayRunStoreWork())
   }
 
-  // MARK: - The background handler's real gate (c4, mutant M3b)
-
-  #if !os(iOS)
-    /// (c4) The background handler, driven through the production
-    /// `runBackground`, with protected data unavailable: it completes `success:
-    /// false`, never asks the store for persistence, and never runs sync. The
-    /// protected-data answer is read from `protectedDataSource`, so a mutant that
-    /// hard-codes `true` at that call site is caught here.
-    func testBackgroundTaskWithoutProtectedDataCompletesFalseAndNeverRunsStoreWork() async {
-      let original = AppServices.protectedDataSource
-      AppServices.protectedDataSource = { false }
-      defer { AppServices.protectedDataSource = original }
-
-      let record = BackgroundWorkRecord()
-      let work = BackgroundWork(kind: .refresh, record: record)
-      var performed = 0
-
-      await AppServices.runBackground(
-        work,
-        storeIsPersistent: {
-          XCTFail("the store was consulted before protected data was known to be available")
-          return true
-        },
-        perform: { _ in performed += 1 })
-
-      XCTAssertEqual(record.recordedCompletions, [false], "completed exactly once, as a failure")
-      XCTAssertEqual(performed, 0, "no sync ran")
-    }
-
-    /// With protected data but a non-persistent store, the handler completes
-    /// `success: false` and does not sync.
-    func testBackgroundTaskOnAnInMemoryStoreCompletesFalseAndDoesNotSync() async {
-      let original = AppServices.protectedDataSource
-      AppServices.protectedDataSource = { true }
-      defer { AppServices.protectedDataSource = original }
-
-      let record = BackgroundWorkRecord()
-      var performed = 0
-
-      await AppServices.runBackground(
-        BackgroundWork(kind: .refresh, record: record),
-        storeIsPersistent: { false },
-        perform: { _ in performed += 1 })
-
-      XCTAssertEqual(record.recordedCompletions, [false])
-      XCTAssertEqual(performed, 0)
-    }
-
-    /// The one case that syncs: protected data and a persistent store. Sync is
-    /// responsible for its own completion, so none is recorded here.
-    func testBackgroundTaskOnAPersistentStoreRunsSync() async {
-      let original = AppServices.protectedDataSource
-      AppServices.protectedDataSource = { true }
-      defer { AppServices.protectedDataSource = original }
-
-      let record = BackgroundWorkRecord()
-      var performed = 0
-
-      await AppServices.runBackground(
-        BackgroundWork(kind: .refresh, record: record),
-        storeIsPersistent: { true },
-        perform: { _ in performed += 1 })
-
-      XCTAssertEqual(performed, 1)
-      XCTAssertEqual(record.recordedCompletions, [], "the sync, not the gate, completes this task")
-    }
-  #endif
-
-  // MARK: - The foreground gate (c3, mutant M4)
+  // MARK: - The foreground sync gate (c3)
 
   /// (c3) On `.active`, a non-persistent store does not start the foreground
-  /// sync. A persistent one does, exactly once.
-  func testForegroundSyncIsGatedOnPersistence() {
+  /// sync. A persistent one does, exactly once. The source is the one the wiring
+  /// is built from, so the gate and the wiring cannot disagree.
+  func testForegroundSyncIsGatedOnPersistence() throws {
+    let nonPersistent = try makeSource(persistent: false)
+    _ = makeWiring(nonPersistent, defaults: try makeDefaults())
     var ran = 0
-    AppServices.runForegroundSync(
-      storeIsPersistent: { false },
-      didBecomeActive: { ran += 1 })
+
+    AppServices.runForegroundSync(nonPersistent, didBecomeActive: { ran += 1 })
     XCTAssertEqual(ran, 0, "a non-persistent store never syncs in the foreground")
 
-    AppServices.runForegroundSync(
-      storeIsPersistent: { true },
-      didBecomeActive: { ran += 1 })
+    let persistent = try makeSource(persistent: true)
+    AppServices.runForegroundSync(persistent, didBecomeActive: { ran += 1 })
     XCTAssertEqual(ran, 1, "a persistent store syncs once on becoming active")
   }
 
-  // MARK: - Preferences (c3, mutant M5)
+  // MARK: - The preference choice, through the factory `shared` uses (c3)
 
-  /// (c3) A non-persistent launch's preference writes stay off `UserDefaults`,
-  /// and this launch still reads them back. Uses its own suite, so the test
-  /// runner's domain is untouched.
+  /// (c3) A non-persistent launch's first-run write stays in this launch. This
+  /// launch reads it back, and nothing reaches `UserDefaults`.
+  func testNonPersistentWiringWritesNoPreferenceToDefaults() throws {
+    let defaults = try makeDefaults()
+    let wiring = makeWiring(try makeSource(persistent: false), defaults: defaults)
+
+    wiring.firstRun.completeFirstRun()
+
+    XCTAssertEqual(wiring.firstRun.route, .main, "this launch reads back its own write")
+    XCTAssertFalse(
+      defaults.bool(forKey: PreferenceKey.hasCompletedFirstRun),
+      "nothing written by a non-persistent launch reaches UserDefaults")
+  }
+
+  /// The control for the test above. A persistent launch, built the same way,
+  /// writes straight through, so the test above cannot pass by never writing.
+  func testPersistentWiringWritesThePreferenceToDefaults() throws {
+    let defaults = try makeDefaults()
+    let wiring = makeWiring(try makeSource(persistent: true), defaults: defaults)
+
+    wiring.firstRun.completeFirstRun()
+
+    XCTAssertTrue(defaults.bool(forKey: PreferenceKey.hasCompletedFirstRun))
+  }
+
+  /// The preference store on its own. Kept beside the wiring tests so a break
+  /// in the choice shows up even if the wiring changes shape.
   func testPreferenceWritesStayOffDiskWhenNotPersistent() throws {
-    let suite = UUID().uuidString
-    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-    defer { defaults.removePersistentDomain(forName: suite) }
+    let defaults = try makeDefaults()
     let key = PreferenceKey.hasCompletedFirstRun
 
     let store = AppServices.preferenceStore(persistent: false, defaults: defaults)
@@ -141,17 +187,61 @@ final class StoreWorkGateTests: XCTestCase {
     XCTAssertFalse(defaults.bool(forKey: key), "nothing written by a non-persistent launch reaches UserDefaults")
   }
 
-  /// A persistent launch writes straight to `UserDefaults`, as before R7.
-  func testPreferenceWritesReachDiskWhenPersistent() throws {
-    let suite = UUID().uuidString
-    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-    defer { defaults.removePersistentDomain(forName: suite) }
-    let key = PreferenceKey.hasCompletedFirstRun
+  // MARK: - Background (c4)
 
-    AppServices.preferenceStore(persistent: true, defaults: defaults).set(true, forKey: key)
+  #if !os(iOS)
+    /// (c4) The background handler, through `runBackground`, with protected data
+    /// unavailable: it completes `success: false`, never opens the store, and
+    /// never runs sync.
+    func testBackgroundTaskWithoutProtectedDataCompletesFalseAndNeverRunsStoreWork() async throws {
+      let source = try makeSource(persistent: true, protectedDataAvailable: false)
+      let record = BackgroundWorkRecord()
+      var performed = 0
 
-    XCTAssertTrue(defaults.bool(forKey: key))
-  }
+      await AppServices.runBackground(
+        BackgroundWork(kind: .refresh, record: record),
+        storeWork: source,
+        perform: { _ in performed += 1 })
+
+      XCTAssertEqual(record.recordedCompletions, [false], "completed exactly once, as a failure")
+      XCTAssertEqual(performed, 0, "no sync ran")
+      XCTAssertEqual(opens, 0, "the store was never opened")
+    }
+
+    /// (c3, c4) A non-persistent wiring: with protected data, the handler
+    /// completes `success: false` and runs no sync. The store was opened once,
+    /// which is how the gate learns it is not persistent.
+    func testBackgroundTaskOnANonPersistentWiringCompletesFalseWithoutStoreWork() async throws {
+      let source = try makeSource(persistent: false)
+      _ = makeWiring(source, defaults: try makeDefaults())
+      let record = BackgroundWorkRecord()
+      var performed = 0
+
+      await AppServices.runBackground(
+        BackgroundWork(kind: .refresh, record: record),
+        storeWork: source,
+        perform: { _ in performed += 1 })
+
+      XCTAssertEqual(record.recordedCompletions, [false])
+      XCTAssertEqual(performed, 0, "a non-persistent store never syncs in the background")
+    }
+
+    /// The one case that syncs: protected data and a persistent store. Sync is
+    /// responsible for its own completion, so none is recorded here.
+    func testBackgroundTaskOnAPersistentStoreRunsSync() async throws {
+      let source = try makeSource(persistent: true)
+      let record = BackgroundWorkRecord()
+      var performed = 0
+
+      await AppServices.runBackground(
+        BackgroundWork(kind: .refresh, record: record),
+        storeWork: source,
+        perform: { _ in performed += 1 })
+
+      XCTAssertEqual(performed, 1)
+      XCTAssertEqual(record.recordedCompletions, [], "the sync, not the gate, completes this task")
+    }
+  #endif
 
   // MARK: - ReadThroughKeyValueStore (c3, preferences)
 
