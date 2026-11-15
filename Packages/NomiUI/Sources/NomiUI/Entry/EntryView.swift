@@ -3,13 +3,17 @@ import NomiPreview
 import SwiftData
 import SwiftUI
 
-/// The manual-entry sheet (U6), drawn to the approved Entry artboard (EN).
-/// Done-when: the amount is the only required input; Expense / Income sits
-/// directly under the amount; the chip row wraps (and stacks into full-width
-/// rows at accessibility sizes); the note comes last; Save is pinned at 54 pt
-/// and is disabled until the amount is positive. Date, category, account and
-/// direction are prefilled and reachable only by an optional tap. There is no
-/// custom keypad (DEC-14): the system decimal pad is the amount keyboard.
+/// The Add transaction sheet (S5), drawn to the Add artboard. Spent, Income and
+/// Transfer sit on one segmented control. The amount is the only required input
+/// for Spent and Income, and a transfer also needs two different accounts. Under
+/// the amount come the payee and category suggestions, then the account, date and
+/// note rows. Save names what it will write and stays disabled until it can.
+///
+/// The rules live in `EntryModel` and the display in `EntryAmountDisplay`, so this
+/// view only draws state and forwards taps. There is no custom keypad (DEC-14):
+/// the system decimal pad is the amount keyboard.
+///
+/// `EntryView`'s public init is what RootView constructs, so it is unchanged.
 public struct EntryView: View {
   public let transactionStore: TransactionStore
   public let categoryStore: CategoryStore
@@ -18,21 +22,9 @@ public struct EntryView: View {
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
   @Query(sort: \NomiCore.Account.displayName) private var accounts: [NomiCore.Account]
 
-  @Environment(\.dismiss) private var dismiss
-  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-  @FocusState private var isAmountFocused: Bool
-
-  @State private var amountText = ""
-  @State private var direction: Direction = EntryDefaults.direction
-  @State private var date = Date()
-  @State private var categoryID: UUID?
-  @State private var accountID: UUID?
-  @State private var note = ""
-  @State private var isCategoryPickerPresented = false
-  @State private var isDatePickerPresented = false
-  @State private var isAccountPickerPresented = false
-  @State private var didPrefillCategory = false
-  @State private var errorMessage: String?
+  /// Created on appear, once the @Query lists have loaded. The lists are then
+  /// kept in step with the store through `updateLists`.
+  @State private var model: EntryModel?
 
   public init(transactionStore: TransactionStore, categoryStore: CategoryStore, onSaved: (() -> Void)? = nil) {
     self.transactionStore = transactionStore
@@ -40,25 +32,71 @@ public struct EntryView: View {
     self.onSaved = onSaved
   }
 
-  private var amountMinor: Int { EntryAmount.minorUnits(from: amountText) }
-  private var canSave: Bool { EntrySaveGate.isEnabled(amountMinor: amountMinor) }
-
-  private var selectedCategory: NomiCore.Category? {
-    categories.first { $0.id == categoryID }
+  private var accountOptions: [EntryAccountOption] {
+    accounts.map { EntryAccountOption($0) }
   }
 
-  private var selectedAccount: NomiCore.Account? {
-    accounts.first { $0.id == accountID }
+  private var categoryOptions: [EntryCategoryOption] {
+    categories.map { EntryCategoryOption($0) }
   }
 
   public var body: some View {
+    Group {
+      if let model {
+        EntryForm(model: model, categoryStore: categoryStore, onSaved: onSaved)
+      }
+    }
+    .onAppear {
+      guard model == nil else { return }
+      model = EntryModel(
+        store: EntryStoreWriter(transactionStore),
+        accounts: accountOptions,
+        categories: categoryOptions
+      )
+    }
+    .onChange(of: accountOptions) { _, newValue in
+      model?.updateLists(accounts: newValue, categories: categoryOptions)
+    }
+    .onChange(of: categoryOptions) { _, newValue in
+      model?.updateLists(accounts: accountOptions, categories: newValue)
+    }
+  }
+}
+
+/// The sheet's content, bound to a model that already exists.
+private struct EntryForm: View {
+  @Bindable var model: EntryModel
+  let categoryStore: CategoryStore
+  let onSaved: (() -> Void)?
+
+  @Environment(\.dismiss) private var dismiss
+  @FocusState private var isAmountFocused: Bool
+
+  @State private var isCategoryPickerPresented = false
+  @State private var isDatePickerPresented = false
+  @State private var accountField: AccountField?
+
+  /// Which account row opened the picker. "Account" on a spent or income entry,
+  /// "From" and "To" on a transfer.
+  private enum AccountField: Hashable, Identifiable {
+    case account
+    case from
+    case to
+
+    var id: Self { self }
+  }
+
+  var body: some View {
     NavigationStack {
       ScrollView {
         VStack(spacing: NomiSpacing.cardGap) {
-          amountField
-          DirectionToggle(direction: $direction)
-          chips
-          noteField
+          kindControl
+          amountCard
+          if !model.isTransfer {
+            payeeField
+            suggestions
+          }
+          detailCard
         }
         .padding(.horizontal, NomiSpacing.screenGutter)
         .padding(.top, NomiSpacing.cardGap)
@@ -66,16 +104,12 @@ public struct EntryView: View {
       }
       .background(NomiColor.ground)
       .safeAreaInset(edge: .bottom) {
-        savePill
-          .padding(.horizontal, NomiSpacing.screenGutter)
-          .padding(.top, NomiSpacing.xs)
-          .padding(.bottom, NomiSpacing.xs)
-          .background(NomiColor.ground)
+        saveArea
       }
       #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
       #endif
-      .navigationTitle("Add transaction")
+      .navigationTitle("New transaction")
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") { dismiss() }
@@ -85,187 +119,347 @@ public struct EntryView: View {
     .nomiSheet(detents: [.large])
     .onAppear {
       isAmountFocused = true
-      guard !didPrefillCategory else { return }
-      didPrefillCategory = true
-      categoryID = transactionStore.lastUsedCategoryID()
-      accountID = EntryAccountDefault.preselection(from: accounts)
     }
     .sheet(isPresented: $isCategoryPickerPresented) {
-      CategoryPickerSheet(categoryStore: categoryStore, selection: $categoryID)
+      CategoryPickerSheet(categoryStore: categoryStore, selection: $model.categoryID)
     }
     .sheet(isPresented: $isDatePickerPresented) {
-      DatePickerSheet(date: $date)
+      DatePickerSheet(date: $model.date)
     }
-    .sheet(isPresented: $isAccountPickerPresented) {
-      // `accountStore: nil` — the entry sheet offers no inline account
-      // creation; the picker's empty state points at the Accounts screen
-      // instead (v2 amendment). Keeps `EntryView.init` unchanged.
-      AccountPickerSheet(accountStore: nil, selection: accountID, onSelect: { accountID = $0 })
+    .sheet(item: $accountField) { field in
+      // `accountStore: nil`: the entry sheet offers no inline account creation.
+      // The picker's empty state points at the Accounts screen instead.
+      AccountPickerSheet(
+        accountStore: nil,
+        selection: selection(for: field),
+        onSelect: { assign($0, to: field) }
+      )
     }
     .alert(
       "Something went wrong",
-      isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }),
-      presenting: errorMessage,
+      isPresented: Binding(
+        get: { model.errorMessage != nil },
+        set: { if !$0 { model.errorMessage = nil } }
+      ),
+      presenting: model.errorMessage,
       actions: { _ in Button("OK", role: .cancel) {} },
       message: { message in Text(message) }
     )
   }
 
-  /// The amount card: a 96 pt card, the ₹ sign and a 39 pt field. The ₹ is
-  /// decorative, so VoiceOver reads only the field.
-  private var amountField: some View {
-    HStack(spacing: 6) {
+  // MARK: - Kind
+
+  /// Capped at xxxLarge: NomiSegmented breaks a label mid-word at the
+  /// Accessibility sizes ("Inco/me"), and its height is fixed. The kind is still
+  /// named by the amount card's payee label and the save title at those sizes.
+  private var kindControl: some View {
+    NomiSegmented(kindOptions, selection: $model.kind, style: .onGround)
+      .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+  }
+
+  private var kindOptions: [(value: EntryModel.Kind, title: String, systemImage: String?)] {
+    model.availableKinds.map { kind -> (value: EntryModel.Kind, title: String, systemImage: String?) in
+      (value: kind, title: Self.title(for: kind), systemImage: nil)
+    }
+  }
+
+  private static func title(for kind: EntryModel.Kind) -> String {
+    switch kind {
+    case .spent: return "Spent"
+    case .income: return "Income"
+    case .transfer: return "Transfer"
+    }
+  }
+
+  // MARK: - Amount
+
+  /// The amount card: a centred "₹" and the amount, 46 pt. The typed digits are
+  /// drawn by `amountDisplay`, laid over the field, and the field itself is drawn
+  /// clear, so the caret and the keyboard still belong to the real text field.
+  private var amountCard: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 6) {
       Text("₹")
         .font(amountFont)
         .foregroundStyle(NomiColor.ink)
         .accessibilityHidden(true)
-      TextField("Amount", text: $amountText, prompt: Text("0").foregroundStyle(NomiColor.placeholder))
-        #if os(iOS)
-        .keyboardType(.decimalPad)
-        #endif
-        .focused($isAmountFocused)
-        .font(amountFont)
-        .foregroundStyle(NomiColor.ink)
-        .onChange(of: amountText) { _, newValue in
-          let sanitized = EntryAmount.sanitizeInput(newValue)
-          if sanitized != newValue { amountText = sanitized }
-        }
+      // The amount takes the row's width, never a fixed or intrinsic one, so the
+      // whole amount stays on screen: `amountDisplay` shrinks to fit (the longest
+      // valid amount is ₹1,00,00,00,000.00). The field sits over it, transparent,
+      // and fills the same frame, so taps and the caret land on the real field.
+      ZStack {
+        amountDisplay
+          .allowsHitTesting(false)
+        TextField("", text: $model.amountText)
+          #if os(iOS)
+          .keyboardType(.decimalPad)
+          #endif
+          .accessibilityLabel("Amount")
+          .focused($isAmountFocused)
+          .font(amountFont)
+          .multilineTextAlignment(.center)
+          .foregroundStyle(.clear)
+          .tint(NomiColor.ink)
+      }
+      .frame(maxWidth: .infinity)
     }
+    .frame(maxWidth: .infinity, minHeight: 96)
     .padding(.horizontal, NomiSpacing.screenGutter)
-    .frame(maxWidth: .infinity, minHeight: 96, alignment: .leading)
     .entryCard(cornerRadius: 26)
   }
 
   private var amountFont: Font {
-    .custom(NomiFont.interRegular, size: 39, relativeTo: .largeTitle).monospacedDigit()
+    NomiTextStyle.heroAmount.font
   }
 
-  /// Category, Account, Date, in that order. A wrapping flow row, or full-width
-  /// rows at accessibility sizes.
+  /// The drawn amount: the typed whole part in ink, the typed decimals dimmed, and
+  /// a dimmed ".00" when no decimal separator has been typed. A "0" placeholder
+  /// shows while the field is empty. VoiceOver reads the field, not this.
+  /// One line, centred, shrunk to fit the row (`minimumScaleFactor`) and never
+  /// truncated: the digits must all show at every Dynamic Type size.
   @ViewBuilder
-  private var chips: some View {
-    if dynamicTypeSize >= .accessibility1 {
-      VStack(spacing: NomiSpacing.xs) {
-        categoryChip
-        accountChip
-        dateChip
-      }
+  private var amountDisplay: some View {
+    let display = model.amountDisplay
+    if model.amountText.isEmpty {
+      Text("0")
+        .font(amountFont)
+        .foregroundStyle(NomiColor.placeholder)
+        .multilineTextAlignment(.center)
+        .lineLimit(1)
+        .minimumScaleFactor(EntryAmountDisplay.minimumScaleFactor)
+        .accessibilityHidden(true)
     } else {
+      (Text(display.integer)
+        .font(amountFont)
+        .foregroundStyle(NomiColor.ink)
+        + Text(display.typedDecimals + display.suffix)
+        .font(amountFont)
+        .foregroundStyle(NomiColor.ink.opacity(EntryAmountDisplay.decimalOpacity)))
+        .multilineTextAlignment(.center)
+        .lineLimit(1)
+        .minimumScaleFactor(EntryAmountDisplay.minimumScaleFactor)
+        .accessibilityHidden(true)
+    }
+  }
+
+  // MARK: - Payee and suggestions
+
+  private var payeeLabel: String {
+    model.kind == .income ? "Received from" : "Paid to"
+  }
+
+  /// The payee field, with the category's badge (the uncategorised badge until a
+  /// category is chosen).
+  private var payeeField: some View {
+    let category = model.categoryOption(model.categoryID)
+    return HStack(spacing: NomiSpacing.xs) {
+      NomiCategoryBadge(
+        symbolName: category?.symbolName ?? NomiCategoryBadge.uncategorisedSymbolName,
+        paletteSlot: category?.paletteSlot,
+        size: 28
+      )
+      .accessibilityHidden(true)
+      TextField(payeeLabel, text: $model.payee)
+        .font(.custom(NomiFont.interRegular, size: 16, relativeTo: .body))
+        .foregroundStyle(NomiColor.ink)
+    }
+    .padding(.horizontal, NomiSpacing.sm)
+    .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+    .entryCard(cornerRadius: 18)
+  }
+
+  /// The suggestion chips, then "More", which opens the category picker. A chosen
+  /// category that is not among the suggestions is shown first, so the choice is
+  /// never hidden behind "More".
+  private var suggestions: some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+      if let heading = model.suggestionHeading {
+        Text(heading)
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .padding(.leading, 4)
+      }
       EntryChipFlowLayout(spacing: NomiSpacing.xs) {
-        categoryChip
-        accountChip
-        dateChip
+        if let chosen = model.categoryOption(model.categoryID),
+          !model.visibleSuggestions.contains(where: { $0.id == chosen.id })
+        {
+          NomiChip(title: chosen.name, isSelected: true) {}
+        }
+        ForEach(model.visibleSuggestions, id: \.id) { option in
+          NomiChip(title: option.name, isSelected: model.categoryID == option.id) {
+            model.categoryID = option.id
+          }
+        }
+        NomiChip(title: "More", isSelected: false) {
+          isCategoryPickerPresented = true
+        }
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
-  private var categoryChip: some View {
-    EntryChip(
-      name: "Category",
-      value: selectedCategory?.name ?? "Uncategorized",
-      isPlaceholder: selectedCategory == nil,
-      leadingColor: selectedCategory.map { paletteSlot($0.paletteSlot) },
-      action: { isCategoryPickerPresented = true }
-    )
-  }
+  // MARK: - Detail rows
 
-  private var accountChip: some View {
-    EntryChip(
-      name: "Account",
-      value: selectedAccount?.displayName ?? "Unassigned",
-      isPlaceholder: selectedAccount == nil,
-      leadingColor: nil,
-      action: { isAccountPickerPresented = true }
-    )
-  }
-
-  private var dateChip: some View {
-    EntryChip(
-      name: "Date",
-      value: Calendar.current.isDateInToday(date) ? "Today" : NomiFormatters.dayMonthYear.string(from: date),
-      isPlaceholder: false,
-      leadingColor: nil,
-      action: { isDatePickerPresented = true }
-    )
-  }
-
-  private var noteField: some View {
-    // L4: this field writes `descriptionText`, not `Transaction.note` — the
-    // detail screen's separate annotation — so its label says what it
-    // actually captures rather than implying it's the note.
-    TextField("What was it for? (optional)", text: $note, prompt: Text("What was it for? (optional)").foregroundStyle(NomiColor.placeholder))
-      .font(.custom(NomiFont.interRegular, size: 16, relativeTo: .body))
-      .foregroundStyle(NomiColor.ink)
-      .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
-      .padding(.horizontal, 18)
-      .entryCard(cornerRadius: 22)
-  }
-
-  private var savePill: some View {
-    Button(action: save) {
-      Text("Save")
+  /// The account rows (one, or From and To), the date, and the note. One card.
+  private var detailCard: some View {
+    VStack(spacing: 0) {
+      if model.isTransfer {
+        detailRow(
+          "From",
+          value: model.accountName(model.accountID),
+          action: { accountField = .from }
+        )
+        detailRow(
+          "To",
+          value: model.accountName(model.toAccountID),
+          action: { accountField = .to }
+        )
+      } else {
+        detailRow(
+          "Account",
+          value: model.accountName(model.accountID),
+          action: { accountField = .account }
+        )
+      }
+      detailRow(
+        "Date",
+        value: dateText,
+        action: { isDatePickerPresented = true }
+      )
+      noteRow
     }
-    .buttonStyle(NomiPrimaryButtonStyle(height: 54))
-    .disabled(!canSave)
+    .nomiCard(padding: EdgeInsets())
+  }
+
+  private var dateText: String {
+    Calendar.current.isDateInToday(model.date)
+      ? "Today"
+      : NomiFormatters.dayMonthYear.string(from: model.date)
+  }
+
+  /// A tappable row: the title, the value (or "Unassigned") and a chevron. Each row
+  /// has a divider below it.
+  private func detailRow(_ title: String, value: String?, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: NomiSpacing.xs) {
+        // The title never breaks mid-word ("Accou/nt" at AX3); the value wraps instead.
+        Text(title)
+          .nomiTextStyle(.body)
+          .foregroundStyle(NomiColor.ink)
+          .fixedSize(horizontal: true, vertical: false)
+        Spacer(minLength: NomiSpacing.xs)
+        Text(value ?? "Unassigned")
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(value == nil ? NomiColor.inkSecondary : NomiColor.ink)
+          .multilineTextAlignment(.trailing)
+        Image(systemName: "chevron.right")
+          .foregroundStyle(NomiColor.inkSecondary)
+          .accessibilityHidden(true)
+      }
+      .padding(.horizontal, NomiSpacing.sm)
+      .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+      .contentShape(Rectangle())
+      .overlay(alignment: .bottom) {
+        Rectangle()
+          .fill(NomiColor.separator)
+          .frame(height: 1)
+      }
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel("\(title), \(value ?? "Unassigned")")
+  }
+
+  /// The note: the last row, with no divider. Its text is the note as typed.
+  private var noteRow: some View {
+    HStack(spacing: NomiSpacing.xs) {
+      Text("Note")
+        .nomiTextStyle(.body)
+        .foregroundStyle(NomiColor.ink)
+      TextField("Optional", text: $model.note)
+        .multilineTextAlignment(.trailing)
+        .nomiTextStyle(.rowTitle)
+        .foregroundStyle(NomiColor.ink)
+    }
+    .padding(.horizontal, NomiSpacing.sm)
+    .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+  }
+
+  // MARK: - Accounts
+
+  private func selection(for field: AccountField) -> UUID? {
+    switch field {
+    case .account, .from: return model.accountID
+    case .to: return model.toAccountID
+    }
+  }
+
+  private func assign(_ id: UUID?, to field: AccountField) {
+    switch field {
+    case .account, .from: model.accountID = id
+    case .to: model.toAccountID = id
+    }
+  }
+
+  // MARK: - Save
+
+  /// The copy above the button says what is missing. The button names what it
+  /// will write.
+  private var saveArea: some View {
+    VStack(spacing: NomiSpacing.xs) {
+      if let caption = model.transferCaption {
+        Text(caption)
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+      }
+      Button(action: save) {
+        // One line, shrunk to fit the 54 pt button: "Save transfer of ₹…" wrapped
+        // past the button at the Accessibility sizes (AX3 capture).
+        Text(model.saveTitle)
+          .lineLimit(1)
+          .minimumScaleFactor(0.5)
+      }
+      .buttonStyle(NomiPrimaryButtonStyle(height: 54))
+      .disabled(!model.canSave)
+    }
+    .padding(.horizontal, NomiSpacing.screenGutter)
+    .padding(.top, NomiSpacing.xs)
+    .padding(.bottom, NomiSpacing.xs)
+    .background(NomiColor.ground)
   }
 
   private func save() {
-    guard canSave else { return }
-    let draft = ManualTransactionDraft(
-      date: date,
-      amountMinor: amountMinor,
-      descriptionText: note,
-      direction: direction,
-      categoryID: categoryID,
-      accountID: accountID
-    )
-    do {
-      _ = try transactionStore.add(draft)
-      onSaved?()
-      dismiss()
-    } catch {
-      // F8 (v3 amendment): a failed save used to be silently swallowed by
-      // `try?`. Dismissing the alert is the only thing this does — neither
-      // `onSaved?()` nor `dismiss()` ran, so the sheet stays open with every
-      // typed field, including the draft, exactly as the user left it.
-      errorMessage = "Could not save the transaction."
-    }
+    guard model.save() else { return }
+    onSaved?()
+    dismiss()
   }
 }
 
-// M3: every preview's container now needs `NomiCore.Account` in its schema
-// too, since `EntryView` `@Query`s it — `makeCategoryContainer(accounts:)`,
-// not the original `makeCategoryContainer(seed:)`, which stays as it was
-// for `CategoryEditorSheet`/`RulesScreen`.
-
-#Preview("Entry · default · light") {
+#Preview("Add transaction · default · light") {
   EntryView(transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore())
     .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer(accounts: []))
     .preferredColorScheme(.light)
 }
 
-#Preview("Entry · accessibility 3 · light") {
+#Preview("Add transaction · accessibility 3 · light") {
   EntryView(transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore())
     .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer(accounts: []))
     .environment(\.dynamicTypeSize, .accessibility3)
     .preferredColorScheme(.light)
 }
 
-#Preview("Entry · no categories yet · light") {
+#Preview("Add transaction · no categories yet · light") {
   EntryView(transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore(categories: []))
     .modelContainer(EntryRulesPreviewSupport.makeCategoryContainer(seed: [], accounts: []))
     .preferredColorScheme(.light)
 }
 
-/// M3 done-when: "the chip 'Unassigned' with no accounts" is the three
-/// previews above (none seed an account). This one is the counterpart: one
-/// active account, so `EntryAccountDefault.preselection` picks it and the
-/// chip shows it before Save, with no tap needed.
-#Preview("Entry · account prefilled · light") {
+#Preview("Add transaction · two accounts, transfer ready · light") {
   EntryView(transactionStore: FakeTransactionStore(), categoryStore: FakeCategoryStore())
     .modelContainer(
       EntryRulesPreviewSupport.makeCategoryContainer(
-        accounts: [NomiCore.Account(displayName: "HDFC Savings", institution: "HDFC Bank", lastFour: "4821")]
+        accounts: [
+          NomiCore.Account(displayName: "HDFC Savings", institution: "HDFC Bank", lastFour: "4821"),
+          NomiCore.Account(displayName: "ICICI", institution: "ICICI Bank", lastFour: "9012"),
+        ]
       )
     )
     .preferredColorScheme(.light)
