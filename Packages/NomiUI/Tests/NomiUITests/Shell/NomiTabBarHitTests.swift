@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 @testable import NomiUI
 
@@ -48,5 +49,44 @@ struct NomiTabBarHitTests {
   func outsideIsNil() {
     #expect(NomiTabBarHit.slot(atX: -0.5) == nil)
     #expect(NomiTabBarHit.slot(atX: 308.5) == nil)
+  }
+
+  // Lift decision (F3c, Lim's FAIL on #218): a hold selects the slot under the LIFT point,
+  // or nothing. The bar is 308 x 68 in its own coordinates.
+
+  @Test("lifting inside each slot selects that slot")
+  func liftInsideEachSlot() {
+    for index in 0..<5 {
+      #expect(NomiTabBarHit.liftSlot(at: CGPoint(x: NomiTabBarHit.centreX(of: index), y: 34)) == index)
+    }
+  }
+
+  @Test("lifting in the middle of a gap follows the horizontal tie rule")
+  func liftInGap() {
+    #expect(NomiTabBarHit.liftSlot(at: CGPoint(x: 64, y: 34)) == 0)
+    #expect(NomiTabBarHit.liftSlot(at: CGPoint(x: 65, y: 34)) == 1)
+  }
+
+  @Test("lifting above the bar selects nothing, whatever slot the hold started on")
+  func liftAboveBarIsNil() {
+    #expect(NomiTabBarHit.liftSlot(at: CGPoint(x: 81, y: -1)) == nil)
+    #expect(NomiTabBarHit.liftSlot(at: CGPoint(x: 81, y: -600)) == nil)
+  }
+
+  @Test("lifting below the bar selects nothing")
+  func liftBelowBarIsNil() {
+    #expect(NomiTabBarHit.liftSlot(at: CGPoint(x: 81, y: 69)) == nil)
+  }
+
+  @Test("lifting left or right of the bar selects nothing")
+  func liftBesideBarIsNil() {
+    #expect(NomiTabBarHit.liftSlot(at: CGPoint(x: -1, y: 34)) == nil)
+    #expect(NomiTabBarHit.liftSlot(at: CGPoint(x: 309, y: 34)) == nil)
+  }
+
+  @Test("the bar's top and bottom edges are inside the bar")
+  func liftOnEdgesIsInside() {
+    #expect(NomiTabBarHit.liftSlot(at: CGPoint(x: 34, y: 0)) == 0)
+    #expect(NomiTabBarHit.liftSlot(at: CGPoint(x: 34, y: 68)) == 0)
   }
 }

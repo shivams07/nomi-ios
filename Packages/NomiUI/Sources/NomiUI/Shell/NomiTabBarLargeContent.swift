@@ -67,17 +67,16 @@ struct NomiTabBarTouchOverlay: UIViewRepresentable {
       didEndOn item: UILargeContentViewerItem?,
       at point: CGPoint
     ) {
-      // A hold that ends outside the bar ends on no item, and selects nothing.
-      guard let view = item as? UIView, let index = slotViews.firstIndex(where: { $0 === view }) else {
-        return
-      }
+      // The slot under the lift point decides, not the item the hold started on (Lim's
+      // FAIL on #218). A lift outside the bar, or a hold that ends on no item, selects nothing.
+      guard item != nil, let index = NomiTabBarHit.liftSlot(at: point) else { return }
       onSelectIndex(index)
     }
 
     @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
       guard recognizer.state == .ended, let container = recognizer.view else { return }
       let point = recognizer.location(in: container)
-      if let index = NomiTabBarHit.slot(atX: point.x) {
+      if let index = NomiTabBarHit.liftSlot(at: point) {
         onSelectIndex(index)
       }
     }

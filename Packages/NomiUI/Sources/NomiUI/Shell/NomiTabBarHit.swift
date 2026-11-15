@@ -27,6 +27,14 @@ public enum NomiTabBarHit {
     return best
   }
 
+  /// The slot a hold selects when it lifts at `point`, in the bar's own coordinates (F3c,
+  /// Lim's FAIL on #218). A lift outside the bar's top and bottom edges selects nothing,
+  /// whatever slot the hold started on. Inside the bar, the slot is `slot(atX:)`.
+  public static func liftSlot(at point: CGPoint, barHeight: CGFloat = NomiTabBarMetrics.barHeight) -> Int? {
+    guard point.y >= 0, point.y <= barHeight else { return nil }
+    return slot(atX: point.x)
+  }
+
   /// Centre x of slot `index`: padding + slot / 2 + index * (slot + gap).
   public static func centreX(of index: Int) -> CGFloat {
     NomiTabBarMetrics.padding
