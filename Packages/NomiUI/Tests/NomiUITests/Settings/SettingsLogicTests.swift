@@ -287,3 +287,71 @@ final class AboutPrivacyTextTests: XCTestCase {
     }
   }
 }
+
+// MARK: - R13b / Y10: no Settings alert shows localizedDescription
+
+final class SettingsAlertTextTests: XCTestCase {
+  /// A struct whose framework description is "The operation couldn't be
+  /// completed. (NomiUITests.SettingsAlertTextTests.E error 1.)": the very
+  /// string Y10 forbids on screen.
+  private struct E: Error {}
+
+  func testACancelledScanShowsNoAlert() {
+    XCTAssertNil(SettingsActions.alertText(for: CancellationError()))
+  }
+
+  func testAuthenticationFailureUsesTheExistingMailCopy() {
+    XCTAssertEqual(
+      SettingsActions.alertText(for: MailError.authenticationFailed),
+      "That address or password wasn't accepted. Double-check the app password and try again.")
+  }
+
+  func testAnUnknownMailErrorWithNoDetailUsesTheGenericConnectCopy() {
+    XCTAssertEqual(
+      SettingsActions.alertText(for: MailError.unknown("")),
+      "Something went wrong connecting to mail.")
+  }
+
+  func testAnArbitraryErrorGetsTheGenericScanCopy() {
+    XCTAssertEqual(
+      SettingsActions.alertText(for: E()),
+      "Couldn’t finish the scan. Check your connection and try again.")
+  }
+
+  func testAnArbitraryErrorNeverLeaksItsTypeNameOrFrameworkDescription() throws {
+    let text = try XCTUnwrap(SettingsActions.alertText(for: E()))
+    XCTAssertFalse(text.contains("E"), "the type name must not appear: \(text)")
+    XCTAssertFalse(text.contains("operation"), "framework text must not appear: \(text)")
+    XCTAssertFalse(text.contains("error"), "framework text must not appear: \(text)")
+  }
+}
+
+// MARK: - R13b / R7 notice: Settings says a store was moved aside, once
+
+final class StoreRecoveryDisplayTests: XCTestCase {
+  /// 14 Nov 2026 at noon in the device's zone, built in the same zone the
+  /// formatter uses, so the day cannot shift on a machine in another zone.
+  private func fixedDate() throws -> Date {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = .current
+    return try XCTUnwrap(
+      calendar.date(from: DateComponents(year: 2026, month: 11, day: 14, hour: 12)))
+  }
+
+  func testCaptionNamesTheDayAndTheRecoveredFile() throws {
+    let notice = StoreRecoveryNotice(
+      movedAt: try fixedDate(), fileName: "default-20261114T093012.store")
+    XCTAssertEqual(
+      StoreRecoveryDisplay.caption(for: notice),
+      "Nomi couldn’t open its saved data on 14 Nov 2026, so it started fresh. The old data was kept on this device as default-20261114T093012.store.")
+  }
+
+  func testCaptionDoesNotShowTheFullDateTime() throws {
+    let notice = StoreRecoveryNotice(
+      movedAt: try fixedDate(), fileName: "default-20261114T093012.store")
+    let caption = StoreRecoveryDisplay.caption(for: notice)
+    XCTAssertFalse(caption.contains("12:00"))
+    XCTAssertFalse(caption.contains("PM"))
+    XCTAssertFalse(caption.contains("AM"))
+  }
+}
