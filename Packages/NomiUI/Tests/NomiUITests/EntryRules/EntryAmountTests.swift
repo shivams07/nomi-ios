@@ -142,4 +142,42 @@ final class EntryAmountTests: XCTestCase {
     XCTAssertEqual(EntryAmountDisplay.decimalOpacity, 0.5)
     XCTAssertEqual(EntryAmountDisplay.decimalOpacity, NomiAmountText.decimalsOpacity(for: .heroAmount))
   }
+
+  // MARK: - Widest amount (PR #211: Large and AX3 dropped every digit after the first)
+
+  /// Fixture: 1000000000 (₹1,00,00,00,000.00, the widest valid amount). The model
+  /// is valid, and the display keeps all ten digits with ".00" after them. The
+  /// view must draw every one; the device capture is the other half of this check.
+  func testTheWidestValidAmountKeepsEveryDigitInTheDisplay() {
+    let locale = Locale(identifier: "en_IN")
+    let text = EntryAmountDisplay.widestTypedAmount
+
+    XCTAssertEqual(EntryAmount.minorUnits(from: text, locale: locale), 100_000_000_000)
+    XCTAssertEqual(
+      EntryAmountDisplay.of(text, locale: locale),
+      EntryAmountDisplay(integer: "1000000000", typedDecimals: "", suffix: ".00")
+    )
+  }
+
+  /// Fixture: 999999999.99, the widest amount with paise the cap admits (the cap
+  /// is 1000000000.00 exactly, so 1000000000.99 is refused to 0, as the R8 test
+  /// above it expects). Every digit of the whole part stays, and the typed paise
+  /// are dimmed.
+  func testTheWidestAmountWithPaiseKeepsEveryDigit() {
+    let locale = Locale(identifier: "en_IN")
+
+    XCTAssertEqual(EntryAmount.minorUnits(from: "999999999.99", locale: locale), 99_999_999_999)
+    XCTAssertEqual(EntryAmount.minorUnits(from: "1000000000.99", locale: locale), 0)
+    XCTAssertEqual(
+      EntryAmountDisplay.of("999999999.99", locale: locale),
+      EntryAmountDisplay(integer: "999999999", typedDecimals: ".99", suffix: "")
+    )
+  }
+
+  /// The floor the view shrinks to. It is pinned above zero, so a long amount
+  /// always has a scale that fits the row.
+  func testTheShrinkFloorIsPinnedAboveZero() {
+    XCTAssertEqual(EntryAmountDisplay.minimumScaleFactor, 0.3)
+    XCTAssertGreaterThan(EntryAmountDisplay.minimumScaleFactor, 0)
+  }
 }

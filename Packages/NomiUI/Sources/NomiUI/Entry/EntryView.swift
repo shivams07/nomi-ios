@@ -178,20 +178,25 @@ private struct EntryForm: View {
         .font(amountFont)
         .foregroundStyle(NomiColor.ink)
         .accessibilityHidden(true)
-      TextField("", text: $model.amountText)
-        #if os(iOS)
-        .keyboardType(.decimalPad)
-        #endif
-        .accessibilityLabel("Amount")
-        .focused($isAmountFocused)
-        .font(amountFont)
-        .foregroundStyle(.clear)
-        .tint(NomiColor.ink)
-        .fixedSize()
-        .overlay(alignment: .leading) {
-          amountDisplay
-            .allowsHitTesting(false)
-        }
+      // The amount takes the row's width, never a fixed or intrinsic one, so the
+      // whole amount stays on screen: `amountDisplay` shrinks to fit (the longest
+      // valid amount is ₹1,00,00,00,000.00). The field sits over it, transparent,
+      // and fills the same frame, so taps and the caret land on the real field.
+      ZStack {
+        amountDisplay
+          .allowsHitTesting(false)
+        TextField("", text: $model.amountText)
+          #if os(iOS)
+          .keyboardType(.decimalPad)
+          #endif
+          .accessibilityLabel("Amount")
+          .focused($isAmountFocused)
+          .font(amountFont)
+          .multilineTextAlignment(.center)
+          .foregroundStyle(.clear)
+          .tint(NomiColor.ink)
+      }
+      .frame(maxWidth: .infinity)
     }
     .frame(maxWidth: .infinity, minHeight: 96)
     .padding(.horizontal, NomiSpacing.screenGutter)
@@ -205,6 +210,8 @@ private struct EntryForm: View {
   /// The drawn amount: the typed whole part in ink, the typed decimals dimmed, and
   /// a dimmed ".00" when no decimal separator has been typed. A "0" placeholder
   /// shows while the field is empty. VoiceOver reads the field, not this.
+  /// One line, centred, shrunk to fit the row (`minimumScaleFactor`) and never
+  /// truncated: the digits must all show at every Dynamic Type size.
   @ViewBuilder
   private var amountDisplay: some View {
     let display = model.amountDisplay
@@ -212,6 +219,9 @@ private struct EntryForm: View {
       Text("0")
         .font(amountFont)
         .foregroundStyle(NomiColor.placeholder)
+        .multilineTextAlignment(.center)
+        .lineLimit(1)
+        .minimumScaleFactor(EntryAmountDisplay.minimumScaleFactor)
         .accessibilityHidden(true)
     } else {
       (Text(display.integer)
@@ -220,7 +230,9 @@ private struct EntryForm: View {
         + Text(display.typedDecimals + display.suffix)
         .font(amountFont)
         .foregroundStyle(NomiColor.ink.opacity(EntryAmountDisplay.decimalOpacity)))
+        .multilineTextAlignment(.center)
         .lineLimit(1)
+        .minimumScaleFactor(EntryAmountDisplay.minimumScaleFactor)
         .accessibilityHidden(true)
     }
   }

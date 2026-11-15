@@ -101,6 +101,16 @@ struct EntryAmountDisplay: Equatable {
   /// amounts elsewhere in the app.
   static let decimalOpacity: Double = NomiAmountText.decimalsOpacity(for: .heroAmount)
 
+  /// The smallest scale the amount shrinks to so every digit fits the row. The
+  /// longest valid amount (₹1,00,00,00,000.00, ten digits) needs about 0.6 of the
+  /// row at the default size, and the Accessibility sizes need more. The floor
+  /// keeps every digit on screen at AX3. Tests pin the number.
+  static let minimumScaleFactor: CGFloat = 0.3
+
+  /// The widest amount the field can hold: ₹1,00,00,00,000.00 is 1000000000
+  /// rupees, ten digits. Pinned in tests so the display never drops a digit of it.
+  static let widestTypedAmount = "1000000000"
+
   /// The display for typed text. `text` is already sanitised (digits and the
   /// first separator only). The separator is the locale's.
   static func of(_ text: String, locale: Locale = .current) -> EntryAmountDisplay {
