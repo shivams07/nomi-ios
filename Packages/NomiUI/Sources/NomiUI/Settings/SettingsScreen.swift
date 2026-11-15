@@ -340,7 +340,8 @@ public struct SettingsScreen: View {
       NomiAttentionRow(
         systemImage: "exclamationmark.triangle",
         title: "Saved data couldn’t be opened",
-        message: StoreRecoveryDisplay.caption(for: notice)
+        message: StoreRecoveryDisplay.caption(for: notice),
+        showsChevron: false
       )
       Button("Dismiss") {
         StoreRecoveryRecord.clear(in: .standard)

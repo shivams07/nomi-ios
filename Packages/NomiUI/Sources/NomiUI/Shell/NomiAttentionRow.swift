@@ -7,16 +7,19 @@ import SwiftUI
 /// card. It is at least 44 pt high. Colour is never the only signal: the icon
 /// and the text carry the meaning.
 ///
-/// This is the label only. The caller wraps it in a Button or NavigationLink.
+/// This is the label only. The caller wraps it in a Button or NavigationLink, or
+/// passes `showsChevron: false` when the row does not navigate.
 public struct NomiAttentionRow: View {
   public let systemImage: String
   public let title: String
   public let message: String?
+  public let showsChevron: Bool
 
-  public init(systemImage: String, title: String, message: String?) {
+  public init(systemImage: String, title: String, message: String?, showsChevron: Bool = true) {
     self.systemImage = systemImage
     self.title = title
     self.message = message
+    self.showsChevron = showsChevron
   }
 
   public var body: some View {
@@ -43,12 +46,14 @@ public struct NomiAttentionRow: View {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
 
-      Image(systemName: "chevron.right")
-        .resizable()
-        .scaledToFit()
-        .frame(width: 16, height: 16)
-        .foregroundStyle(NomiColor.inkSecondary)
-        .accessibilityHidden(true)
+      if showsChevron {
+        Image(systemName: "chevron.right")
+          .resizable()
+          .scaledToFit()
+          .frame(width: 16, height: 16)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .accessibilityHidden(true)
+      }
     }
     .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget, alignment: .leading)
     .nomiCard(padding: EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16))
@@ -59,6 +64,12 @@ public struct NomiAttentionRow: View {
   VStack(spacing: 12) {
     NomiAttentionRow(systemImage: "tray", title: "Needs you", message: "2 transactions to review")
     NomiAttentionRow(systemImage: "checkmark.circle", title: "All caught up", message: nil)
+    NomiAttentionRow(
+      systemImage: "exclamationmark.triangle",
+      title: "Saved data couldn’t be opened",
+      message: "Nomi couldn’t open its saved data on 14 Nov 2026, so it started fresh.",
+      showsChevron: false
+    )
   }
   .padding(20)
   .background(NomiColor.ground)
@@ -69,6 +80,12 @@ public struct NomiAttentionRow: View {
   VStack(spacing: 12) {
     NomiAttentionRow(systemImage: "tray", title: "Needs you", message: "2 transactions to review")
     NomiAttentionRow(systemImage: "checkmark.circle", title: "All caught up", message: nil)
+    NomiAttentionRow(
+      systemImage: "exclamationmark.triangle",
+      title: "Saved data couldn’t be opened",
+      message: "Nomi couldn’t open its saved data on 14 Nov 2026, so it started fresh.",
+      showsChevron: false
+    )
   }
   .padding(20)
   .background(NomiColor.ground)
