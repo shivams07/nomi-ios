@@ -23,6 +23,11 @@ enum BackfillLifecycle {
   static func shouldStartOnAppear(phase: BackfillPhase) -> Bool {
     phase == .notStarted
   }
+
+  /// The line under a cancelled scan: how many transactions the scan had found.
+  static func cancelledText(created: Int) -> String {
+    String(localized: "\(created) transactions found so far. You can pick this up any time.", bundle: .module)
+  }
 }
 
 /// Starts a scan after the one before it has finished (R5e, X14). Pulled out of
@@ -198,7 +203,7 @@ public struct BackfillScreen: View {
         .padding(.top, NomiSpacing.xs)
       }
     case .cancelled:
-      Text("\(progress.created) transactions found so far. You can pick this up any time.")
+      Text(BackfillLifecycle.cancelledText(created: progress.created))
         .nomiTextStyle(.caption)
         .foregroundStyle(NomiColor.heroTextSecondary)
         .multilineTextAlignment(.center)

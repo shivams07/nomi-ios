@@ -589,7 +589,7 @@ public struct TransactionDetailScreen: View {
             .font(.system(.caption, design: .monospaced))
             .foregroundStyle(NomiColor.inkSecondary)
         }
-        Text("Merged from \(transaction.mergedCount) source\(transaction.mergedCount == 1 ? "" : "s")")
+        Text(TransactionDetailLogic.mergedSourcesText(transaction.mergedCount))
           .nomiTextStyle(.caption)
           .foregroundStyle(NomiColor.inkSecondary)
         Text(transaction.descriptionText)

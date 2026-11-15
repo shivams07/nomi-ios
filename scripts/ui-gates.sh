@@ -9,6 +9,11 @@
 #   --files         count only in these paths (relative to the repo root)
 #   --require-zero  exit 1 if any listed gate has a non-zero count
 #
+# REQUIRE_DEFAULT is the required-zero list the verify lines use. A run with
+# neither --require-zero nor --files requires every gate in it, so G1-G9 must
+# all read 0 (G9, no hand-built plurals in NomiUI, became required in F6b).
+# A run with --require-zero checks only the gates it names.
+#
 # Default scope is Packages/*/Sources/*.swift. git grep searches the tracked
 # files as they are in the working tree.
 #
@@ -27,7 +32,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO"
 
+REQUIRE_DEFAULT="G1,G2,G3,G4,G5,G6,G7,G8,G9"
+
 require=""
+require_given=0
 files_given=0
 files=""
 while [ $# -gt 0 ]; do
@@ -37,10 +45,12 @@ while [ $# -gt 0 ]; do
         usage
       fi
       require="$2"
+      require_given=1
       shift 2
       ;;
     --require-zero=*)
       require="${1#--require-zero=}"
+      require_given=1
       shift
       ;;
     --files)
@@ -61,6 +71,10 @@ $1"
       ;;
   esac
 done
+
+if [ "$require_given" -eq 0 ] && [ "$files_given" -eq 0 ]; then
+  require="$REQUIRE_DEFAULT"
+fi
 
 # SCOPE is a newline list of git pathspecs. It is never empty.
 if [ "$files_given" -eq 1 ]; then
