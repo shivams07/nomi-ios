@@ -149,8 +149,12 @@ private struct EntryForm: View {
 
   // MARK: - Kind
 
+  /// Capped at xxxLarge: NomiSegmented breaks a label mid-word at the
+  /// Accessibility sizes ("Inco/me"), and its height is fixed. The kind is still
+  /// named by the amount card's payee label and the save title at those sizes.
   private var kindControl: some View {
     NomiSegmented(kindOptions, selection: $model.kind, style: .onGround)
+      .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
   }
 
   private var kindOptions: [(value: EntryModel.Kind, title: String, systemImage: String?)] {
@@ -405,7 +409,11 @@ private struct EntryForm: View {
           .foregroundStyle(NomiColor.inkSecondary)
       }
       Button(action: save) {
+        // One line, shrunk to fit the 54 pt button: "Save transfer of ₹…" wrapped
+        // past the button at the Accessibility sizes (AX3 capture).
         Text(model.saveTitle)
+          .lineLimit(1)
+          .minimumScaleFactor(0.5)
       }
       .buttonStyle(NomiPrimaryButtonStyle(height: 54))
       .disabled(!model.canSave)
