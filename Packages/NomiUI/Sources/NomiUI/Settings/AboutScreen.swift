@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// About screen (U7, v5 addition; ST). One card: name, version, and the
-/// privacy statement. The About artboard draws a large title and the card
-/// alone, below it.
+/// About screen (U7, v5 addition; ST; S9b). An identity card with the name,
+/// the version and the privacy statement, then a card of rows: privacy policy
+/// and terms (shown only once their URLs are set), support, and licences.
+/// The About artboard draws a large title and the card alone, below it.
 public struct AboutScreen: View {
   /// The privacy statement, verbatim from DEC-07 (nomi-ios-decisions.md).
   /// Every clause is checked against the code there. Do not edit this text
@@ -14,39 +15,163 @@ public struct AboutScreen: View {
   public init() {}
 
   public var body: some View {
+    let rows = AboutLogic.visibleRows(privacy: LegalLinks.privacyPolicy, terms: LegalLinks.terms)
+    let footer = AboutLogic.footer(
+      publisherName: LegalLinks.publisherName,
+      year: Calendar.current.component(.year, from: Date())
+    )
     ScrollView {
       VStack(alignment: .leading, spacing: 0) {
-        VStack(alignment: .leading, spacing: 0) {
-          Text("Nomi")
-            .nomiTextStyle(.title)
-            .foregroundStyle(NomiColor.ink)
-          Text("Version \(NomiUIModule.version)")
+        identityCard
+        rowsCard(rows)
+        if let footer {
+          Text(footer)
             .nomiTextStyle(.footnote)
             .foregroundStyle(NomiColor.inkSecondary)
-            .padding(.top, NomiSpacing.xxs)
-          Rectangle()
-            .fill(NomiColor.separator)
-            .frame(height: 1)
-            .padding(.top, 14)
-            .accessibilityHidden(true)
-          Text(Self.privacyText)
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.inkSecondary)
-            .lineSpacing(4)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.top, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, NomiSpacing.sm)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .nomiCard(padding: EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16))
       }
       .padding(.horizontal, NomiSpacing.screenGutter)
       .padding(.bottom, NomiSpacing.lg)
     }
     .background(NomiColor.ground)
-    .navigationTitle("About")
+    .navigationTitle(String(localized: "About and privacy", bundle: .module))
     #if os(iOS)
     .navigationBarTitleDisplayMode(.large)
     #endif
+  }
+
+  private var identityCard: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Text("Nomi")
+        .nomiTextStyle(.title)
+        .foregroundStyle(NomiColor.ink)
+      Text(AboutLogic.versionLine(bundle: .main))
+        .nomiTextStyle(.footnote)
+        .foregroundStyle(NomiColor.inkSecondary)
+        .padding(.top, NomiSpacing.xxs)
+      Rectangle()
+        .fill(NomiColor.separator)
+        .frame(height: 1)
+        .padding(.top, 14)
+        .accessibilityHidden(true)
+      Text(Self.privacyText)
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.inkSecondary)
+        .lineSpacing(4)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.top, 14)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .nomiCard(padding: EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16))
+  }
+
+  private func rowsCard(_ rows: [AboutLogic.Row]) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+      ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+        if index > 0 {
+          Rectangle()
+            .fill(NomiColor.separator)
+            .frame(height: 1)
+            .accessibilityHidden(true)
+        }
+        rowView(row)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .nomiCard()
+    .padding(.top, NomiSpacing.sm)
+  }
+
+  @ViewBuilder
+  private func rowView(_ row: AboutLogic.Row) -> some View {
+    switch row {
+    case .privacyPolicy:
+      if let url = LegalLinks.privacyPolicy {
+        Link(destination: url) {
+          linkLabel("Privacy policy")
+        }
+        .buttonStyle(.plain)
+      }
+    case .termsOfUse:
+      if let url = LegalLinks.terms {
+        Link(destination: url) {
+          linkLabel("Terms of use")
+        }
+        .buttonStyle(.plain)
+      }
+    case .support:
+      supportRow
+    case .licences:
+      NavigationLink {
+        LicensesScreen()
+      } label: {
+        navigationLabel("Open-source licences")
+      }
+      .buttonStyle(.plain)
+    }
+  }
+
+  /// The support address as selectable text, with a mail link beside it.
+  private var supportRow: some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+      Text("Support", bundle: .module)
+        .nomiTextStyle(.rowBody)
+        .foregroundStyle(NomiColor.ink)
+      Text(LegalLinks.supportEmail)
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.inkSecondary)
+        .textSelection(.enabled)
+      if let mailto = AboutLogic.mailtoURL(address: LegalLinks.supportEmail) {
+        Link(destination: mailto) {
+          Text("Email support", bundle: .module)
+            .nomiTextStyle(.rowBody)
+            .foregroundStyle(NomiColor.primary)
+        }
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.vertical, NomiSpacing.xs)
+  }
+
+  private func linkLabel(_ title: LocalizedStringKey) -> some View {
+    HStack(spacing: NomiSpacing.xs) {
+      Text(title, bundle: .module)
+        .nomiTextStyle(.rowBody)
+        .foregroundStyle(NomiColor.ink)
+      Spacer(minLength: 0)
+      AboutRowChevron(symbol: "arrow.up.right")
+    }
+    .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+    .contentShape(Rectangle())
+  }
+
+  private func navigationLabel(_ title: LocalizedStringKey) -> some View {
+    HStack(spacing: NomiSpacing.xs) {
+      Text(title, bundle: .module)
+        .nomiTextStyle(.rowBody)
+        .foregroundStyle(NomiColor.ink)
+      Spacer(minLength: 0)
+      AboutRowChevron(symbol: "chevron.right")
+    }
+    .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+    .contentShape(Rectangle())
+  }
+}
+
+/// The trailing symbol on an About row: 16 pt, `inkSecondary`, hidden from
+/// VoiceOver because the row is the control.
+private struct AboutRowChevron: View {
+  let symbol: String
+
+  var body: some View {
+    Image(systemName: symbol)
+      .resizable()
+      .scaledToFit()
+      .frame(width: 16, height: 16)
+      .foregroundStyle(NomiColor.inkSecondary)
+      .accessibilityHidden(true)
   }
 }
 
