@@ -13,6 +13,12 @@ public enum CoordinatorEraseError: Error, Sendable, Equatable {
   case busy
 }
 
+/// What `AppSyncCoordinator.beginErase` hands the caller. Only the holder of the
+/// gate can end it: `endErase(_:)` with any other token does nothing.
+public struct EraseToken: Sendable, Equatable {
+  let id: UUID
+}
+
 /// Everything that runs because of *time* rather than because of a tap: the
 /// launch reconcile, the foreground sync, the background refresh, and the
 /// remote-change reconcile.
@@ -57,6 +63,8 @@ public actor AppSyncCoordinator {
   /// Closed by `beginErase` and open otherwise. A `Flag`, not actor state, because
   /// the scheduling calls are `nonisolated` and must read it synchronously.
   private let eraseGate = Flag()
+  /// The one erase that holds the gate, if any. Only its token ends the gate.
+  private var eraseHolder: EraseToken?
   /// Reconciles, syncs, backfills and background runs in flight. `beginErase`
   /// waits for it to reach zero, so an erase never overlaps one of them.
   private var activeWork = 0
@@ -110,7 +118,8 @@ public actor AppSyncCoordinator {
 
   /// Closes the gate, stops what is running, and waits until nothing can write
   /// behind it. Then cancels the pending background requests. The gate stays
-  /// closed on success until `endErase()`.
+  /// closed on success until `endErase(_:)` is called with the returned token. A
+  /// second call while one erase holds the gate throws `busy` and changes nothing.
   ///
   /// The background requests are cancelled only after the wait succeeds. The
   /// cancellations of the running tasks are signals and nothing more, so a
@@ -122,7 +131,13 @@ public actor AppSyncCoordinator {
   /// that ignores cancellation, and the erase would never report `busy`. So the
   /// tasks are joined in an unstructured task, and the wait polls for that join
   /// and for `activeWork`.
-  public func beginErase(timeout: TimeInterval = 30) async throws {
+  public func beginErase(timeout: TimeInterval = 30) async throws -> EraseToken {
+    // One holder at a time, and no queue. The check and the take happen before
+    // the first suspension, so two erases cannot both pass it. A refused caller
+    // changes nothing: not the holder, not the gate, not the requests.
+    guard eraseHolder == nil else { throw CoordinatorEraseError.busy }
+    let token = EraseToken(id: UUID())
+    eraseHolder = token
     eraseGate.set(true)
 
     let inFlight = [foregroundTask, remoteChangeTask].compactMap { $0 }
@@ -139,26 +154,39 @@ public actor AppSyncCoordinator {
     var waited: TimeInterval = 0
     while !joined.isSet || activeWork > 0 {
       guard waited < timeout else {
-        eraseGate.set(false)
+        releaseErase(token)
         throw CoordinatorEraseError.busy
       }
       do {
         try await pause(Self.erasePollInterval)
       } catch {
-        // Our own task was cancelled mid-wait. Nothing was erased, so reopen.
-        eraseGate.set(false)
+        // The caller was cancelled mid-wait. Nothing was erased, so give the gate back.
+        releaseErase(token)
         throw error
       }
       waited += Self.erasePollInterval
     }
 
     submitter.cancelAll()
+    return token
   }
 
-  /// Reopens the gate after an erase, whether it succeeded or not.
-  public func endErase() {
+  /// Ends the erase that `token` came from. A token that is not the current
+  /// holder's does nothing, so a stale caller cannot reopen a gate a newer erase
+  /// closed.
+  public func endErase(_ token: EraseToken) {
+    releaseErase(token)
+  }
+
+  /// Gives the gate back, but only to the holder. Every exit from an erase goes through here.
+  private func releaseErase(_ token: EraseToken) {
+    guard eraseHolder == token else { return }
+    eraseHolder = nil
     eraseGate.set(false)
   }
+
+  /// Whether an erase currently holds the gate. Test visibility only.
+  var isErasing: Bool { eraseGate.isSet }
 
   // MARK: - Reconcile
 

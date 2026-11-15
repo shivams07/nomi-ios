@@ -26,12 +26,12 @@ final class EraseGateTests: XCTestCase {
     let foreground = try XCTUnwrap(foregroundTask)
     let remote = try XCTUnwrap(remoteTask)
 
-    try await withTestTimeout { try await coordinator.beginErase() }
+    let token = try await withTestTimeout { try await coordinator.beginErase() }
 
     XCTAssertTrue(foreground.isCancelled)
     XCTAssertTrue(remote.isCancelled)
     XCTAssertEqual(submitter.cancelAllCount, 1)
-    await coordinator.endErase()
+    await coordinator.endErase(token)
   }
 
   /// With nothing running, the erase is immediate and still cancels the requests.
@@ -40,10 +40,10 @@ final class EraseGateTests: XCTestCase {
     let submitter = EraseSubmitter()
     let coordinator = makeCoordinator(stack: stack, submitter: submitter)
 
-    try await withTestTimeout { try await coordinator.beginErase() }
+    let token = try await withTestTimeout { try await coordinator.beginErase() }
 
     XCTAssertEqual(submitter.cancelAllCount, 1)
-    await coordinator.endErase()
+    await coordinator.endErase(token)
   }
 
   /// While the gate is closed a sync is refused, reconcile never reaches the
@@ -55,7 +55,7 @@ final class EraseGateTests: XCTestCase {
       submitter: EraseSubmitter(),
       store: store)
 
-    try await withTestTimeout { try await coordinator.beginErase() }
+    let token = try await withTestTimeout { try await coordinator.beginErase() }
 
     let attempt = await coordinator.syncIfIdle()
     XCTAssertEqual(attempt, .alreadyRunning)
@@ -71,7 +71,7 @@ final class EraseGateTests: XCTestCase {
     XCTAssertNil(foregroundTask, "no foreground task starts while erasing")
     XCTAssertNil(remoteTask, "no remote-change task starts while erasing")
 
-    await coordinator.endErase()
+    await coordinator.endErase(token)
     _ = await coordinator.reconcile()
     let reopened = await store.duplicateGroupReads
     XCTAssertEqual(reopened, 1, "the gate reopened")
@@ -86,7 +86,7 @@ final class EraseGateTests: XCTestCase {
       let coordinator = makeCoordinator(
         stack: try await connectedStack(fetcher: OrderRecordingMailFetcher()),
         submitter: submitter)
-      try await withTestTimeout { try await coordinator.beginErase() }
+      let token = try await withTestTimeout { try await coordinator.beginErase() }
       let record = BackgroundWorkRecord()
 
       await coordinator.run(BackgroundWork(kind: .refresh, record: record))
@@ -94,6 +94,7 @@ final class EraseGateTests: XCTestCase {
 
       XCTAssertEqual(record.recordedCompletions, [false])
       XCTAssertEqual(submitter.submissions, [], "nothing is scheduled while erasing")
+      await coordinator.endErase(token)
     }
   #endif
 
@@ -112,7 +113,7 @@ final class EraseGateTests: XCTestCase {
     try await withTestTimeout { await signal.wait() }
 
     do {
-      try await withTestTimeout { try await coordinator.beginErase(timeout: 0.3) }
+      _ = try await withTestTimeout { try await coordinator.beginErase(timeout: 0.3) }
       XCTFail("a sync still running at the deadline must make the erase throw busy")
     } catch CoordinatorEraseError.busy {
       // expected
@@ -125,6 +126,140 @@ final class EraseGateTests: XCTestCase {
 
     sync.cancel()
     _ = try await withTestTimeout { await sync.value }
+  }
+
+  // MARK: - One holder at a time (Lim's FAIL on 7372fac)
+
+  /// A double-tap on the erase confirm: a second `beginErase` while the first is
+  /// still waiting for a stuck sync throws `busy` at once, and the holder keeps the gate.
+  func testASecondConcurrentBeginEraseThrowsBusyAndLeavesTheHolderInPlace() async throws {
+    let signal = StartSignal()
+    let submitter = EraseSubmitter()
+    let coordinator = makeCoordinator(
+      stack: try await connectedStack(fetcher: OrderRecordingMailFetcher(blockOnSearch: signal)),
+      submitter: submitter)
+    let sync = Task { await coordinator.syncIfIdle() }
+    try await withTestTimeout { await signal.wait() }
+
+    let holder = Task { try await coordinator.beginErase(timeout: 30) }
+    try await waitUntilErasing(coordinator)
+
+    do {
+      _ = try await withTestTimeout { try await coordinator.beginErase(timeout: 30) }
+      XCTFail("a second erase must not take the gate from the first")
+    } catch CoordinatorEraseError.busy {
+      // expected
+    }
+    let stillHeld = await coordinator.isErasing
+    XCTAssertTrue(stillHeld, "the first erase still holds the gate")
+    XCTAssertEqual(submitter.cancelAllCount, 0, "the first erase has not finished, so nothing is cancelled yet")
+
+    holder.cancel()
+    _ = try? await withTestTimeout { try await holder.value }
+    sync.cancel()
+    _ = try await withTestTimeout { await sync.value }
+  }
+
+  /// The holder is the only erase that ends the gate: a second `beginErase`
+  /// that was refused changes nothing, and `cancelAll` runs once, for the holder.
+  func testTheGateStaysClosedUntilTheHolderEndsAndCancelsOnce() async throws {
+    let submitter = EraseSubmitter()
+    let store = ReconcileCountingStore()
+    let coordinator = makeCoordinator(
+      stack: try await connectedStack(fetcher: OrderRecordingMailFetcher()),
+      submitter: submitter,
+      store: store)
+
+    let holder = try await withTestTimeout { try await coordinator.beginErase() }
+    do {
+      _ = try await withTestTimeout { try await coordinator.beginErase() }
+      XCTFail("a second erase while one holds the gate must throw busy")
+    } catch CoordinatorEraseError.busy {
+      // expected
+    }
+
+    let skipped = await coordinator.reconcile()
+    XCTAssertEqual(skipped, .empty, "the gate is still closed")
+    let whileHeld = await store.duplicateGroupReads
+    XCTAssertEqual(whileHeld, 0)
+    XCTAssertEqual(submitter.cancelAllCount, 1, "cancelAll ran for the holder only, once")
+
+    await coordinator.endErase(holder)
+    _ = await coordinator.reconcile()
+    let reopened = await store.duplicateGroupReads
+    XCTAssertEqual(reopened, 1, "the holder ending reopens the gate")
+    XCTAssertEqual(submitter.cancelAllCount, 1)
+  }
+
+  /// `endErase` with a token that is not the holder's does nothing: a stale
+  /// caller cannot reopen a gate that a newer erase closed.
+  func testAStaleTokenDoesNotReopenTheGate() async throws {
+    let store = ReconcileCountingStore()
+    let coordinator = makeCoordinator(
+      stack: try await connectedStack(fetcher: OrderRecordingMailFetcher()),
+      submitter: EraseSubmitter(),
+      store: store)
+
+    let first = try await withTestTimeout { try await coordinator.beginErase() }
+    await coordinator.endErase(first)
+    let second = try await withTestTimeout { try await coordinator.beginErase() }
+
+    await coordinator.endErase(first)
+    let afterStale = await coordinator.isErasing
+    XCTAssertTrue(afterStale, "the stale token left the gate closed")
+    let skipped = await coordinator.reconcile()
+    XCTAssertEqual(skipped, .empty)
+    let whileHeld = await store.duplicateGroupReads
+    XCTAssertEqual(whileHeld, 0)
+
+    await coordinator.endErase(second)
+    let afterHolder = await coordinator.isErasing
+    XCTAssertFalse(afterHolder, "the holder's token reopens it")
+  }
+
+  /// M7. A caller cancelled while `beginErase` waits must reopen the gate and see
+  /// `CancellationError`, not `busy`, and the next erase must be able to start.
+  func testACallerCancelledMidWaitReopensTheGateAndThrowsCancellation() async throws {
+    let signal = StartSignal()
+    let store = ReconcileCountingStore()
+    let coordinator = makeCoordinator(
+      stack: try await connectedStack(fetcher: OrderRecordingMailFetcher(blockOnSearch: signal)),
+      submitter: EraseSubmitter(),
+      store: store)
+    let sync = Task { await coordinator.syncIfIdle() }
+    try await withTestTimeout { await signal.wait() }
+
+    let erase = Task { try await coordinator.beginErase(timeout: 30) }
+    try await waitUntilErasing(coordinator)
+    erase.cancel()
+
+    do {
+      _ = try await withTestTimeout { try await erase.value }
+      XCTFail("a cancelled erase must throw")
+    } catch is CancellationError {
+      // expected
+    }
+    let afterCancel = await coordinator.isErasing
+    XCTAssertFalse(afterCancel, "the cancelled caller reopened the gate")
+    _ = await coordinator.reconcile()
+    let reopened = await store.duplicateGroupReads
+    XCTAssertEqual(reopened, 1, "reconcile reaches the pipeline again")
+
+    // The stuck sync is still running, and a new erase would wait for it. Stop it first.
+    sync.cancel()
+    _ = try await withTestTimeout { await sync.value }
+
+    let next = try await withTestTimeout { try await coordinator.beginErase() }
+    await coordinator.endErase(next)
+  }
+
+  /// Polls until the gate is closed, so a test can rely on a holder being in place.
+  private func waitUntilErasing(_ coordinator: AppSyncCoordinator) async throws {
+    try await withTestTimeout {
+      while !(await coordinator.isErasing) {
+        try await Task.sleep(nanoseconds: 5_000_000)
+      }
+    }
   }
 
   // MARK: - Fixtures

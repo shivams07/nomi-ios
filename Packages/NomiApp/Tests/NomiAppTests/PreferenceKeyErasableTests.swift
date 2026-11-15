@@ -57,6 +57,46 @@ final class PreferenceKeyErasableTests: XCTestCase {
     XCTAssertTrue(PreferenceKey.standardDefaultsErasable.contains(PreferenceKey.dismissedRecurringSeries))
   }
 
+  /// MKIND (Lim's gap). Each entry's kind must match how its real writer stores
+  /// the value: a `.bool` key through the Bool overload, a `.data` key through the
+  /// Data overload. Each writer is driven against a recording store, and every key
+  /// must have been written, so a key no writer reached fails rather than passing.
+  @MainActor
+  func testEachErasableKindMatchesHowItsWriterStoresIt() async throws {
+    let spy = KindRecordingStore()
+
+    FirstRunGate(store: spy).completeFirstRun()  // hasCompletedFirstRun, bool
+    NotificationSettingsStore(store: spy, scheduler: NoopNotificationScheduler())
+      .update(NotificationSettings(budgetAlertsEnabled: false, thresholdFraction: 0.75))  // notificationSettings, data
+
+    let credentials = MemoryCredentialStore()
+    try credentials.save(.test)
+    let stack = MailStack(
+      fetcher: OrderRecordingMailFetcher(),
+      pipeline: SilentPipeline(),
+      credentials: credentials,
+      preferences: spy)
+    try await stack.service.connect(.test)  // mailHasConnected, bool
+    try await stack.syncNow()  // mailSyncCursor and mailLastSyncAt, data
+    _ = try await stack.service.startBackfill(months: 1)  // mailBackfillUnfinished, bool
+
+    let boolWrites = spy.boolWrites()
+    let dataWrites = spy.dataWrites()
+    for entry in PreferenceKey.erasable {
+      XCTAssertTrue(
+        boolWrites.contains(entry.key) || dataWrites.contains(entry.key),
+        "no writer reached \(entry.key), so its kind is unchecked")
+      switch entry.kind {
+      case .bool:
+        XCTAssertTrue(boolWrites.contains(entry.key), "\(entry.key) is listed as bool, but its writer does not store a Bool")
+        XCTAssertFalse(dataWrites.contains(entry.key), "\(entry.key) is listed as bool, but its writer stores data")
+      case .data:
+        XCTAssertTrue(dataWrites.contains(entry.key), "\(entry.key) is listed as data, but its writer does not store Data")
+        XCTAssertFalse(boolWrites.contains(entry.key), "\(entry.key) is listed as data, but its writer stores a Bool")
+      }
+    }
+  }
+
   /// B6's dismissal store keeps its own literal. This pins the two strings
   /// together, read from that file's source.
   func testDismissedRecurringSeriesKeyEqualsTheLiteralItsStoreWrites() throws {
@@ -66,5 +106,56 @@ final class PreferenceKeyErasableTests: XCTestCase {
     let literal = try XCTUnwrap(Range(match.range(at: 1), in: source).map { String(source[$0]) })
 
     XCTAssertEqual(PreferenceKey.dismissedRecurringSeries, literal)
+  }
+}
+
+/// Keeps the values so reads behave, and records which overload each key was
+/// written through. The overload is what the kind check is about.
+private final class KindRecordingStore: KeyValueStoring, @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [String: Any] = [:]
+  private var boolKeys: Set<String> = []
+  private var dataKeys: Set<String> = []
+
+  func bool(forKey key: String) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return values[key] as? Bool ?? false
+  }
+
+  func set(_ value: Bool, forKey key: String) {
+    lock.lock()
+    defer { lock.unlock() }
+    values[key] = value
+    boolKeys.insert(key)
+  }
+
+  func data(forKey key: String) -> Data? {
+    lock.lock()
+    defer { lock.unlock() }
+    return values[key] as? Data
+  }
+
+  func set(_ value: Data?, forKey key: String) {
+    lock.lock()
+    defer { lock.unlock() }
+    if let value {
+      values[key] = value
+    } else {
+      values.removeValue(forKey: key)
+    }
+    dataKeys.insert(key)
+  }
+
+  func boolWrites() -> Set<String> {
+    lock.lock()
+    defer { lock.unlock() }
+    return boolKeys
+  }
+
+  func dataWrites() -> Set<String> {
+    lock.lock()
+    defer { lock.unlock() }
+    return dataKeys
   }
 }
