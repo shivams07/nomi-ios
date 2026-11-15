@@ -144,7 +144,11 @@ final class InsightsAggregatorTests: XCTestCase {
   }
 
   func testPriorRangeOfAFinancialYearIsThePreviousFinancialYear() {
-    let prior = InsightsAggregator.priorRange(for: .financialYear(startingYear: 2026), calendar: calendar)
+    // Pinned to a date after FY 2026 has ended. Left to the real clock, a run
+    // inside FY 2026 gets the running-year cut from R12a, not the full prior.
+    let afterFY2026 = date(2027, 6, 1)
+    let prior = InsightsAggregator.priorRange(
+      for: .financialYear(startingYear: 2026), calendar: calendar, now: afterFY2026)
     XCTAssertEqual(prior, dateRange(for: .financialYear(startingYear: 2025), calendar: calendar))
   }
 

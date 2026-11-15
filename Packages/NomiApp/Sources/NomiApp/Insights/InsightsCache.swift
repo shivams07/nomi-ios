@@ -2,6 +2,10 @@ import Combine
 import Foundation
 import NomiCore
 
+#if canImport(UIKit)
+import UIKit
+#endif
+
 /// Every aggregate the app can ask for, as a hashable key.
 ///
 /// `InsightPeriod` is `Hashable` and *value*-addressed — `month(year:month:)`
@@ -15,6 +19,8 @@ public enum InsightsCacheKey: Hashable, Sendable {
   case budgetProgress(year: Int, month: Int)
   case transactions(InsightPeriod)
   case recent(limit: Int)
+  /// R12a. The zero-filled monthly buckets for one period (I-4).
+  case monthlyTrend(InsightPeriod)
 
   /// U17a. No associated value: the six-month window belongs to
   /// `SwiftDataRecurringStore`, not to the caller, so there is only ever one
@@ -85,7 +91,40 @@ public final class InsightsCache: ObservableObject {
   public private(set) var missCount = 0
   public private(set) var invalidationCount = 0
 
-  public init() {}
+  /// The day the held values were computed on, once `rollOver` has seen one.
+  private var cachedDay: Date?
+
+  /// The day and the clock-change notifications are what let a dashboard that
+  /// is left open across midnight move on. Both observers run on the main
+  /// queue, and `invalidate()` bumps `generation`, so a screen re-reads and
+  /// its anchors move with it (R12a). They capture `self` weakly, so an
+  /// observer that outlives its cache does nothing.
+  public init() {
+    _ = NotificationCenter.default.addObserver(
+      forName: .NSCalendarDayChanged, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.invalidate() }
+    }
+    #if canImport(UIKit)
+    _ = NotificationCenter.default.addObserver(
+      forName: UIApplication.significantTimeChangeNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.invalidate() }
+    }
+    #endif
+  }
+
+  /// Drops every held value when `day` is not the day they were computed on,
+  /// and records `day` as the one now held. It does not bump `generation`,
+  /// because it runs inside a view body, where publishing is not allowed. The
+  /// observers above cover the change that a view is watching for.
+  public func rollOver(toDay day: Date) {
+    if let cachedDay, cachedDay != day {
+      storage.removeAll(keepingCapacity: true)
+      recency.removeAll(keepingCapacity: true)
+    }
+    cachedDay = day
+  }
 
   public func value<T>(for key: InsightsCacheKey, compute: () throws -> T) rethrows -> T {
     if let cached = storage[key] as? T {

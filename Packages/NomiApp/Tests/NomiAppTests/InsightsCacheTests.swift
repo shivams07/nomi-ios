@@ -1,4 +1,5 @@
 import NomiCore
+import SwiftData
 import XCTest
 
 @testable import NomiApp
@@ -8,6 +9,9 @@ import XCTest
 /// — so `missCount` exists to make it assertable.
 @MainActor
 final class InsightsCacheTests: XCTestCase {
+
+  /// Owns each container for the life of its test. See `InMemoryStack`.
+  private var stacks: [InMemoryStack] = []
 
   func testFirstReadMissesAndSecondReadHits() {
     let cache = InsightsCache()
@@ -219,5 +223,99 @@ final class InsightsCacheTests: XCTestCase {
       _ = cache.value(for: .insights(.month(year: 2020 + month / 12, month: month))) { month }
     }
     XCTAssertEqual(cache.count, InsightsCache.capacity, "nothing was evicted early")
+  }
+
+  // MARK: - R12a: nothing computed on an earlier day is served
+
+  private func day(_ month: Int, _ dayOfMonth: Int) -> Date {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Asia/Kolkata") ?? .current
+    return calendar.date(from: DateComponents(year: 2026, month: month, day: dayOfMonth))!
+  }
+
+  /// The same day is a hit. A new day drops everything held, and the drop does
+  /// not publish: a roll-over runs inside a view body, and a published change
+  /// there is a render loop.
+  func testRollOverDropsYesterdaysValueWithoutBumpingGeneration() {
+    let cache = InsightsCache()
+    let key = InsightsCacheKey.insights(.month(year: 2026, month: 11))
+
+    cache.rollOver(toDay: day(11, 14))
+    _ = cache.value(for: key) { 1 }
+    let generation = cache.generation
+
+    cache.rollOver(toDay: day(11, 14))
+    let missesBeforeSameDay = cache.missCount
+    XCTAssertEqual(cache.value(for: key) { 2 }, 1, "the same day is still a hit")
+    XCTAssertEqual(cache.missCount, missesBeforeSameDay)
+
+    cache.rollOver(toDay: day(11, 15))
+    XCTAssertTrue(cache.isEmpty, "yesterday's value is dropped")
+    XCTAssertEqual(cache.generation, generation, "the roll-over does not publish")
+
+    XCTAssertEqual(cache.value(for: key) { 3 }, 3, "the next read recomputes")
+  }
+
+  /// A day change that happens while the app is open must reach the screens,
+  /// which hold no `@Query`. The observer runs on the main queue, so the test
+  /// yields until the change lands rather than blocking it.
+  func testDayChangedNotificationBumpsGeneration() async throws {
+    let cache = InsightsCache()
+    let before = cache.generation
+
+    NotificationCenter.default.post(name: .NSCalendarDayChanged, object: nil)
+
+    for _ in 0..<200 where cache.generation == before {
+      try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    XCTAssertEqual(cache.generation, before + 1)
+  }
+
+  // MARK: - R12a: the recurring list follows the day too
+
+  /// A mutable clock, so one test can move from one day to the next.
+  private final class DayClock {
+    var now: Date
+    init(_ now: Date) { self.now = now }
+  }
+
+  /// `SwiftDataRecurringStore` shares the cache with the insights store and
+  /// has its own roll-over call. Nothing here writes through `WriteCoordinator`,
+  /// so the cache is never invalidated: the only thing that can make the
+  /// second read differ from the first is the day change. Without the roll-over
+  /// in `recurringSeries()`, the second read is the first read's empty answer.
+  func testTheRecurringListIsRecomputedOnANewDay() throws {
+    let stack = try InMemoryStack(schema: Schema([Transaction.self, NomiCore.Category.self]))
+    stacks.append(stack)
+    let context = stack.context
+
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Asia/Kolkata") ?? .current
+    let clock = DayClock(calendar.date(from: DateComponents(year: 2026, month: 11, day: 14, hour: 9))!)
+    let store = SwiftDataRecurringStore(
+      context: context, cache: InsightsCache(), calendar: calendar, now: { clock.now })
+
+    func charge(_ at: Date) {
+      context.insert(Transaction(
+        date: at,
+        descriptionText: "NETFLIX SUBSCRIPTION",
+        merchantName: "Netflix",
+        normalizedDescription: "NETFLIX",
+        amountMinor: 49_900))
+    }
+
+    // Two charges, thirty days apart, are not a run. The read is cached.
+    charge(calendar.date(byAdding: .day, value: -60, to: clock.now)!)
+    charge(calendar.date(byAdding: .day, value: -30, to: clock.now)!)
+    XCTAssertTrue(try store.recurringSeries().isEmpty, "two charges are not a run")
+
+    // The third charge, written with no invalidation, and the next day.
+    charge(clock.now)
+    try context.save()
+    clock.now = calendar.date(byAdding: .day, value: 1, to: clock.now)!
+
+    XCTAssertEqual(
+      try store.recurringSeries().first?.occurrences, 3,
+      "a new day recomputes the list instead of serving yesterday's")
   }
 }

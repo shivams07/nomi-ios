@@ -51,14 +51,22 @@ public final class SwiftDataRecurringStore: RecurringInsightsStore {
   }
 
   public func recurringSeries() throws -> [RecurringSeries] {
-    try cache.value(for: .recurring) {
+    // R12a. Shares the cache with `SwiftDataInsightsStore`, which rolls it over
+    // on its own reads. This store has to roll it over too, or a day that has
+    // only ever been read here would serve yesterday's series.
+    cache.rollOver(toDay: calendar.startOfDay(for: now()))
+    return try cache.value(for: .recurring) {
       // One `now()` for the window and for the staleness check. Reading the
       // clock twice would let a series be fetched under one instant and judged
       // stale under another.
       let moment = now()
-      let window = dateRange(for: .trailingMonths(Self.windowMonths), calendar: calendar, now: moment)
-      let lower = window.lowerBound
-      let upper = window.upperBound
+      // The window stays what `.trailingMonths(windowMonths)` gave before R12a:
+      // it ends at the start of tomorrow and begins `windowMonths` calendar
+      // months before that end. `.trailingMonths` now starts on the first of
+      // the month, which would shorten this window, so it is not used here.
+      let end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: moment))!
+      let lower = calendar.date(byAdding: .month, value: -Self.windowMonths, to: end)!
+      let upper = end
       let debit = Direction.debit.rawValue
       // W1-13. A foreign run's amounts are in another currency's minor unit,
       // and every figure the insights screens show is rupees.

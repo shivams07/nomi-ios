@@ -44,7 +44,7 @@ public final class SwiftDataInsightsStore: InsightsStore {
   }
 
   public func insights(for period: InsightPeriod) throws -> PeriodInsights {
-    try cache.value(for: .insights(period)) {
+    try cachedValue(for: .insights(period)) {
       let categories = try categoryMap()
       let rows = try ledgerRows(in: dateRange(for: period, calendar: calendar, now: now()))
       let priorRows = try InsightsAggregator
@@ -62,9 +62,28 @@ public final class SwiftDataInsightsStore: InsightsStore {
   }
 
   public func trend(months: Int) throws -> [MonthBucket] {
-    try cache.value(for: .trend(months: months)) {
+    try cachedValue(for: .trend(months: months)) {
       let rows = try ledgerRows(in: dateRange(for: .trailingMonths(months), calendar: calendar, now: now()))
       return InsightsAggregator.trend(rows: rows, calendar: calendar)
+    }
+  }
+
+  /// R12a, I-4. One bucket per month of the window, zero-filled. Rows run from
+  /// the first month to the end of the last, capped at the start of tomorrow,
+  /// so nothing dated after today enters a bucket. `.allTime` has no months and
+  /// reads nothing.
+  public func monthlyTrend(for period: InsightPeriod) throws -> [MonthBucket] {
+    try cachedValue(for: .monthlyTrend(period)) {
+      let moment = now()
+      let months = InsightsAggregator.trendMonths(for: period, calendar: calendar, now: moment)
+      guard let first = months.first, let last = months.last else { return [] }
+      let startOfTomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: moment))!
+      let endOfLast = calendar.date(byAdding: .month, value: 1, to: last)!
+      let rows = try ledgerRows(in: first..<min(endOfLast, startOfTomorrow))
+      return InsightsAggregator.zeroFilledMonths(
+        InsightsAggregator.trend(rows: rows, calendar: calendar),
+        months: months
+      )
     }
   }
 
@@ -75,7 +94,7 @@ public final class SwiftDataInsightsStore: InsightsStore {
   /// never once per render. Naming it here rather than letting it read as an
   /// oversight of rule (1).
   public func accountSummaries(includeArchived: Bool) throws -> [AccountSummary] {
-    try cache.value(for: .accountSummaries(includeArchived: includeArchived)) {
+    try cachedValue(for: .accountSummaries(includeArchived: includeArchived)) {
       let accounts = try context.fetch(FetchDescriptor<Account>()).map {
         AccountRef(
           id: $0.id,
@@ -97,7 +116,7 @@ public final class SwiftDataInsightsStore: InsightsStore {
   }
 
   public func budgetProgress(year: Int, month: Int) throws -> [BudgetProgress] {
-    try cache.value(for: .budgetProgress(year: year, month: month)) {
+    try cachedValue(for: .budgetProgress(year: year, month: month)) {
       let budgets = try context.fetch(FetchDescriptor<Budget>()).map {
         BudgetRef(categoryID: $0.categoryID, amountMinor: $0.amountMinor, isEnabled: $0.isEnabled)
       }
@@ -112,7 +131,7 @@ public final class SwiftDataInsightsStore: InsightsStore {
   }
 
   public func transactions(in period: InsightPeriod) throws -> [Transaction] {
-    try cache.value(for: .transactions(period)) {
+    try cachedValue(for: .transactions(period)) {
       let range = dateRange(for: period, calendar: calendar, now: now())
       let lower = range.lowerBound
       let upper = range.upperBound
@@ -132,7 +151,7 @@ public final class SwiftDataInsightsStore: InsightsStore {
   /// across for the caller to throw away. No date predicate: the sort is on
   /// `date` descending and the limit does the bounding.
   public func recentTransactions(limit: Int) throws -> [Transaction] {
-    try cache.value(for: .recent(limit: limit)) {
+    try cachedValue(for: .recent(limit: limit)) {
       guard limit > 0 else { return [] }
       var descriptor = FetchDescriptor<Transaction>(
         sortBy: [SortDescriptor(\Transaction.date, order: .reverse)]
@@ -158,6 +177,16 @@ public final class SwiftDataInsightsStore: InsightsStore {
   }
 
   // MARK: -
+
+  /// Every cached read goes through here, so a value computed on an earlier
+  /// day is never served (R12a). The roll-over drops the cache when the day
+  /// has changed and does not bump `generation`, because this runs inside a
+  /// view body. The clock is read here rather than in `compute`, which runs
+  /// only on a miss.
+  private func cachedValue<T>(for key: InsightsCacheKey, compute: () throws -> T) rethrows -> T {
+    cache.rollOver(toDay: calendar.startOfDay(for: now()))
+    return try cache.value(for: key, compute: compute)
+  }
 
   /// `nil` range means all time and issues no date predicate at all — a
   /// `distantPast` bound would make SQLite compare every row against a
