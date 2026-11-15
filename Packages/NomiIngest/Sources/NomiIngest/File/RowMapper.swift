@@ -156,12 +156,17 @@ enum RowMapper {
     try? parseAmount(raw).get()
   }
 
+  /// `AmountText.parse` on the cell, with one leading "+" allowed (B7 ruling):
+  /// some bank exports write credits as "+1,000.00". The plus is removed here, not
+  /// in `AmountText`, so manual entry is unchanged. A "+" followed by another sign
+  /// ("+-5", "++5") is two signs and is refused.
   private static func parseAmount(_ raw: String) -> Result<Int, AmountTextRejection> {
-    AmountText.parse(
-      raw.trimmingCharacters(in: .whitespacesAndNewlines),
-      locale: amountLocale,
-      allowNegative: true
-    )
+    var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    if text.hasPrefix("+") {
+      text.removeFirst()
+      if text.hasPrefix("+") || text.hasPrefix("-") { return .failure(.notANumber) }
+    }
+    return AmountText.parse(text, locale: amountLocale, allowNegative: true)
   }
 
   /// Pinned to en_US_POSIX so a file reads the same on every device: "." is the

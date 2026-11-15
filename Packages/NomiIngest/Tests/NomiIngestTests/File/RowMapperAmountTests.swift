@@ -100,6 +100,18 @@ final class RowMapperAmountTests: XCTestCase {
     XCTAssertNil(signed("450.555"), "three decimal places are refused, as in manual entry")
   }
 
+  /// B7 ruling: one leading "+" is allowed for file import, because some bank exports
+  /// write credits as "+1,000.00". A second sign is still refused, whichever it is.
+  func testOneLeadingPlusIsReadAndASecondSignIsRefused() {
+    XCTAssertEqual(signed("+1,000.00")?.amountMinor, 100_000)
+    XCTAssertEqual(signed("+1,000.00")?.direction, .credit)
+    XCTAssertNil(signed("+-5"), "a plus then a minus is two signs")
+    XCTAssertNil(signed("++5"), "two plus signs")
+    XCTAssertNil(signed("+"), "a bare plus is not an amount")
+    XCTAssertNil(signed("+1000000000.01"), "the plus does not lift the cap")
+    XCTAssertEqual(signed("+1000000000.00")?.amountMinor, AmountRules.maximumMinor)
+  }
+
   // MARK: - The cap, on separate debit and credit columns
 
   /// An over-cap debit refuses the row. It must not fall through to the credit
