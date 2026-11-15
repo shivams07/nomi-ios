@@ -21,6 +21,7 @@ let package = Package(
         .copy("Resources/Fonts/Inter-Medium.otf"),
         .copy("Resources/Fonts/Inter-SemiBold.otf"),
         .copy("Resources/Fonts/OFL-Inter.txt"),
+        .copy("Resources/Licenses.txt"),
         .process("Resources/Localizable.xcstrings"),
       ],
       swiftSettings: [.enableExperimentalFeature("StrictConcurrency=targeted")]
