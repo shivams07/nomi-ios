@@ -8,6 +8,21 @@ import Foundation
 /// same list `CategoriesScreen` passes on create. Editing leaves the edited
 /// row out instead, which is why the edit path is not this function.
 enum CategoryPickerLogic {
+  /// One row of the picker. `unset` is the "None" row, offered only when the
+  /// picker allows no category, and it clears the selection.
+  enum Row: Hashable {
+    case unset
+    case category(UUID)
+  }
+
+  /// The rows in display order. "None" leads when `allowsNone`, then every
+  /// category in the order the store lists them. Without `allowsNone` the rows
+  /// are the categories alone.
+  static func rows(categoryIDs: [UUID], allowsNone: Bool) -> [Row] {
+    let categories = categoryIDs.map(Row.category)
+    return allowsNone ? [.unset] + categories : categories
+  }
+
   /// The names a new category is checked against: all of them, unfiltered.
   static func createNames(from categoryNames: [String]) -> [String] {
     categoryNames

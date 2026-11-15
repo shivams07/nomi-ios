@@ -10,17 +10,44 @@ enum CategoryFormGate {
   }
 }
 
-/// v5: colour is picked from the fixed seven-slot palette, never a free
-/// colour well (§2.6).
+/// v5: colour is one of the fixed seven-slot palette, never a free colour well
+/// (§2.6). The editor no longer shows a colour row (S13): a saved category
+/// keeps its slot, and a new one gets slot 0. These names stay the slot
+/// vocabulary for the tests and the slot rule.
 enum PaletteSlotOptions {
   static let all: [Int] = Array(CategoryPalette.slots.indices)
+
+  /// The slot a category carries when it is saved. An edit writes back the slot
+  /// it already has, a new category has none and gets 0, and a stored slot
+  /// outside the seven falls back to 0. The editor can no longer change a slot,
+  /// so keeping an out-of-range one would fail every save with a message the
+  /// user cannot act on.
+  static func slotOnSave(editing original: Int?) -> Int {
+    guard let original, all.contains(original) else { return 0 }
+    return original
+  }
+
   /// VoiceOver names for the swatches, in `CategoryPalette.slots` order.
   static let slotNames = ["Orange", "Aqua", "Yellow", "Magenta", "Green", "Violet", "Red"]
-  static let symbolChoices = ["tag", "fork.knife", "bag", "car", "bolt", "house", "heart", "gamecontroller"]
-  /// VoiceOver names for the icon grid, keyed by SF Symbol name.
+
+  /// VoiceOver names for the icon grid, keyed by SF Symbol name. Every symbol in
+  /// `CategoryEditorLogic.iconChoices` has one. A name says what the category
+  /// is for, so the seeded symbols that repeat a plain one stay apart.
   static let symbolNames: [String: String] = [
-    "tag": "Tag",
     "fork.knife": "Food",
+    "car.fill": "Ride",
+    "bolt.fill": "Utilities",
+    "house.fill": "Rent",
+    "building.columns.fill": "Bank",
+    "chart.line.uptrend.xyaxis": "Investments",
+    "shield.fill": "Insurance",
+    "banknote.fill": "Cash",
+    "arrow.left.arrow.right": "Transfer",
+    "bag.fill": "Shopping",
+    "cart.fill": "Groceries",
+    "cross.case.fill": "Health",
+    "arrow.down.circle.fill": "Income",
+    "tag": "Tag",
     "bag": "Bag",
     "car": "Car",
     "bolt": "Bolt",
@@ -41,17 +68,19 @@ enum PaletteSlotOptions {
 
 /// Create-or-edit sheet for a category (OR2; approved `CategoryEditor`
 /// artboard). A large sheet with Cancel left and Save right, both text, as the
-/// other form sheets do. Name, Colour and Icon are shown for both create and
-/// edit: the artboard draws all three on an existing category, and
-/// `CategoryStore.update` changes all three in one write.
+/// other form sheets do. Name and Icon are shown for both create and edit.
+/// The colour row is hidden (S13): an edit keeps the slot the category has,
+/// and a new category gets slot 0. `CategoryStore.update` still changes all
+/// three fields in one write.
 ///
 /// Every decision (what Save enables, the refusal under the name, the message
 /// for a failed save, whether an edit changed anything, the delete footer) is
 /// in `CategoryEditorLogic`. This view only draws them and runs the writes.
 ///
-/// A non-system category ends with a "Delete category" row that asks first.
-/// A system category shows a "System category" caption in that place. System
-/// categories can be renamed, re-coloured and re-iconed; only delete is refused.
+/// A non-system category ends with a "Delete category" row, pinned above the
+/// bottom safe area, that asks first. A system category shows a "System
+/// category" caption in that place. System categories can be renamed and
+/// re-iconed; only delete is refused.
 struct CategoryEditorSheet: View {
   let categoryStore: CategoryStore
   let category: NomiCore.Category?
@@ -82,7 +111,7 @@ struct CategoryEditorSheet: View {
     self.onCreated = onCreated
     let loaded = CategoryEditorLogic.Draft(
       name: category?.name ?? "",
-      paletteSlot: category?.paletteSlot ?? 0,
+      paletteSlot: PaletteSlotOptions.slotOnSave(editing: category?.paletteSlot),
       symbolName: category?.symbolName ?? PaletteSlotOptions.defaultSymbol
     )
     self.original = category == nil ? nil : loaded
@@ -111,18 +140,18 @@ struct CategoryEditorSheet: View {
               .padding(.top, NomiSpacing.xs)
               .padding(.horizontal, NomiSpacing.xxs)
           }
-          sectionLabel("Colour")
-          colourCard
           sectionLabel("Icon")
           iconCard
-          if let category {
-            deleteFooter(for: category)
-          }
         }
         .padding(.horizontal, NomiSpacing.screenGutter)
         .padding(.vertical, NomiSpacing.xs)
       }
       .background(NomiColor.ground)
+      .safeAreaInset(edge: .bottom) {
+        if let category {
+          bottomFooter(for: category)
+        }
+      }
       .onChange(of: draft) { _, _ in
         errorMessage = nil
       }
@@ -188,43 +217,11 @@ struct CategoryEditorSheet: View {
       .nomiCard(padding: EdgeInsets())
   }
 
-  /// Seven swatches sharing the card's width, each with a 44 pt hit area. The
-  /// filled circle is 28; the selected one gets a 2 pt ring just outside it.
-  private var colourCard: some View {
-    HStack(spacing: 0) {
-      ForEach(PaletteSlotOptions.all, id: \.self) { slot in
-        Button {
-          draft.paletteSlot = slot
-        } label: {
-          Circle()
-            .fill(paletteSlot(slot))
-            .frame(width: 28, height: 28)
-            .overlay {
-              if draft.paletteSlot == slot {
-                Circle()
-                  .inset(by: -4)
-                  .stroke(NomiColor.ink, lineWidth: 2)
-              }
-            }
-            .frame(width: NomiSpacing.minTarget, height: NomiSpacing.minTarget)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity)
-        .accessibilityLabel(PaletteSlotOptions.colourName(forSlot: slot))
-        .accessibilityAddTraits(draft.paletteSlot == slot ? .isSelected : [])
-      }
-    }
-    .padding(.horizontal, 6)
-    .frame(maxWidth: .infinity, minHeight: 52)
-    .nomiCard(padding: EdgeInsets())
-  }
-
-  /// Eight icons in a four-column grid, 44 pt hit each. The selected icon sits
+  /// Every icon in a four-column grid, 44 pt hit each. The selected icon sits
   /// on the `track` tile in navy.
   private var iconCard: some View {
     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 4), spacing: 6) {
-      ForEach(PaletteSlotOptions.symbolChoices, id: \.self) { symbol in
+      ForEach(CategoryEditorLogic.iconChoices, id: \.self) { symbol in
         let isSelected = draft.symbolName == symbol
         Button {
           draft.symbolName = symbol
@@ -250,24 +247,30 @@ struct CategoryEditorSheet: View {
     .nomiCard(padding: EdgeInsets())
   }
 
-  /// The delete row for a deletable category, or the caption that says why
-  /// there is none. `CategoryEditorLogic.deleteFooter` decides which.
+  /// The footer pinned to the bottom of a saved category's editor (D21): the
+  /// Delete row, or the caption that says why there is none. The row is 16 pt
+  /// above the bottom safe area. `CategoryEditorLogic.deleteFooter` decides
+  /// which. The row draws its own card, so nothing wraps it here.
   @ViewBuilder
-  private func deleteFooter(for category: NomiCore.Category) -> some View {
-    switch CategoryEditorLogic.deleteFooter(for: category) {
-    case .deleteRow:
-      NomiDestructiveRow(title: "Delete category") {
-        isConfirmingDelete = true
+  private func bottomFooter(for category: NomiCore.Category) -> some View {
+    VStack(spacing: 0) {
+      switch CategoryEditorLogic.deleteFooter(for: category) {
+      case .deleteRow:
+        NomiDestructiveRow(title: "Delete category") {
+          isConfirmingDelete = true
+        }
+      case .systemCaption:
+        Text("System category")
+          .nomiTextStyle(.footnote)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .frame(maxWidth: .infinity)
       }
-      .padding(.horizontal, NomiSpacing.sm)
-      .padding(.top, NomiSpacing.md)
-    case .systemCaption:
-      Text("System category")
-        .nomiTextStyle(.footnote)
-        .foregroundStyle(NomiColor.inkSecondary)
-        .frame(maxWidth: .infinity)
-        .padding(.top, NomiSpacing.md)
     }
+    .padding(.horizontal, NomiSpacing.screenGutter)
+    .padding(.top, NomiSpacing.xs)
+    .padding(.bottom, NomiSpacing.sm)
+    .frame(maxWidth: .infinity)
+    .background(NomiColor.ground)
   }
 
   // MARK: - Actions

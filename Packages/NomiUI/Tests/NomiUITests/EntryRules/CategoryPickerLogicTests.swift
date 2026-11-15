@@ -60,3 +60,31 @@ private func newDraft(_ name: String) -> CategoryEditorLogic.Draft {
     #expect(!CategoryEditorLogic.canSave(newDraft("   "), original: nil, existingNames: names))
   }
 }
+
+/// The picker's rows. A picker opened with `allowsNone` (S3a's rule picker) starts
+/// with the "None" row, which clears the selection. Every other picker is the
+/// category list alone, as it was before S13.
+@Suite struct CategoryPickerRowsTests {
+
+  @Test func rowsWithNoneStartWithTheUnsetRow() {
+    let ids = [UUID(), UUID()]
+    let rows = CategoryPickerLogic.rows(categoryIDs: ids, allowsNone: true)
+    #expect(rows == [.unset, .category(ids[0]), .category(ids[1])])
+  }
+
+  @Test func rowsWithNoneAndNoCategoriesStillOfferNone() {
+    #expect(CategoryPickerLogic.rows(categoryIDs: [], allowsNone: true) == [.unset])
+  }
+
+  @Test func rowsWithoutNoneAreTheCategoriesUnchanged() {
+    let ids = [UUID(), UUID()]
+    #expect(CategoryPickerLogic.rows(categoryIDs: ids, allowsNone: false) == ids.map(CategoryPickerLogic.Row.category))
+  }
+
+  @Test func noneIsOnlyEverTheFirstRow() {
+    let ids = [UUID(), UUID(), UUID()]
+    let rows = CategoryPickerLogic.rows(categoryIDs: ids, allowsNone: true)
+    #expect(rows.filter { $0 == .unset }.count == 1)
+    #expect(rows.first == .unset)
+  }
+}

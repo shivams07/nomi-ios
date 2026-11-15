@@ -11,6 +11,32 @@ import NomiCore
 /// editor calls it too, so a refusal shows while the user types instead of
 /// only after Save.
 enum CategoryEditorLogic {
+  /// The icon grid, in order: the fourteen symbols of `DefaultCategorySeed`
+  /// (NomiApp, copied here verbatim because NomiUI cannot import it), then
+  /// today's extra choices. A repeated symbol keeps its first place, so nothing
+  /// is offered twice. Every seeded category can be re-iconed from this grid.
+  static let iconChoices: [String] = {
+    let seed = [
+      "fork.knife",
+      "car.fill",
+      "bolt.fill",
+      "house.fill",
+      "building.columns.fill",
+      "chart.line.uptrend.xyaxis",
+      "shield.fill",
+      "banknote.fill",
+      "arrow.left.arrow.right",
+      "bag.fill",
+      "cart.fill",
+      "cross.case.fill",
+      "arrow.down.circle.fill",
+      "tag",
+    ]
+    let extras = ["tag", "fork.knife", "bag", "car", "bolt", "house", "heart", "gamecontroller"]
+    var seen = Set<String>()
+    return (seed + extras).filter { seen.insert($0).inserted }
+  }()
+
   /// The three fields the editor edits, as the user has left them.
   struct Draft: Equatable {
     var name: String
@@ -101,7 +127,7 @@ enum CategoryEditorLogic {
   /// checks it before calling the store, and `deleteFooter` reads the same
   /// rule, so a system category is never offered a delete row.
   static func mayDelete<T: SystemFlagged>(_ item: T) -> Bool {
-    CategoryDeletion.isDeletable(item)
+    CategoryRowRules.canDelete(item)
   }
 
   static func deleteFooter<T: SystemFlagged>(for item: T) -> DeleteFooter {

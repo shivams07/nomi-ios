@@ -1,7 +1,7 @@
 import XCTest
 @testable import NomiUI
 
-/// Exercises `CategoryDeletion.isDeletable` against a plain stub, never a
+/// Exercises `CategoryRowRules.canDelete` against a plain stub, never a
 /// real `Category`. Not because one cannot be built: a container constructs
 /// fine under XCTest and only swift-testing traps (see
 /// `InMemoryModelContainer`'s measured note in NomiCore). `SystemFlagged` is
@@ -12,12 +12,13 @@ private struct StubCategory: SystemFlagged {
 }
 
 final class CategoryDeletionTests: XCTestCase {
+  /// The swipe on a system row is disabled by this rule, so it shows nothing.
   func testSystemCategoryIsNotDeletable() {
-    XCTAssertFalse(CategoryDeletion.isDeletable(StubCategory(isSystem: true)))
+    XCTAssertFalse(CategoryRowRules.canDelete(StubCategory(isSystem: true)))
   }
 
   func testCustomCategoryIsDeletable() {
-    XCTAssertTrue(CategoryDeletion.isDeletable(StubCategory(isSystem: false)))
+    XCTAssertTrue(CategoryRowRules.canDelete(StubCategory(isSystem: false)))
   }
 
   /// The alert names the category it will delete, with the question mark the
