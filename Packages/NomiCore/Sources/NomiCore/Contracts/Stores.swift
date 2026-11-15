@@ -374,5 +374,9 @@ extension MailConnectionService {
 public protocol FileImportService: AnyObject, Sendable {
   func inspect(_ url: URL) async throws -> ImportPreview
   func commit(_ url: URL, mapping: ColumnMapping, accountID: UUID?) async throws -> ImportSummary
+  /// Counts what `commit` would import under `mapping` and writes nothing (I-12).
+  /// Throws if the already-imported lookup fails: a failed lookup is a failure
+  /// on the screen, never a zero.
+  func dryRun(_ url: URL, mapping: ColumnMapping) async throws -> ImportDryRun
   func saveMapping(_ mapping: ColumnMapping, signature: String, bankLabel: String) throws
 }

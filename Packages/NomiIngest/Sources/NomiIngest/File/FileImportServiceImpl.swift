@@ -15,6 +15,9 @@ public final class FileImportServiceImpl: FileImportService, @unchecked Sendable
   private let pipeline: any DraftIngesting
   private let calendar: Calendar
   private let now: @Sendable () -> Date
+  /// Read by `dryRun` only. Nil means no store to compare against, so nothing
+  /// is counted as already imported.
+  private let lookup: (any ImportedRowLookup)?
 
   public init(
     mappingStore: ColumnMappingStore = InMemoryColumnMappingStore(),
@@ -24,12 +27,73 @@ public final class FileImportServiceImpl: FileImportService, @unchecked Sendable
       cal.timeZone = TimeZone(identifier: "Asia/Kolkata") ?? .current
       return cal
     }(),
-    now: @escaping @Sendable () -> Date = { Date() }
+    now: @escaping @Sendable () -> Date = { Date() },
+    lookup: (any ImportedRowLookup)? = nil
   ) {
     self.mappingStore = mappingStore
     self.pipeline = pipeline
     self.calendar = calendar
     self.now = now
+    self.lookup = lookup
+  }
+
+  /// Counts what `commit` would import, and writes nothing (I-12). Maps the file
+  /// with the same `RowMapper.mapAll` call `commit` makes, so a row is parsed here
+  /// exactly when commit would parse it. Reads the already-imported IDs once; a
+  /// lookup that throws propagates, and nothing is counted as zero by accident.
+  public func dryRun(_ url: URL, mapping: ColumnMapping) async throws -> ImportDryRun {
+    let file = try FileReader.read(url: url)
+    let signature = FormatSignature.make(headers: file.headers)
+
+    let mapped = RowMapper.mapAll(
+      rows: file.dataRows, mapping: mapping, formatSignature: signature, calendar: calendar
+    )
+
+    // A row is unreadable when RowMapper cannot map it, or when its amount is
+    // outside AmountRules (RowMapper has no upper bound, wave-1 Risk 10). The
+    // second case is counted here so the screen never shows an amount it would
+    // not accept; commit still imports such a row (see ImportDryRunTests).
+    var parsed: [(index: Int, row: ParsedRow)] = []
+    var unreadable: [[String]] = []
+    for (index, entry) in mapped.enumerated() {
+      if let row = entry, AmountRules.isValidTransactionAmount(row.amountMinor) {
+        parsed.append((index: index, row: row))
+      } else {
+        unreadable.append(file.dataRows[index])
+      }
+    }
+
+    // No lookup means no store to compare against: nothing is already imported.
+    let stored: Set<String>
+    if let lookup {
+      stored = try await lookup.externalIDs(source: .file)
+    } else {
+      stored = []
+    }
+
+    var newCount = 0
+    var sample: [ImportDryRunRow] = []
+    for (index, row) in parsed where !stored.contains(row.externalID) {
+      newCount += 1
+      if sample.count < 5 {
+        sample.append(
+          ImportDryRunRow(
+            id: index,
+            date: row.date,
+            descriptionText: row.descriptionText,
+            amountMinor: row.amountMinor,
+            direction: row.direction
+          )
+        )
+      }
+    }
+
+    return ImportDryRun(
+      newCount: newCount,
+      alreadyImportedCount: parsed.count - newCount,
+      unreadable: unreadable,
+      sample: sample
+    )
   }
 
   public func inspect(_ url: URL) async throws -> ImportPreview {

@@ -122,7 +122,10 @@ public final class AppEnvironment: ObservableObject {
     // The pipeline gets its own `ModelContext` inside a `@ModelActor`, off the
     // main actor. That is U4's design, not a choice made here — see
     // `SwiftDataPipelineStore`.
-    let pipeline = IngestPipeline(store: SwiftDataPipelineStore(modelContainer: container))
+    // Held as a local, not only inside the pipeline, because the file importer's
+    // dry run reads already-imported IDs through the same instance (B4).
+    let pipelineStore = SwiftDataPipelineStore(modelContainer: container)
+    let pipeline = IngestPipeline(store: pipelineStore)
     self.pipeline = pipeline
 
     // C4. The resolver reads the same `AccountBinding` rows
@@ -177,9 +180,12 @@ public final class AppEnvironment: ObservableObject {
     // asked again on the next launch, and `ImportPreview.detectedBankLabel`
     // could only ever come from `BankPresets`. `ColumnMappingRecord` has been in
     // the schema since U1 with nothing writing to it.
+    // B4. `lookup` is the same store instance the pipeline writes through, so
+    // the dry run's "already in Nomi" count reads the rows commit writes.
     self.fileImportService = FileImportServiceImpl(
       mappingStore: SwiftDataColumnMappingStore(container: container),
-      pipeline: pipeline
+      pipeline: pipeline,
+      lookup: pipelineStore
     )
 
     // MARK: Post-commit wiring

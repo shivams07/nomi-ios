@@ -13,7 +13,7 @@ import SwiftData
 /// Everything that decides anything still lives above `PipelineStore`, where a
 /// test needs no container — keep it that way.
 @ModelActor
-public actor SwiftDataPipelineStore: PipelineStore {
+public actor SwiftDataPipelineStore: PipelineStore, ImportedRowLookup {
 
   /// Every `ModelContext.fetch` this store has made, so a test can assert how
   /// many round trips a call cost (M10). Both shapes of `duplicateGroups`
@@ -168,6 +168,25 @@ public actor SwiftDataPipelineStore: PipelineStore {
       throw error
     }
     return landed
+  }
+
+  /// B4. Every `externalID` any row holds under `source`, for the dry run's
+  /// already-imported count. Read-only, and on a fresh `ModelContext` rather than
+  /// `modelContext`, so it neither moves `fetchCount` nor shares the pipeline's
+  /// context. `sourceRefs` is a Codable array, so the filter runs in memory after
+  /// the fetch, with only that property loaded.
+  public func externalIDs(source: IngestSource) async throws -> Set<String> {
+    var descriptor = FetchDescriptor<Transaction>()
+    descriptor.propertiesToFetch = [\.sourceRefs]
+    let rows = try ModelContext(modelContainer).fetch(descriptor)
+
+    var ids: Set<String> = []
+    for row in rows {
+      for ref in row.sourceRefs where ref.source == source {
+        ids.insert(ref.externalID)
+      }
+    }
+    return ids
   }
 
   private func fetchRow(id: UUID) throws -> Transaction? {
