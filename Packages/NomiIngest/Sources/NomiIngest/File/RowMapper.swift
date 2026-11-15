@@ -16,8 +16,9 @@ struct ParsedRow {
 
 enum RowMapper {
   /// Every data row of one file, in file order. An element is `nil` when its
-  /// row could not be mapped (bad date, bad amount, or a row shorter than the
-  /// mapping requires) and counts as `skipped`.
+  /// row could not be mapped (bad date, bad amount, an amount outside
+  /// `AmountRules` (B7), or a row shorter than the mapping requires) and counts
+  /// as `skipped` in commit and as unreadable in dry run.
   ///
   /// This is the only way in, and it takes the whole file rather than a row,
   /// because a row's id depends on the rows before it (W1-11): `k` is how many
@@ -115,8 +116,9 @@ enum RowMapper {
       return (abs(minor), minor < 0 ? .debit : .credit)
 
     case .separateColumns(let debitIndex, let creditIndex):
-      let debit = field(row, debitIndex).flatMap(parseAmountMinor) ?? 0
-      let credit = field(row, creditIndex).flatMap(parseAmountMinor) ?? 0
+      guard let debit = separateCell(row, debitIndex), let credit = separateCell(row, creditIndex) else {
+        return nil
+      }
       if debit > 0 { return (debit, .debit) }
       if credit > 0 { return (credit, .credit) }
       return nil
@@ -131,19 +133,40 @@ enum RowMapper {
     }
   }
 
-  /// Parses a plain decimal amount string (optionally with `,` grouping
-  /// separators) into paise, via `Decimal` — never `Double` (R9).
-  private static func parseAmountMinor(_ raw: String) -> Int? {
-    let cleaned = raw
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-      .replacingOccurrences(of: ",", with: "")
-    guard !cleaned.isEmpty, let decimal = Decimal(string: cleaned) else { return nil }
-    let minor = decimal * 100
-    var rounded = Decimal()
-    var mutableMinor = minor
-    NSDecimalRound(&rounded, &mutableMinor, 0, .plain)
-    return NSDecimalNumber(decimal: rounded).intValue
+  /// One debit or credit cell of a separate-column row, as signed paise. A blank
+  /// cell, or text that is not a number, reads as 0: bank files leave the column a
+  /// row does not use empty or put a dash in it, and that is not a refusal. A
+  /// number the rule refuses (beyond `AmountRules.maximumMinor`, or with more than
+  /// two decimal places) is nil, so the whole row is refused rather than read from
+  /// its other column.
+  private static func separateCell(_ row: [String], _ index: Int) -> Int? {
+    guard let raw = field(row, index) else { return 0 }
+    switch parseAmount(raw) {
+    case .success(let minor): return minor
+    case .failure(.notANumber): return 0
+    case .failure(.tooManyFractionDigits), .failure(.outOfRange): return nil
+    }
   }
+
+  /// A file amount in paise, or nil when it is refused. B7: this is `AmountText`,
+  /// the rule manual entry uses (R8b, I-8), not a `Decimal` conversion. `Decimal`
+  /// read "1.2.3" as 1.2, and its `Int` conversion silently truncated anything
+  /// beyond `Int` (wave-1 Risk 10).
+  private static func parseAmountMinor(_ raw: String) -> Int? {
+    try? parseAmount(raw).get()
+  }
+
+  private static func parseAmount(_ raw: String) -> Result<Int, AmountTextRejection> {
+    AmountText.parse(
+      raw.trimmingCharacters(in: .whitespacesAndNewlines),
+      locale: amountLocale,
+      allowNegative: true
+    )
+  }
+
+  /// Pinned to en_US_POSIX so a file reads the same on every device: "." is the
+  /// decimal separator and "," is grouping, as bank exports write them.
+  private static let amountLocale = Locale(identifier: "en_US_POSIX")
 
   /// What `XLSXParser` writes for a real date cell.
   static let isoDateFormat = "yyyy-MM-dd"
