@@ -56,6 +56,13 @@ struct BudgetEditorSheet: View {
           categoryCard
           sectionLabel("Monthly amount")
           amountCard
+          if let hint = BudgetAmountHint.text(for: amountText) {
+            Text(hint)
+              .nomiTextStyle(.footnote)
+              .foregroundStyle(NomiColor.inkSecondary)
+              .padding(.top, NomiSpacing.xs)
+              .padding(.horizontal, NomiSpacing.xxs)
+          }
           if let errorMessage {
             Text(errorMessage)
               .nomiTextStyle(.caption)
@@ -185,11 +192,11 @@ struct BudgetEditorSheet: View {
 
   /// Only ever sets. Removal is `remove()`, behind the Remove row's confirmation.
   private func save() {
-    guard let categoryID = selectedCategoryID,
-      case .set(let amount) = BudgetSaveIntent.resolve(amountMinor: amountMinor)
-    else { return }
     do {
-      try budgetStore.setBudget(categoryID: categoryID, amountMinor: amount)
+      guard
+        try BudgetSaveAction.perform(
+          categoryID: selectedCategoryID, amountMinor: amountMinor, store: budgetStore)
+      else { return }
       onSaved?()
       dismiss()
     } catch {

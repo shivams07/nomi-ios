@@ -53,37 +53,76 @@ final class IntentDraftMappingTests: XCTestCase {
 
   // MARK: - Parsing what Shortcuts collected
 
-  /// The amount arrives as text: `@Parameter` will not take a `Decimal`, and a
-  /// `Double` cannot hold 12.99 exactly.
-  func testATypedAmountParsesExactly() {
-    XCTAssertEqual(IntentDraftMapping.decimal(from: "12.99"), .success(Decimal(string: "12.99")!))
+  /// R8b. The amount arrives as text and is parsed by `AmountText.parse` in en_IN.
+  /// Fixture table for the review: every row the spec names.
+  func testTheTextParserTable() {
+    let rows: [(text: String, expected: Result<Int, IntentDraftMapping.Failure>)] = [
+      ("12.99", .success(1299)),
+      ("1,234.50", .success(123_450)),
+      ("₹499", .success(49_900)),
+      ("INR 499", .success(49_900)),
+      ("Rs. 499", .success(49_900)),
+      ("Rs 499", .success(49_900)),
+      ("  499  ", .success(49_900)),
+      ("₹ 1,00,000", .success(10_000_000)),
+      ("", .failure(.notANumber)),
+      ("   ", .failure(.notANumber)),
+      ("abc", .failure(.notANumber)),
+      ("₹", .failure(.notANumber)),
+      ("2k", .failure(.notANumber)),
+      ("12.999", .failure(.tooPrecise)),
+      ("0", .failure(.outOfRange)),
+      ("-5", .failure(.outOfRange)),
+      ("1000000000", .success(100_000_000_000)),
+      ("1000000000.01", .failure(.outOfRange)),
+      ("999999999999999999999", .failure(.outOfRange)),
+    ]
+    let en = Locale(identifier: "en_IN")
+    for row in rows {
+      XCTAssertEqual(
+        IntentDraftMapping.minorUnits(fromText: row.text, locale: en), row.expected,
+        "failed for \(row.text)")
+    }
   }
 
   /// `Decimal(string:)` stops at the first comma, so an unstripped "1,234.50"
-  /// parses as 1 - a hundred-fold error on an amount the user typed correctly,
-  /// with nothing thrown. Group separators are removed before parsing.
+  /// parses as 1 - a hundred-fold error on an amount the user typed correctly.
   func testGroupSeparatorsDoNotTruncateTheAmount() throws {
     XCTAssertEqual(
-      IntentDraftMapping.decimal(from: "1,234.50"), .success(Decimal(string: "1234.50")!))
+      IntentDraftMapping.minorUnits(fromText: "1,234.50", locale: Locale(identifier: "en_IN")),
+      .success(123_450), "not 100")
 
     let made = try draftText("1,234.50").get()
     XCTAssertEqual(made.amountMinor, 123450, "not 100")
   }
 
-  /// Dictation and typing both tend to include the symbol.
-  func testALeadingCurrencySymbolIsStripped() {
-    for text in ["₹499", "INR 499", "Rs. 499", "Rs 499", "  499  "] {
-      XCTAssertEqual(
-        IntentDraftMapping.decimal(from: text), .success(Decimal(499)),
-        "failed for \(text)")
-    }
+  /// The amount is checked before the description, so a bad amount with a blank
+  /// description reports the amount.
+  func testAmountIsCheckedBeforeDescription() {
+    let result = IntentDraftMapping.draft(
+      amountText: "2k", note: nil, categoryID: nil, isIncome: false,
+      locale: Locale(identifier: "en_IN"))
+    XCTAssertEqual(failure(result), .notANumber)
   }
 
-  func testTextThatIsNotANumberIsDeclined() {
-    for text in ["", "   ", "abc", "₹"] {
-      XCTAssertEqual(
-        IntentDraftMapping.decimal(from: text), .failure(.notANumber),
-        "failed for \(text)")
+  /// The Decimal path keeps its precision rule and its upper bound is now the
+  /// app's maximum, not Int.max.
+  func testTheDecimalOverloadCapsAtTheMaximum() throws {
+    XCTAssertEqual(
+      IntentDraftMapping.minorUnits(from: try XCTUnwrap(Decimal(string: "1000000000.01"))),
+      .failure(.outOfRange))
+    XCTAssertEqual(
+      IntentDraftMapping.minorUnits(from: try XCTUnwrap(Decimal(string: "1000000000"))),
+      .success(100_000_000_000))
+  }
+
+  /// The copy the user hears for an amount the store refuses. R8b step 7.
+  func testOutOfRangeCopyIsExact() {
+    XCTAssertEqual(
+      String(localized: AddTransactionError.outOfRange.localizedStringResource),
+      "Amounts must be from ₹0.01 to ₹1,00,00,00,000.")
+    guard case .outOfRange = AddTransactionError(.outOfRange) else {
+      return XCTFail("IntentDraftMapping.Failure.outOfRange must map to AddTransactionError.outOfRange")
     }
   }
 
@@ -123,6 +162,22 @@ final class IntentDraftMappingTests: XCTestCase {
   /// description even when the amount is fine — neither guard shadows the other.
   func testAPreciseAmountIsRejectedEvenWithAGoodDescription() {
     XCTAssertEqual(failure(draft(amount: "12.999", note: "Coffee")), .tooPrecise)
+  }
+
+  /// R8b, ruling 4. When the amount and the description both fail, the amount error is
+  /// reported. The Decimal overload used to report a blank description first.
+  func testTheAmountErrorIsReportedWhenTheDescriptionIsAlsoBlank() throws {
+    let precise = try XCTUnwrap(Decimal(string: "12.999"))
+    XCTAssertEqual(
+      failure(IntentDraftMapping.draft(amount: precise, note: "   ", categoryID: nil, isIncome: false)),
+      .tooPrecise)
+    XCTAssertEqual(
+      failure(IntentDraftMapping.draft(amount: precise, note: nil, categoryID: nil, isIncome: false)),
+      .tooPrecise)
+    let zero = try XCTUnwrap(Decimal(string: "0"))
+    XCTAssertEqual(
+      failure(IntentDraftMapping.draft(amount: zero, note: nil, categoryID: nil, isIncome: false)),
+      .outOfRange)
   }
 
   func testTheCategoryIsCarriedThroughAndIsOptional() throws {
@@ -176,7 +231,8 @@ final class IntentDraftMappingTests: XCTestCase {
     ManualTransactionDraft, IntentDraftMapping.Failure
   > {
     IntentDraftMapping.draft(
-      amountText: amountText, note: "Coffee", categoryID: nil, isIncome: false)
+      amountText: amountText, note: "Coffee", categoryID: nil, isIncome: false,
+      locale: Locale(identifier: "en_IN"))
   }
 
   private func draft(

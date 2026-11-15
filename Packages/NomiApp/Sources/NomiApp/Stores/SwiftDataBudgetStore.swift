@@ -28,13 +28,12 @@ public final class SwiftDataBudgetStore: BudgetStore {
     self.coordinator = coordinator
   }
 
-  /// Zero means remove, matching `FakeBudgetStore` — which is the shape
-  /// `BudgetEditorSheet` was written against, so a store that stored a zero
-  /// budget instead would render a bar at infinity percent.
+  /// Refuses an amount outside `AmountRules` (R8b) before any read or write. Zero is
+  /// refused, not treated as removal: removal is `removeBudget`, which the editor reaches
+  /// only through its Remove row's confirmation.
   public func setBudget(categoryID: UUID, amountMinor: Int) throws {
-    guard amountMinor > 0 else {
-      try removeBudget(categoryID: categoryID)
-      return
+    guard AmountRules.isValidTransactionAmount(amountMinor) else {
+      throw AmountValidationError.outOfRange(amountMinor: amountMinor)
     }
 
     if let existing = try budget(categoryID: categoryID) {
@@ -185,6 +184,9 @@ public final class SwiftDataAccountStore: AccountStore {
   /// Validation runs **before** the lookup, so a malformed edit of an account
   /// that no longer exists throws rather than silently succeeding. An unknown
   /// id is still a no-op, the shape `rename` and `setArchived` already have.
+  ///
+  /// An opening balance outside AmountRules.isValidOpeningBalance throws
+  /// AmountValidationError.outOfRange (R8b), before the lookup like the other rules.
   public func update(
     _ id: UUID,
     displayName: String,
@@ -195,6 +197,9 @@ public final class SwiftDataAccountStore: AccountStore {
   ) throws {
     let trimmedName = try Self.validated(
       displayName: displayName, lastFour: lastFour, kindRaw: kindRaw)
+    if let opening = openingBalanceMinor, !AmountRules.isValidOpeningBalance(opening) {
+      throw AmountValidationError.outOfRange(amountMinor: opening)
+    }
 
     guard let account = try account(id: id) else { return }
     account.displayName = trimmedName

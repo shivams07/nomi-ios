@@ -102,7 +102,9 @@ final class AmountValidationStoreTests: XCTestCase {
 
     XCTAssertThrowsError(
       try editor.update(id, amountMinor: 100_000_000_001, date: fixedNow, descriptionText: "COFFEE", note: nil)
-    )
+    ) { error in
+      XCTAssertEqual(error as? AmountValidationError, .outOfRange(amountMinor: 100_000_000_001))
+    }
 
     let refetched = try XCTUnwrap(
       context.fetch(FetchDescriptor<Transaction>(predicate: #Predicate<Transaction> { $0.id == id })).first
@@ -139,6 +141,8 @@ final class AmountValidationStoreTests: XCTestCase {
 
     XCTAssertThrowsError(
       try editor.update(id, amountMinor: stored + 1, date: newDate, descriptionText: "IMPORTED", note: nil)
-    )
+    ) { error in
+      XCTAssertEqual(error as? AmountValidationError, .outOfRange(amountMinor: stored + 1))
+    }
   }
 }

@@ -257,6 +257,72 @@ final class AccountStoreTests: XCTestCase {
 
   // MARK: - W2-1: update
 
+  /// R8b, step 3. An opening balance beyond ±10^11 paise is refused with
+  /// `AmountValidationError.outOfRange`, before the lookup, and changes nothing: not the
+  /// balance, not the name typed alongside it.
+  func testUpdateRefusesAnOpeningBalanceBeyondTheBounds() throws {
+    let (store, context, _) = try makeStore()
+    let account = try store.create(
+      displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank")
+    try store.update(
+      account.id, displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471",
+      kindRaw: "bank", openingBalanceMinor: 25_000)
+
+    for balance in [100_000_000_001, -100_000_000_001] {
+      XCTAssertThrowsError(
+        try store.update(
+          account.id, displayName: "HDFC Renamed", institution: "HDFC Bank", lastFour: "4471",
+          kindRaw: "bank", openingBalanceMinor: balance)
+      ) { error in
+        XCTAssertEqual(error as? AmountValidationError, .outOfRange(amountMinor: balance))
+      }
+    }
+
+    let stored = try XCTUnwrap(context.fetch(FetchDescriptor<Account>()).first)
+    XCTAssertEqual(stored.openingBalanceMinor, 25_000, "a refused balance was written")
+    XCTAssertEqual(stored.displayName, "HDFC", "a refused edit renamed the account")
+  }
+
+  /// The bounds are inclusive: -10^11, 0, 10^11 and nil are all stored as given.
+  func testUpdateAcceptsOpeningBalanceBounds() throws {
+    let (store, context, _) = try makeStore()
+    let account = try store.create(
+      displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank")
+
+    for balance in [-100_000_000_000, 0, 100_000_000_000, nil] as [Int?] {
+      try store.update(
+        account.id, displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471",
+        kindRaw: "bank", openingBalanceMinor: balance)
+      let stored = try XCTUnwrap(context.fetch(FetchDescriptor<Account>()).first)
+      XCTAssertEqual(stored.openingBalanceMinor, balance)
+    }
+  }
+
+  /// The fake is what previews and UI tests use. It refuses the same balance and
+  /// changes nothing, as the real store does.
+  func testTheFakeRefusesTheSameOpeningBalance() throws {
+    let fake = FakeAccountStore(accounts: [])
+    let account = try fake.create(
+      displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank")
+
+    for balance in [100_000_000_001, -100_000_000_001] {
+      XCTAssertThrowsError(
+        try fake.update(
+          account.id, displayName: "HDFC Renamed", institution: "HDFC Bank", lastFour: "4471",
+          kindRaw: "bank", openingBalanceMinor: balance)
+      ) { error in
+        XCTAssertEqual(error as? AmountValidationError, .outOfRange(amountMinor: balance))
+      }
+    }
+    XCTAssertNil(fake.accounts[0].openingBalanceMinor)
+    XCTAssertEqual(fake.accounts[0].displayName, "HDFC")
+
+    try fake.update(
+      account.id, displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471",
+      kindRaw: "bank", openingBalanceMinor: -100_000_000_000)
+    XCTAssertEqual(fake.accounts[0].openingBalanceMinor, -100_000_000_000)
+  }
+
   /// The done-when. `update` re-runs `create`'s rules rather than trusting the
   /// edit sheet, for the reason `create` stopped trusting the create sheet: a
   /// partial `lastFour` is the `cardFragment` half of the `AccountBinding` key

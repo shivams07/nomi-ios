@@ -9,10 +9,11 @@ public final class FakeBudgetStore: BudgetStore {
     self.storedBudgets = budgets
   }
 
+  /// Refuses an amount outside `AmountRules` before changing anything, as the real store
+  /// does (R8b). Zero is refused, not treated as removal: removal is `removeBudget` alone.
   public func setBudget(categoryID: UUID, amountMinor: Int) throws {
-    if amountMinor == 0 {
-      try removeBudget(categoryID: categoryID)
-      return
+    guard AmountRules.isValidTransactionAmount(amountMinor) else {
+      throw AmountValidationError.outOfRange(amountMinor: amountMinor)
     }
     if let existing = storedBudgets.first(where: { $0.categoryID == categoryID }) {
       existing.amountMinor = amountMinor

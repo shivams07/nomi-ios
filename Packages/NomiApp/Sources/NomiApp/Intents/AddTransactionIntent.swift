@@ -61,7 +61,13 @@ struct AddTransactionIntent: AppIntent {
       throw AddTransactionError(failure)
     }
 
-    _ = try AppServices.shared.transactionStore.add(draft)
+    // The store is the last check (R8). A refusal there speaks the same copy as a parse
+    // refusal; any other error propagates as it always has.
+    do {
+      _ = try AppServices.shared.transactionStore.add(draft)
+    } catch is AmountValidationError {
+      throw AddTransactionError.outOfRange
+    }
     return .result(dialog: IntentDialog(stringLiteral: IntentDraftMapping.confirmation(for: draft)))
   }
 }
@@ -92,7 +98,7 @@ enum AddTransactionError: Error, CustomLocalizedStringResourceConvertible {
     case .tooPrecise:
       return "Amounts can have at most two decimal places."
     case .outOfRange:
-      return "That is not an amount Nomi can record."
+      return "Amounts must be from ₹0.01 to ₹1,00,00,00,000."
     case .blankDescription:
       return "Say what the transaction was for."
     case .notANumber:

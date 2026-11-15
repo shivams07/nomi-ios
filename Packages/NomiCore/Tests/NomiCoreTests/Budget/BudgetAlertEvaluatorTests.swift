@@ -203,7 +203,8 @@ struct BudgetAlertEvaluatorTests {
   // MARK: - Guards
 
   @Test func aRemovedBudgetNeverFires() {
-    // setBudget(amountMinor: 0) means remove. A zero denominator arrives here as
+    // setBudget refuses zero since R8b; the guard stays for budget rows written by older
+    // builds and synced in. A zero denominator arrives here as
     // .infinity, which satisfies any threshold.
     let removed = BudgetProgress(
       id: groceries,

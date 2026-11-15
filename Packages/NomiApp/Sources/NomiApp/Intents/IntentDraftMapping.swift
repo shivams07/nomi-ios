@@ -13,40 +13,46 @@ public enum IntentDraftMapping {
     /// More than two fraction digits. Rupees have two, and rounding someone's
     /// amount for them is how a ledger stops reconciling with a bank statement.
     case tooPrecise
-    /// Zero, negative, or larger than the app can represent.
+    /// Zero, negative, or beyond `AmountRules.maximumMinor`.
     case outOfRange
     case blankDescription
     /// The amount field did not contain a number at all.
     case notANumber
   }
 
-  /// Parses what Shortcuts collected into an exact `Decimal`.
+  /// Parses what Shortcuts collected into minor units, through the same parser the
+  /// editor fields use: `AmountText.parse`, in the device locale unless the caller says
+  /// otherwise.
   ///
   /// The amount parameter is a `String` because `AppIntents` will not accept a
   /// `Decimal` - `@Parameter` requires `_IntentValue`, which `Decimal` does not
-  /// conform to. `Double` is the obvious alternative and is not usable here:
-  /// the whole point of this file is that 12.99 has no exact `Double`, so
-  /// taking one would either lose a paisa or force a rounding step that
-  /// `tooPrecise` exists to refuse.
+  /// conform to. A `Double` cannot hold 12.99 exactly, so the text is parsed digit by
+  /// digit and never through a binary float.
   ///
-  /// Group separators are stripped before parsing. `Decimal(string:)` stops at
-  /// the first comma, so "1,234.50" would otherwise parse as 1 - a silent
-  /// hundred-fold error on an amount the user typed correctly. A leading
-  /// currency symbol is stripped for the same reason.
-  public static func decimal(from text: String) -> Result<Decimal, Failure> {
+  /// A leading currency symbol ("₹", "INR", "Rs.", "Rs") is stripped first. Anything
+  /// the parser refuses maps across: `notANumber` stays, `tooManyFractionDigits` becomes
+  /// `tooPrecise`, and `outOfRange` stays. A parsed zero or negative is `outOfRange`:
+  /// the intent records expenses and income, and direction is `isIncome`, not a sign.
+  public static func minorUnits(fromText text: String, locale: Locale = .current) -> Result<Int, Failure> {
     var cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
     for prefix in ["₹", "INR", "Rs.", "Rs"] where cleaned.hasPrefix(prefix) {
       cleaned = String(cleaned.dropFirst(prefix.count))
       break
     }
-    cleaned = cleaned
-      .replacingOccurrences(of: ",", with: "")
-      .trimmingCharacters(in: .whitespaces)
+    cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !cleaned.isEmpty else { return .failure(.notANumber) }
 
-    guard !cleaned.isEmpty, let value = Decimal(string: cleaned), value.isFinite else {
+    switch AmountText.parse(cleaned, locale: locale, allowNegative: true) {
+    case .failure(.notANumber):
       return .failure(.notANumber)
+    case .failure(.tooManyFractionDigits):
+      return .failure(.tooPrecise)
+    case .failure(.outOfRange):
+      return .failure(.outOfRange)
+    case .success(let value):
+      guard value > 0 else { return .failure(.outOfRange) }
+      return .success(value)
     }
-    return .success(value)
   }
 
   /// Rupees to paise, by integer arithmetic on `Decimal`.
@@ -71,8 +77,10 @@ public enum IntentDraftMapping {
     NSDecimalRound(&whole, &copy, 0, .plain)
     guard whole == hundredths else { return .failure(.tooPrecise) }
 
+    // The bound is the app's maximum, not Int.max: a value above it is refused here so
+    // the intent and the store agree on one range (R8b).
     let number = NSDecimalNumber(decimal: whole)
-    guard number.compare(NSDecimalNumber(value: Int.max)) != .orderedDescending else {
+    guard number.compare(NSDecimalNumber(value: AmountRules.maximumMinor)) != .orderedDescending else {
       return .failure(.outOfRange)
     }
     let minor = number.intValue
@@ -92,17 +100,22 @@ public enum IntentDraftMapping {
     note: String?,
     categoryID: UUID?,
     isIncome: Bool,
-    now: Date = Date()
+    now: Date = Date(),
+    locale: Locale = .current
   ) -> Result<ManualTransactionDraft, Failure> {
-    switch decimal(from: amountText) {
+    // The amount is checked first, so a bad amount is reported even when the description
+    // is also missing (R8b).
+    switch minorUnits(fromText: amountText, locale: locale) {
     case .failure(let failure):
       return .failure(failure)
-    case .success(let amount):
-      return draft(
-        amount: amount, note: note, categoryID: categoryID, isIncome: isIncome, now: now)
+    case .success(let minor):
+      return make(
+        minorUnits: minor, note: note, categoryID: categoryID, isIncome: isIncome, now: now)
     }
   }
 
+  /// Behaviour change (R8b, ruling 4): the amount is checked before the description, as
+  /// `draft(amountText:)` already does. Before R8b a blank description was reported first.
   public static func draft(
     amount: Decimal,
     note: String?,
@@ -110,22 +123,33 @@ public enum IntentDraftMapping {
     isIncome: Bool,
     now: Date = Date()
   ) -> Result<ManualTransactionDraft, Failure> {
-    let description = (note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !description.isEmpty else { return .failure(.blankDescription) }
-
     switch minorUnits(from: amount) {
     case .failure(let failure):
       return .failure(failure)
     case .success(let minor):
-      return .success(
-        ManualTransactionDraft(
-          date: now,
-          amountMinor: minor,
-          descriptionText: description,
-          direction: isIncome ? .credit : .debit,
-          categoryID: categoryID,
-          accountID: nil))
+      return make(
+        minorUnits: minor, note: note, categoryID: categoryID, isIncome: isIncome, now: now)
     }
+  }
+
+  /// The one build both entry points share. Trims the note; a blank note is refused.
+  private static func make(
+    minorUnits minor: Int,
+    note: String?,
+    categoryID: UUID?,
+    isIncome: Bool,
+    now: Date
+  ) -> Result<ManualTransactionDraft, Failure> {
+    let description = (note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !description.isEmpty else { return .failure(.blankDescription) }
+    return .success(
+      ManualTransactionDraft(
+        date: now,
+        amountMinor: minor,
+        descriptionText: description,
+        direction: isIncome ? .credit : .debit,
+        categoryID: categoryID,
+        accountID: nil))
   }
 
   /// What Siri reads back. Deliberately states the direction as well as the

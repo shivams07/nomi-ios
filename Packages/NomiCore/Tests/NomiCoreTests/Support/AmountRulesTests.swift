@@ -82,6 +82,59 @@ struct AmountRulesTests {
     #expect(AmountText.filtered("12\u{202F}345,67", locale: locale("fr_FR"), allowNegative: false) == "12345,67")
   }
 
+  /// R8b, I-8 amendment. Fixture table for the review: the rows the spec names, then
+  /// the boundary cases for the two amended rules. `minorUnits` must agree with it.
+  @Test func parseTableMatchesTheAmendedRules() {
+    struct Row {
+      let text: String
+      let localeID: String
+      let allowNegative: Bool
+      let expected: Result<Int, AmountTextRejection>
+    }
+    let rows: [Row] = [
+      Row(text: "1.2 5", localeID: "en_IN", allowNegative: false, expected: .failure(.notANumber)),
+      Row(text: "1,234.5,0", localeID: "en_IN", allowNegative: false, expected: .failure(.notANumber)),
+      Row(text: "00000000001.50", localeID: "en_IN", allowNegative: false, expected: .success(150)),
+      Row(text: "0001000000000", localeID: "en_IN", allowNegative: false, expected: .success(100_000_000_000)),
+      Row(text: "10000000000", localeID: "en_IN", allowNegative: false, expected: .failure(.outOfRange)),
+      Row(text: "1000000000.01", localeID: "en_IN", allowNegative: false, expected: .failure(.outOfRange)),
+      Row(text: "12.999", localeID: "en_IN", allowNegative: false, expected: .failure(.tooManyFractionDigits)),
+      Row(text: "12345678901.999", localeID: "en_IN", allowNegative: false, expected: .failure(.tooManyFractionDigits)),
+      Row(text: "2k", localeID: "en_IN", allowNegative: false, expected: .failure(.notANumber)),
+      Row(text: "", localeID: "en_IN", allowNegative: true, expected: .failure(.notANumber)),
+      Row(text: ".", localeID: "en_IN", allowNegative: true, expected: .failure(.notANumber)),
+      Row(text: "-", localeID: "en_IN", allowNegative: true, expected: .failure(.notANumber)),
+      Row(text: "0", localeID: "en_IN", allowNegative: false, expected: .success(0)),
+      Row(text: "-500", localeID: "en_IN", allowNegative: true, expected: .success(-50_000)),
+      Row(text: "12 345,67", localeID: "fr_FR", allowNegative: false, expected: .success(1_234_567)),
+      // boundary: the magnitude limit is inclusive
+      Row(text: "1000000000", localeID: "en_IN", allowNegative: false, expected: .success(100_000_000_000)),
+      Row(text: "-1000000000", localeID: "en_IN", allowNegative: true, expected: .success(-100_000_000_000)),
+      Row(text: "1000000000.00", localeID: "en_IN", allowNegative: false, expected: .success(100_000_000_000)),
+      Row(text: "1000000000.001", localeID: "en_IN", allowNegative: false, expected: .failure(.tooManyFractionDigits)),
+      Row(text: "12345678901", localeID: "en_IN", allowNegative: false, expected: .failure(.outOfRange)),
+      // boundary: leading zeros do not count toward the ten-digit limit
+      Row(text: "0000000000000000000012", localeID: "en_IN", allowNegative: false, expected: .success(1_200)),
+      Row(text: "00000000001.5", localeID: "en_IN", allowNegative: false, expected: .success(150)),
+      // boundary: a grouping character after the decimal separator is refused
+      Row(text: "1.2,5", localeID: "en_IN", allowNegative: false, expected: .failure(.notANumber)),
+      Row(text: "1.2,500", localeID: "en_IN", allowNegative: false, expected: .failure(.notANumber)),
+      Row(text: "1,2,3", localeID: "en_IN", allowNegative: false, expected: .success(12_300)),
+      // the first failure in the check order wins
+      Row(text: "1.2 999", localeID: "en_IN", allowNegative: false, expected: .failure(.notANumber)),
+    ]
+    for row in rows {
+      let actual = AmountText.parse(row.text, locale: locale(row.localeID), allowNegative: row.allowNegative)
+      #expect(actual == row.expected, "parse(\(row.text)) in \(row.localeID), allowNegative \(row.allowNegative)")
+      // minorUnits is parse.get(): a success is its value, a failure is nil.
+      let minor = AmountText.minorUnits(row.text, locale: locale(row.localeID), allowNegative: row.allowNegative)
+      switch row.expected {
+      case .success(let value): #expect(minor == value, "minorUnits(\(row.text))")
+      case .failure: #expect(minor == nil, "minorUnits(\(row.text)) should be nil")
+      }
+    }
+  }
+
   @Test func aFilteredEntryParsesToTheSameAmountAsTheRawEntry() {
     // The field filters on each keystroke and the save path parses the result, so
     // the two must agree for every text a person can type.

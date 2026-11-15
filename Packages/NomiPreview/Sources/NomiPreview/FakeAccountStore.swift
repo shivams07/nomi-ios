@@ -63,6 +63,11 @@ public final class FakeAccountStore: AccountStore {
     guard AccountKind(rawValue: kindRaw) != nil else {
       throw AccountStoreError.unknownKind(kindRaw)
     }
+    // R8b: an opening balance outside AmountRules is refused before the lookup, as the
+    // real store refuses it.
+    if let opening = openingBalanceMinor, !AmountRules.isValidOpeningBalance(opening) {
+      throw AmountValidationError.outOfRange(amountMinor: opening)
+    }
 
     guard let account = accounts.first(where: { $0.id == id }) else { return }
     account.displayName = trimmedName
