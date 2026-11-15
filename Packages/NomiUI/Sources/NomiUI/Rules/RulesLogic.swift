@@ -83,14 +83,20 @@ enum RuleScopeSummary {
   }
 }
 
-/// Formats `RuleStore.preview(pattern:)`'s live match count.
+/// Formats `RuleStore.preview(pattern:)`'s live match count through the catalog's
+/// plural variations (F6b, S10), so 0, 1 and 2 each read correctly.
 enum RuleMatchSummary {
   static func text(for count: Int) -> String {
-    switch count {
-    case 0: return "Matches 0 transactions"
-    case 1: return "Matches 1 transaction"
-    default: return "Matches \(count) transactions"
-    }
+    String(localized: "\(count) rows match", bundle: .module)
+  }
+}
+
+/// The built-in section shows its first `rowLimit` rows until "Show all" is tapped (S10).
+enum RuleBuiltInPreview {
+  static let rowLimit = 3
+
+  static func visible<Row>(_ rows: [Row], showAll: Bool) -> [Row] {
+    showAll ? rows : Array(rows.prefix(rowLimit))
   }
 }
 

@@ -11,6 +11,31 @@ final class RuleRowActionsTests: XCTestCase {
   }
 }
 
+/// The built-in section's "Show all" preview (S10): three rows, then all of them.
+final class RuleBuiltInPreviewTests: XCTestCase {
+  private let rows = Array(0..<47)
+
+  func testLimitIsThree() {
+    XCTAssertEqual(RuleBuiltInPreview.rowLimit, 3)
+  }
+
+  func testCollapsedShowsTheFirstThreeRows() {
+    XCTAssertEqual(RuleBuiltInPreview.visible(rows, showAll: false), [0, 1, 2])
+  }
+
+  func testShowAllShowsEveryRow() {
+    XCTAssertEqual(RuleBuiltInPreview.visible(rows, showAll: true), rows)
+  }
+
+  func testFewerThanTheLimitShowsEveryRowCollapsed() {
+    XCTAssertEqual(RuleBuiltInPreview.visible([0, 1], showAll: false), [0, 1])
+  }
+
+  func testExactlyTheLimitShowsEveryRowCollapsed() {
+    XCTAssertEqual(RuleBuiltInPreview.visible([0, 1, 2], showAll: false), [0, 1, 2])
+  }
+}
+
 final class RuleRowSubtitleTests: XCTestCase {
   func testSystemRuleKeepsSystemTag() {
     XCTAssertEqual(RuleRowSubtitle.text(categoryName: "Food & Dining", isSystem: true), "Food & Dining · System")
