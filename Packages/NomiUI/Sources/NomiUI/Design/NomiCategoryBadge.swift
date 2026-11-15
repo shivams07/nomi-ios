@@ -29,11 +29,19 @@ public struct NomiCategoryBadge: View {
   public let size: CGFloat
   public let style: Style
 
-  public init(symbolName: String, paletteSlot: Int?, size: CGFloat, style: Style = .palette) {
+  /// The symbol a category badge shows for an uncategorised row. A neutral
+  /// badge with this symbol draws in the warning tones (amber, Activity board).
+  static let uncategorisedSymbolName = "questionmark"
+
+  public init(symbolName: String, paletteSlot: Int?, size: CGFloat, style: Style = .neutral) {
     self.symbolName = symbolName
     self.slot = paletteSlot
     self.size = size
     self.style = style
+  }
+
+  private var isUncategorised: Bool {
+    symbolName == Self.uncategorisedSymbolName
   }
 
   private var resolvedFill: Color {
@@ -41,7 +49,7 @@ public struct NomiCategoryBadge: View {
     case .palette:
       return paletteSlot(slot ?? -1)
     case .neutral:
-      return NomiColor.iconTile
+      return isUncategorised ? NomiColor.warningTint : NomiColor.iconTile
     }
   }
 
@@ -50,8 +58,15 @@ public struct NomiCategoryBadge: View {
     case .palette:
       return NomiColor.onPrimary
     case .neutral:
-      return NomiColor.iconGlyph
+      return isUncategorised ? NomiColor.warning : NomiColor.iconGlyph
     }
+  }
+
+  /// The side of the square the glyph is fitted into: 0.45 of the badge on
+  /// both sides (D18). A width-only frame let a tall symbol such as
+  /// "fork.knife" run past the circle's centre; a square cannot.
+  static func glyphSide(for size: CGFloat) -> CGFloat {
+    size * 0.45
   }
 
   var resolvedFillForTesting: Color { resolvedFill }
@@ -65,7 +80,7 @@ public struct NomiCategoryBadge: View {
         Image(systemName: symbolName)
           .resizable()
           .scaledToFit()
-          .frame(width: size * 0.45)
+          .frame(width: Self.glyphSide(for: size), height: Self.glyphSide(for: size))
           .foregroundStyle(glyphColor)
       }
   }

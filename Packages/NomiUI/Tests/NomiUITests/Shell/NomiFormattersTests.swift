@@ -20,6 +20,27 @@ final class NomiFormattersTests: XCTestCase {
     XCTAssertTrue(text.contains("2025"))
   }
 
+  // MARK: - D19: day headers
+
+  func testTodayAndYesterday() {
+    let reference = date(year: 2026, month: 11, day: 9, hour: 15)
+    XCTAssertEqual(NomiFormatters.dayMonthAdaptive(reference, relativeTo: reference), "Today")
+    let yesterday = date(year: 2026, month: 11, day: 8, hour: 21)
+    XCTAssertEqual(NomiFormatters.dayMonthAdaptive(yesterday, relativeTo: reference), "Yesterday")
+  }
+
+  func testThisYearUsesWeekday() {
+    let reference = date(year: 2026, month: 11, day: 9, hour: 15)
+    let thursday = date(year: 2026, month: 11, day: 5, hour: 12)
+    XCTAssertEqual(NomiFormatters.dayMonthAdaptive(thursday, relativeTo: reference), "Thu 5 Nov")
+  }
+
+  func testLastYearHasYear() {
+    let reference = date(year: 2026, month: 11, day: 9, hour: 15)
+    let priorYear = date(year: 2025, month: 12, day: 20, hour: 12)
+    XCTAssertEqual(NomiFormatters.dayMonthAdaptive(priorYear, relativeTo: reference), "20 Dec 2025")
+  }
+
   // MARK: - U18: amountString(minor:currencyCode:)
 
   /// CI-verified (twice, across two different `NumberFormatter`
@@ -47,11 +68,12 @@ final class NomiFormattersTests: XCTestCase {
       NomiFormatters.amountString(minor: 1299))
   }
 
-  private func date(year: Int, month: Int, day: Int) -> Date {
+  private func date(year: Int, month: Int, day: Int, hour: Int = 0) -> Date {
     var components = DateComponents()
     components.year = year
     components.month = month
     components.day = day
+    components.hour = hour
     return Calendar(identifier: .gregorian).date(from: components)!
   }
 }
