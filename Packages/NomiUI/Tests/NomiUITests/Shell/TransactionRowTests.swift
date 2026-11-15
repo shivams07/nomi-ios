@@ -8,14 +8,32 @@ import XCTest
 /// `InMemoryModelContainer`'s measured note in NomiCore), but because a
 /// subtitle string needs no store to assert anything about.
 final class TransactionRowTests: XCTestCase {
+  // MARK: - R2: the subtitle always has two segments
+
   func testNilAccountRendersUnassigned() {
     let subtitle = TransactionRow.subtitle(categoryName: "Food", accountName: nil)
     XCTAssertTrue(subtitle.contains("Unassigned"))
   }
 
-  func testNilCategoryRendersUncategorized() {
+  func testBlankAccountNameRendersUnassigned() {
+    let subtitle = TransactionRow.subtitle(categoryName: "Food", accountName: "   ")
+    XCTAssertEqual(subtitle, "Food · Unassigned")
+  }
+
+  func testNilCategoryRendersNeedsACategory() {
     let subtitle = TransactionRow.subtitle(categoryName: nil, accountName: "HDFC")
-    XCTAssertTrue(subtitle.contains("Uncategorized"))
+    XCTAssertEqual(subtitle, "Needs a category · HDFC")
+  }
+
+  func testTransferLegSubtitleSaysTransfer() {
+    let subtitle = TransactionRow.subtitle(
+      categoryName: "Food", accountName: "ICICI Credit Card", isTransfer: true)
+    XCTAssertEqual(subtitle, "Transfer · ICICI Credit Card")
+  }
+
+  func testSubtitleAlwaysHasTwoSegments() {
+    XCTAssertEqual(TransactionRow.subtitle(categoryName: nil, accountName: nil), "Needs a category · Unassigned")
+    XCTAssertEqual(TransactionRow.subtitle(categoryName: "Food", accountName: nil), "Food · Unassigned")
   }
 
   // MARK: - M6: UPI surfacing
@@ -55,7 +73,7 @@ final class TransactionRowTests: XCTestCase {
     XCTAssertEqual(withDefault, withExplicitINR)
   }
 
-  // MARK: - LG: debit ink and credit ink (DEC-03)
+  // MARK: - R1: debit ink, credit navy, transfer secondary (DEC-03, Moss)
 
   /// Lim's mutant M3 swapped these two and survived. Pinning the mapping
   /// directly fails on any swap.
@@ -63,25 +81,31 @@ final class TransactionRowTests: XCTestCase {
     XCTAssertEqual(TransactionRow.amountInk(for: .debit), .ink)
   }
 
-  func testCreditAmountIsInkDeep() {
-    XCTAssertEqual(TransactionRow.amountInk(for: .credit), .inkDeep)
+  func testCreditAmountIsNavy() {
+    XCTAssertEqual(TransactionRow.amountInk(for: .credit), .navy)
   }
 
   func testEachInkResolvesToItsToken() {
     XCTAssertEqual(TransactionRow.AmountInk.ink.color, NomiColor.ink)
-    XCTAssertEqual(TransactionRow.AmountInk.inkDeep.color, NomiColor.inkDeep)
+    XCTAssertEqual(TransactionRow.AmountInk.navy.color, NomiColor.navy)
+    XCTAssertEqual(TransactionRow.AmountInk.inkSecondary.color, NomiColor.inkSecondary)
   }
 
-  func testUPIKindCapsuleTextForP2P() {
-    XCTAssertEqual(TransactionRow.upiKindCapsuleText(for: "p2p"), "P2P")
+  func testTransferAmountIsInkSecondaryInBothDirections() {
+    XCTAssertEqual(TransactionRow.amountInk(for: .debit, isTransfer: true), .inkSecondary)
+    XCTAssertEqual(TransactionRow.amountInk(for: .credit, isTransfer: true), .inkSecondary)
   }
 
-  func testUPIKindCapsuleTextForP2M() {
-    XCTAssertEqual(TransactionRow.upiKindCapsuleText(for: "p2m"), "Merchant")
+  func testUPIKindLabelForP2P() {
+    XCTAssertEqual(TransactionRow.upiKindLabel(for: "p2p"), "P2P")
   }
 
-  func testUPIKindCapsuleTextIsNilForNonUPIRow() {
-    XCTAssertNil(TransactionRow.upiKindCapsuleText(for: nil))
+  func testUPIKindLabelForP2M() {
+    XCTAssertEqual(TransactionRow.upiKindLabel(for: "p2m"), "Merchant")
+  }
+
+  func testUPIKindLabelIsNilForNonUPIRow() {
+    XCTAssertNil(TransactionRow.upiKindLabel(for: nil))
   }
 
   // MARK: - M4: title fallback
@@ -106,7 +130,26 @@ final class TransactionRowTests: XCTestCase {
     XCTAssertEqual(title, "Manual entry")
   }
 
-  // MARK: - LG: signed amounts (DEC-03 / A-03.2)
+  // MARK: - Unparseable rows (Activity board: "Review" tag in place of the amount)
+
+  func testUnparseableRowShowsReviewTag() {
+    XCTAssertTrue(TransactionRow.showsReviewTag(reason: .unparseable))
+    XCTAssertFalse(TransactionRow.showsReviewTag(reason: .heuristic))
+    XCTAssertFalse(TransactionRow.showsReviewTag(reason: nil))
+  }
+
+  func testUnparseableRowTitleIsCouldntReadThisAlert() {
+    let title = TransactionRow.title(
+      merchantName: "Swiggy", descriptionText: "DINE OUT/SWIGGY", categoryName: "Food", unparseable: true)
+    XCTAssertEqual(title, "Couldn't read this alert")
+  }
+
+  func testUnparseableSubtitleCarriesTheAccountPart() {
+    XCTAssertEqual(TransactionRow.unparseableSubtitle(accountName: "HDFC"), "HDFC · tap to fix or dismiss")
+    XCTAssertEqual(TransactionRow.unparseableSubtitle(accountName: nil), "Unassigned · tap to fix or dismiss")
+  }
+
+  // MARK: - R1: signed amounts (DEC-03 / A-03.2), transfers unsigned
 
   func testDebitPartsCarryAUnicodeMinusSign() {
     let parts = TransactionRow.amountParts(minor: 648_00, direction: .debit)
@@ -117,6 +160,14 @@ final class TransactionRowTests: XCTestCase {
   func testCreditPartsCarryAPlusSign() {
     let parts = TransactionRow.amountParts(minor: 38_500_00, direction: .credit)
     XCTAssertEqual(parts.sign, "+")
+  }
+
+  func testAmountSignPerDirection() {
+    XCTAssertEqual(TransactionRow.amountParts(minor: 100_00, direction: .debit).sign, "\u{2212}")
+    XCTAssertEqual(TransactionRow.amountParts(minor: 100_00, direction: .credit).sign, "+")
+    let transfer = TransactionRow.amountParts(minor: 6_200_00, direction: .debit, isTransfer: true)
+    XCTAssertEqual(transfer.sign, "")
+    XCTAssertEqual(digits(transfer), NomiFormatters.amountString(minor: 6_200_00))
   }
 
   func testZeroCarriesNoSignInEitherDirection() {
@@ -134,6 +185,26 @@ final class TransactionRowTests: XCTestCase {
     let parts = TransactionRow.amountParts(minor: 1_148_00, direction: .debit)
     XCTAssertEqual(parts.sign, "\u{2212}")
     XCTAssertTrue(parts.decimals.hasSuffix("00"))
+  }
+
+  // MARK: - R3: the leading tile
+
+  func testLeadingTilePerRow() {
+    XCTAssertEqual(
+      TransactionRow.leadingTile(categoryName: nil, categorySymbolName: nil, isTransfer: true),
+      .badge(symbolName: "arrow.left.arrow.right"))
+    XCTAssertEqual(
+      TransactionRow.leadingTile(categoryName: "Food", categorySymbolName: "fork.knife", isTransfer: true),
+      .badge(symbolName: "arrow.left.arrow.right"))
+    XCTAssertEqual(
+      TransactionRow.leadingTile(categoryName: nil, categorySymbolName: nil, isTransfer: false),
+      .badge(symbolName: "questionmark"))
+    XCTAssertEqual(
+      TransactionRow.leadingTile(categoryName: "Food", categorySymbolName: "fork.knife", isTransfer: false),
+      .badge(symbolName: "fork.knife"))
+    XCTAssertEqual(
+      TransactionRow.leadingTile(categoryName: "Food", categorySymbolName: nil, isTransfer: false),
+      .initials)
   }
 
   // MARK: - LG: one accessibility element with a direction word
@@ -160,7 +231,7 @@ final class TransactionRowTests: XCTestCase {
 
   func testLabelAddsReviewAndMergeFactsWhenPresent() {
     let label = TransactionRow.accessibilityLabel(
-      title: "Amazon", subtitle: "Uncategorized", direction: .debit, minor: 1_299_00,
+      title: "Amazon", subtitle: "Needs a category · UPI", direction: .debit, minor: 1_299_00,
       isTransfer: false, upiKind: "Merchant", needsReview: true, mergedSourceCount: 2
     )
     XCTAssertTrue(label.hasSuffix("Merchant, Merged from 2 sources, Needs review"))
@@ -198,12 +269,12 @@ final class TransactionRowTests: XCTestCase {
   /// spoken and never left to colour or position alone.
   func testTransferLabelSaysTransferAfterTheAmount() {
     let label = TransactionRow.accessibilityLabel(
-      title: "HDFC CREDIT CARD PAYMENT", subtitle: "Uncategorized · HDFC", direction: .debit, minor: 20_000_00,
+      title: "HDFC CREDIT CARD PAYMENT", subtitle: "Needs a category · HDFC", direction: .debit, minor: 20_000_00,
       isTransfer: true, upiKind: nil, needsReview: false, mergedSourceCount: nil
     )
     XCTAssertEqual(
       label,
-      "HDFC CREDIT CARD PAYMENT, Uncategorized · HDFC, debit, \(NomiFormatters.amountString(minor: 20_000_00)), Transfer")
+      "HDFC CREDIT CARD PAYMENT, Needs a category · HDFC, debit, \(NomiFormatters.amountString(minor: 20_000_00)), Transfer")
   }
 
   func testUnmarkedLabelNeverSaysTransfer() {
@@ -217,7 +288,7 @@ final class TransactionRowTests: XCTestCase {
   /// A transfer's credit leg keeps its direction word: the tag adds to it and never replaces it.
   func testTransferCreditLabelKeepsItsDirectionWord() {
     let label = TransactionRow.accessibilityLabel(
-      title: "PAYMENT RECEIVED", subtitle: "Uncategorized · HDFC CC", direction: .credit, minor: 20_000_00,
+      title: "PAYMENT RECEIVED", subtitle: "Transfer · HDFC CC", direction: .credit, minor: 20_000_00,
       isTransfer: true, upiKind: nil, needsReview: false, mergedSourceCount: nil
     )
     XCTAssertTrue(label.contains(", credit, "))

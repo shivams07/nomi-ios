@@ -62,15 +62,30 @@ public enum NomiFormatters {
     return formatter
   }()
 
-  /// `dayMonth`, but adds the year when `date` falls in a different calendar
-  /// year than `referenceDate` — "3 Sep" for the current year, "3 Sep 2025"
-  /// otherwise. Ledger rows from the current month don't need "2026" on every
-  /// line; older rows do.
+  /// Weekday, day and month: "Thu 5 Nov" (D19, the Activity day header).
+  public static let weekdayDayMonth: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_IN")
+    formatter.dateFormat = "EEE d MMM"
+    return formatter
+  }()
+
+  /// The day header for a group of rows, relative to `referenceDate` (D19):
+  /// "Today" and "Yesterday", then "Thu 5 Nov" within the reference's calendar
+  /// year, and "5 Nov 2025" for an earlier year. Ledger rows from this year do
+  /// not need the year on every header; older rows do.
   public static func dayMonthAdaptive(_ date: Date, relativeTo referenceDate: Date) -> String {
     let calendar = Calendar(identifier: .gregorian)
+    if calendar.isDate(date, inSameDayAs: referenceDate) {
+      return String(localized: "Today", bundle: .module)
+    }
+    if let yesterday = calendar.date(byAdding: .day, value: -1, to: referenceDate),
+       calendar.isDate(date, inSameDayAs: yesterday) {
+      return String(localized: "Yesterday", bundle: .module)
+    }
     let dateYear = calendar.component(.year, from: date)
     let referenceYear = calendar.component(.year, from: referenceDate)
-    return dateYear == referenceYear ? dayMonth.string(from: date) : dayMonthYear.string(from: date)
+    return dateYear == referenceYear ? weekdayDayMonth.string(from: date) : dayMonthYear.string(from: date)
   }
 
   public static let relativeTime: RelativeDateTimeFormatter = {

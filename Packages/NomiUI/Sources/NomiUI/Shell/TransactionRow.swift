@@ -31,23 +31,47 @@ public struct TransactionRow: View {
     self.categoryPaletteSlot = categoryPaletteSlot
   }
 
-  private var isCredit: Bool {
-    transaction.direction == .credit
-  }
+  /// Canvas `.li`: a 42 pt leading tile, 12 pt gap, rows at least 64 pt high
+  /// with 10 pt of vertical padding.
+  private static let tileSize: CGFloat = 42
+  private static let rowGap: CGFloat = 12
+  private static let rowVerticalPadding: CGFloat = 10
+  private static let rowMinHeight: CGFloat = 64
+
+  /// Canvas `.li .t`: SemiBold 15 for the merchant or description line.
+  private static let titleFont: Font = .custom(NomiFont.interSemiBold, size: 15, relativeTo: .body)
 
   private var subtitle: String {
-    Self.subtitle(categoryName: categoryName, accountName: accountName, vpa: transaction.counterpartyVPA)
+    if isUnparseable {
+      return Self.unparseableSubtitle(accountName: accountName)
+    }
+    return Self.subtitle(
+      categoryName: categoryName,
+      accountName: accountName,
+      vpa: transaction.counterpartyVPA,
+      isTransfer: transaction.isTransfer
+    )
+  }
+
+  private var isUnparseable: Bool {
+    Self.showsReviewTag(reason: transaction.needsReviewReason)
   }
 
   private var displayTitle: String {
-    Self.title(merchantName: transaction.merchantName, descriptionText: transaction.descriptionText, categoryName: categoryName)
+    Self.title(
+      merchantName: transaction.merchantName,
+      descriptionText: transaction.descriptionText,
+      categoryName: categoryName,
+      unparseable: isUnparseable
+    )
   }
 
-  /// M6: a P2P/Merchant capsule from `upiKindRaw` — short labels for a
-  /// row-width capsule, not `UPIDisplay.kindLabel`'s full words
-  /// (`TransactionDetailLogic`'s "Person"/"Merchant" for the detail screen's
-  /// prose). `nil` for anything not `"p2p"`/`"p2m"`, including a non-UPI row.
-  static func upiKindCapsuleText(for kindRaw: String?) -> String? {
+  /// M6: the short UPI label that the accessibility label speaks — not
+  /// `UPIDisplay.kindLabel`'s full words (`TransactionDetailLogic`'s
+  /// "Person"/"Merchant" for the detail screen's prose). The visible capsule
+  /// is gone (the subtitle carries the account). `nil` for anything not
+  /// `"p2p"`/`"p2m"`, including a non-UPI row.
+  static func upiKindLabel(for kindRaw: String?) -> String? {
     switch kindRaw {
     case "p2p": return "P2P"
     case "p2m": return "Merchant"
@@ -55,48 +79,96 @@ public struct TransactionRow: View {
     }
   }
 
-  private var upiKindCapsuleText: String? {
-    Self.upiKindCapsuleText(for: transaction.upiKindRaw)
-  }
-
   /// Pure — no `@Model` access — so it is directly unit-testable with no
   /// container. Not because none can be built; one can, under XCTest (see
   /// `InMemoryModelContainer`'s measured note in NomiCore). Display
   /// logic that needs coverage lives here rather than on the `Transaction`-typed properties above.
-  /// `vpa` becomes the subtitle's third segment when present — M6.
-  static func subtitle(categoryName: String?, accountName: String?, vpa: String? = nil) -> String {
-    var segments = [categoryName ?? "Uncategorized", accountName ?? "Unassigned"]
+  ///
+  /// Always two segments (R2 of the F2b block): the category part, then the
+  /// account part, so an unassigned row is never silent. The category part is
+  /// "Transfer" for a transfer leg, "Needs a category" when there is no
+  /// category, else the category name. The account part is the account name,
+  /// or "Unassigned" when it is nil or blank. `vpa` becomes a third segment
+  /// when present (M6).
+  static func subtitle(
+    categoryName: String?,
+    accountName: String?,
+    vpa: String? = nil,
+    isTransfer: Bool = false
+  ) -> String {
+    let category: String
+    if isTransfer {
+      category = String(localized: "Transfer", bundle: .module)
+    } else if let categoryName, !categoryName.isEmpty {
+      category = categoryName
+    } else {
+      category = String(localized: "Needs a category", bundle: .module)
+    }
+    var segments = [category, accountPart(accountName)]
     if let vpa, !vpa.isEmpty { segments.append(vpa) }
     return segments.joined(separator: " · ")
   }
 
-  /// The amount's ink token for a direction (DEC-03): a debit is `ink`, a
-  /// credit is `inkDeep`. Pure, so a test pins the mapping, and a swapped
-  /// mutant fails it.
-  static func amountInk(for direction: Direction) -> AmountInk {
-    direction == .credit ? .inkDeep : .ink
+  /// The account segment of a row's subtitle: the name, or "Unassigned".
+  static func accountPart(_ accountName: String?) -> String {
+    guard let accountName, !accountName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return String(localized: "Unassigned", bundle: .module)
+    }
+    return accountName
   }
 
-  /// The two amount inks, kept apart from `Color` so the mapping can be tested.
+  /// Pure. The subtitle of an unparseable row (Activity board): the account
+  /// part, then "tap to fix or dismiss".
+  static func unparseableSubtitle(accountName: String?) -> String {
+    "\(accountPart(accountName)) · \(String(localized: "tap to fix or dismiss", bundle: .module))"
+  }
+
+  /// Pure. An unparseable row shows the Review tag in place of its amount, so
+  /// no amount is shown for a row where nothing was read.
+  static func showsReviewTag(reason: NeedsReviewReason?) -> Bool {
+    reason == .unparseable
+  }
+
+  /// The amount's ink token for a direction (DEC-03 as amended by R1 of the
+  /// F2b block): a debit is `ink`, a credit is `navy`, a transfer leg is
+  /// `inkSecondary` and unsigned. Pure, so a test pins the mapping, and a
+  /// swapped mutant fails it.
+  static func amountInk(for direction: Direction, isTransfer: Bool = false) -> AmountInk {
+    if isTransfer { return .inkSecondary }
+    return direction == .credit ? .navy : .ink
+  }
+
+  /// The three amount inks, kept apart from `Color` so the mapping can be tested.
   enum AmountInk: Equatable {
     case ink
-    case inkDeep
+    case navy
+    case inkSecondary
 
     var color: Color {
       switch self {
       case .ink: return NomiColor.ink
-      case .inkDeep: return NomiColor.inkDeep
+      case .navy: return NomiColor.navy
+      case .inkSecondary: return NomiColor.inkSecondary
       }
     }
   }
 
   /// Pure. The row's amount, split for typesetting (DEC-03). A debit is
   /// negated before formatting, so "−" always prints. A credit is positive
-  /// and carries "+". Zero carries neither. Currency comes through
-  /// `NomiFormatters.amountString`, so a USD row reads "$12.99", never
-  /// "₹12.99 USD".
-  static func amountParts(minor: Int, direction: Direction, currencyCode: String = "INR") -> NomiAmountParts {
+  /// and carries "+". A transfer leg is unsigned: it moves money between the
+  /// user's own accounts, so neither sign applies. Zero carries no sign.
+  /// Currency comes through `NomiFormatters.amountString`, so a USD row reads
+  /// "$12.99", never "₹12.99 USD".
+  static func amountParts(
+    minor: Int,
+    direction: Direction,
+    currencyCode: String = "INR",
+    isTransfer: Bool = false
+  ) -> NomiAmountParts {
     let magnitude = abs(minor)
+    if isTransfer {
+      return NomiAmountFormat.parts(minor: magnitude, currencyCode: currencyCode, showPlus: false)
+    }
     return NomiAmountFormat.parts(
       minor: direction == .credit ? magnitude : -magnitude,
       currencyCode: currencyCode,
@@ -104,18 +176,45 @@ public struct TransactionRow: View {
     )
   }
 
-  /// Pure — see `subtitle(categoryName:accountName:vpa:)`. Fallback order for
+  /// Pure — see `subtitle(categoryName:accountName:vpa:isTransfer:)`. Fallback order for
   /// a row's title: merchant, then a non-blank description, then the
   /// category name, then "Manual entry" — the same fallback order W1-13
   /// (parallel unit) gives `topMerchants`'s label for a blank description.
-  static func title(merchantName: String?, descriptionText: String, categoryName: String?) -> String {
+  /// An unparseable row has no readable title, so it reads "Couldn't read this alert".
+  static func title(
+    merchantName: String?,
+    descriptionText: String,
+    categoryName: String?,
+    unparseable: Bool = false
+  ) -> String {
+    if unparseable { return String(localized: "Couldn't read this alert", bundle: .module) }
     if let merchantName, !merchantName.isEmpty { return merchantName }
     if !descriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return descriptionText }
     if let categoryName, !categoryName.isEmpty { return categoryName }
     return "Manual entry"
   }
 
-  /// Pure. Two letters for an uncategorized row's badge: the first letter of
+  /// What the leading tile shows (R3 of the F2b block).
+  enum LeadingTile: Equatable {
+    /// A neutral category badge with this symbol. Transfer legs get the
+    /// transfer arrows; an uncategorised row gets "questionmark", which the
+    /// badge draws in the warning tones.
+    case badge(symbolName: String)
+    /// Two letters on `secondaryFill`, for a categorised row that has no icon.
+    case initials
+  }
+
+  /// Pure. The leading tile for a row: transfer arrows for a transfer leg, the
+  /// amber "?" for an uncategorised row, the category icon in neutral moss for a
+  /// categorised row, and initials only when a categorised row has no icon.
+  static func leadingTile(categoryName: String?, categorySymbolName: String?, isTransfer: Bool) -> LeadingTile {
+    if isTransfer { return .badge(symbolName: "arrow.left.arrow.right") }
+    guard let categoryName, !categoryName.isEmpty else { return .badge(symbolName: "questionmark") }
+    if let categorySymbolName { return .badge(symbolName: categorySymbolName) }
+    return .initials
+  }
+
+  /// Pure. Two letters for a row's initials tile: the first letter of
   /// each of the first two words, or the first two letters of a single word
   /// ("Amazon" gives "AM"). Upper-cased.
   static func initials(for title: String) -> String {
@@ -129,11 +228,11 @@ public struct TransactionRow: View {
     return letters.uppercased()
   }
 
-  /// Pure. The "Transfer" tag (DEC-05, T3). It is words, not colour, so the
-  /// state reads without seeing the tag. `nil` when the row is not a transfer.
+  /// Pure. The "Transfer" word (DEC-05, T3). It is words, not colour, so the
+  /// state reads without seeing the tile. `nil` when the row is not a transfer.
   /// It reads `isTransfer` only (Amendment 3, U6).
   static func transferTagText(isTransfer: Bool) -> String? {
-    isTransfer ? "Transfer" : nil
+    isTransfer ? String(localized: "Transfer", bundle: .module) : nil
   }
 
   /// Pure. The row's single VoiceOver label. It carries the direction word and
@@ -166,30 +265,31 @@ public struct TransactionRow: View {
 
   public var body: some View {
     // At accessibility Dynamic Type sizes the amount moves below the merchant
-    // line rather than fighting it for horizontal space — the AC requires
-    // both to survive to .accessibility3 with no truncation.
+    // line rather than fighting it for horizontal space. Both lines may wrap
+    // to two lines there; below AX1 each is one line and never wraps.
     Group {
       if dynamicTypeSize.isAccessibilitySize {
         VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-          HStack(alignment: .center, spacing: NomiSpacing.sm) {
-            iconTile
-            header
+          HStack(alignment: .center, spacing: Self.rowGap) {
+            leadingTileView
+            header(lineLimit: 2)
           }
-          amountView
+          trailing
             .frame(maxWidth: .infinity, alignment: .leading)
         }
       } else {
-        HStack(alignment: .center, spacing: NomiSpacing.sm) {
-          iconTile
-          header
+        HStack(alignment: .center, spacing: Self.rowGap) {
+          leadingTileView
+          header(lineLimit: 1)
           Spacer(minLength: NomiSpacing.xs)
-          amountView
+          trailing
             .frame(minWidth: amountColumnWidth, alignment: .trailing)
             .layoutPriority(1)
         }
       }
     }
-    .padding(.vertical, NomiSpacing.xs)
+    .padding(.vertical, Self.rowVerticalPadding)
+    .frame(minHeight: Self.rowMinHeight)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(
       Self.accessibilityLabel(
@@ -199,49 +299,61 @@ public struct TransactionRow: View {
         minor: transaction.amountMinor,
         currencyCode: transaction.currencyCode,
         isTransfer: transaction.isTransfer,
-        upiKind: upiKindCapsuleText,
+        upiKind: Self.upiKindLabel(for: transaction.upiKindRaw),
         needsReview: transaction.needsReview,
         mergedSourceCount: transaction.mergedCount > 1 ? transaction.sourceRefs.count : nil
       )
     )
   }
 
-  private var header: some View {
+  private func header(lineLimit: Int) -> some View {
     VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
       HStack(spacing: NomiSpacing.xxs) {
         Text(displayTitle)
-          .nomiTextStyle(.rowTitle)
+          .font(Self.titleFont)
           .foregroundStyle(NomiColor.ink)
+          .lineLimit(lineLimit)
           .fixedSize(horizontal: false, vertical: true)
-        if let tagText = Self.transferTagText(isTransfer: transaction.isTransfer) {
-          transferCapsule(text: tagText)
-        }
-        if let upiKindCapsuleText {
-          upiKindCapsule(text: upiKindCapsuleText)
-        }
         if transaction.mergedCount > 1 {
           mergeFlag
         }
-        if transaction.needsReview {
+        if transaction.needsReview && !isUnparseable {
           reviewFlag
         }
       }
       Text(subtitle)
-        .nomiTextStyle(.footnote)
+        .nomiTextStyle(.caption)
         .foregroundStyle(NomiColor.inkSecondary)
+        .lineLimit(lineLimit)
         .fixedSize(horizontal: false, vertical: true)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  /// The trailing column: the Review tag for an unparseable row, else the amount.
+  @ViewBuilder
+  private var trailing: some View {
+    if isUnparseable {
+      NomiTag(String(localized: "Review", bundle: .module), tone: .warning)
+    } else {
+      amountView
     }
   }
 
   /// The amount in one line, typeset like `NomiAmountText` (sign, integer,
   /// dimmed decimals) but in the direction's colour: a debit is `ink`, a
-  /// credit is `inkDeep` at SemiBold. `NomiAmountText` paints `ink` for every
-  /// amount and has no colour parameter, so the split is done here.
+  /// credit is `navy`, a transfer is `inkSecondary`, all at SemiBold (`.amount`).
+  /// `NomiAmountText` paints `ink` for every amount and has no colour parameter,
+  /// so the split is done here.
   private var amountView: some View {
     let parts = Self.amountParts(
-      minor: transaction.amountMinor, direction: transaction.direction, currencyCode: transaction.currencyCode)
-    let style: NomiTextStyle = isCredit ? .amountStrong : .amount
-    let color = Self.amountInk(for: transaction.direction).color
+      minor: transaction.amountMinor,
+      direction: transaction.direction,
+      currencyCode: transaction.currencyCode,
+      isTransfer: transaction.isTransfer
+    )
+    let style: NomiTextStyle = .amount
+    let color = Self.amountInk(for: transaction.direction, isTransfer: transaction.isTransfer).color
     return (Text(parts.sign + parts.integer)
       .font(style.font)
       .tracking(style.tracking)
@@ -255,8 +367,8 @@ public struct TransactionRow: View {
       .fixedSize(horizontal: false, vertical: true)
   }
 
-  /// Sized to the widest realistic amount, not a sample row, at the credit
-  /// weight (SemiBold), the wider of the two.
+  /// Sized to the widest realistic amount, not a sample row, at the amount
+  /// weight (SemiBold), so the column does not shift between rows.
   private var amountColumnWidth: CGFloat {
     let font = TabularFigures.platformFont(name: NomiFont.interSemiBold, size: 16)
     let attributes: [NSAttributedString.Key: Any] = [.font: font]
@@ -264,46 +376,30 @@ public struct TransactionRow: View {
     return size.width
   }
 
-  /// The category's tinted tile (`.neutral`, 40 pt). An uncategorized row has
-  /// no category to show, so it gets its initials on `secondaryFill` instead.
+  /// The leading tile (R3): a neutral badge, the amber "?" for an uncategorised
+  /// row, or the initials of a categorised row that has no icon.
   @ViewBuilder
-  private var iconTile: some View {
-    if categoryName == nil {
+  private var leadingTileView: some View {
+    switch Self.leadingTile(
+      categoryName: categoryName,
+      categorySymbolName: categorySymbolName,
+      isTransfer: transaction.isTransfer
+    ) {
+    case .badge(let symbolName):
+      NomiCategoryBadge(
+        symbolName: symbolName,
+        paletteSlot: categoryPaletteSlot,
+        size: Self.tileSize,
+        style: .neutral
+      )
+    case .initials:
       Text(Self.initials(for: displayTitle))
         .nomiTextStyle(.label)
         .foregroundStyle(NomiColor.inkSecondary)
-        .frame(width: 40, height: 40)
+        .frame(width: Self.tileSize, height: Self.tileSize)
         .background(Circle().fill(NomiColor.secondaryFill))
         .accessibilityHidden(true)
-    } else {
-      NomiCategoryBadge(
-        symbolName: categorySymbolName ?? "questionmark",
-        paletteSlot: categoryPaletteSlot,
-        size: 40,
-        style: .neutral
-      )
     }
-  }
-
-  /// The "Transfer" tag: the same capsule as the UPI kind, secondary fill and
-  /// caption type, so it adds no token (DEC-05 T3).
-  private func transferCapsule(text: String) -> some View {
-    Text(text)
-      .nomiTextStyle(.caption)
-      .foregroundStyle(NomiColor.inkSecondary)
-      .padding(.horizontal, NomiSpacing.xxs)
-      .background(NomiColor.secondaryFill)
-      .clipShape(Capsule(style: .continuous))
-  }
-
-  /// Same capsule shape as `mergeFlag` — secondary fill, no new token.
-  private func upiKindCapsule(text: String) -> some View {
-    Text(text)
-      .nomiTextStyle(.caption)
-      .foregroundStyle(NomiColor.inkSecondary)
-      .padding(.horizontal, NomiSpacing.xxs)
-      .background(NomiColor.secondaryFill)
-      .clipShape(Capsule(style: .continuous))
   }
 
   private var mergeFlag: some View {
