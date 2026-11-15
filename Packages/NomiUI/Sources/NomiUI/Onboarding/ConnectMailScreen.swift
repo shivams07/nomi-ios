@@ -13,61 +13,26 @@ public struct ConnectMailScreen: View {
   public let mailConnectionService: MailConnectionService
   public var onBackfillStart: (() -> Void)?
 
-  @State private var connectionState: MailConnectionState = .disconnected
+  /// The screen's state and actions (T2a). See `ConnectMailModel`.
+  @State private var model: ConnectMailModel
   @State private var provider: MailProvider = .gmail
   @State private var address = ""
   @State private var host = ""
   @State private var password = ""
-  @State private var isConnecting = false
-  @State private var didAttemptOnce = false
-  @State private var errorMessage: String?
-  /// What this screen knows of the connection. The state stream carries
-  /// `lastSync` only while connected, so these are what the attention card
-  /// needs to say "Last synced …" after a disconnect. Seeded from the persisted
-  /// history in `init`, so a relaunch does not start from "never connected".
-  @State private var hadConnection: Bool
-  @State private var lastKnownSync: Date?
-  /// A password is saved on this device. Read in `init`, and again on every
-  /// state change: connecting saves one, disconnecting deletes it, and a
-  /// screen that outlives either would otherwise show a stale offer.
-  @State private var hasSaved: Bool
-  @State private var isConfirmingDisconnect = false
 
   public init(mailConnectionService: MailConnectionService, onBackfillStart: (() -> Void)? = nil) {
     self.mailConnectionService = mailConnectionService
     self.onBackfillStart = onBackfillStart
-    // `history` is synchronous and already on disk; read it before the state
-    // loop in `.task` starts, so the first render carries the right card.
-    let seed = MailAttentionSeed(history: mailConnectionService.history)
-    _hadConnection = State(initialValue: seed.hadConnection)
-    _lastKnownSync = State(initialValue: seed.lastSync)
-    _hasSaved = State(initialValue: mailConnectionService.hasStoredCredential)
+    _model = State(initialValue: ConnectMailModel(service: mailConnectionService))
   }
 
   private var canConnect: Bool {
     ConnectFormGate.isValid(provider: provider, address: address, host: host, password: password)
   }
 
-  /// The inline error line already says what failed on the last attempt, so the
-  /// attention card stays out of its way.
-  private var attention: MailAttentionCopy? {
-    if didAttemptOnce, case .failed = connectionState { return nil }
-    return MailAttentionLogic.copy(
-      for: connectionState,
-      hadConnection: hadConnection,
-      lastSync: lastKnownSync,
-      now: Date()
-    )
-  }
-
-  private var errorText: String? {
-    guard didAttemptOnce, case .failed(let error) = connectionState else { return nil }
-    return MailErrorMessage.text(for: error)
-  }
-
   public var body: some View {
     Group {
-      switch connectionState {
+      switch model.connectionState {
       case .connected(let connectedAddress, _):
         connectedView(address: connectedAddress)
       case .connecting, .disconnected, .failed:
@@ -81,31 +46,18 @@ public struct ConnectMailScreen: View {
     #endif
     .task {
       for await state in mailConnectionService.state {
-        observe(state)
+        let seen = model.observe(state)
+        if seen.becameConnected { onBackfillStart?() }
+        if let line = seen.announcement { announce(line) }
       }
     }
     .alert(
       "Something went wrong",
-      isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }),
-      presenting: errorMessage,
+      isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } }),
+      presenting: model.errorMessage,
       actions: { _ in Button("OK", role: .cancel) {} },
       message: { message in Text(message) }
     )
-  }
-
-  private func observe(_ state: MailConnectionState) {
-    connectionState = state
-    hasSaved = mailConnectionService.hasStoredCredential
-    if case .connected(_, let lastSync) = state {
-      hadConnection = true
-      if let lastSync { lastKnownSync = lastSync }
-      onBackfillStart?()
-    }
-    // A failed attempt is announced here, not on appearance: the error line
-    // is inserted with its text already set, which `onChange` would miss.
-    if didAttemptOnce, case .failed(let error) = state {
-      announce(MailErrorMessage.text(for: error))
-    }
   }
 
   private func announce(_ message: String) {
@@ -119,15 +71,11 @@ public struct ConnectMailScreen: View {
   private var formView: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 0) {
-        if let attention {
+        if let attention = model.attention(now: Date()) {
           MailAttentionCard(copy: attention)
             .padding(.bottom, NomiSpacing.xxs)
         }
-        if ReconnectOffer.isShown(
-          state: connectionState,
-          hadConnection: hadConnection,
-          hasStoredCredential: hasSaved
-        ) {
+        if model.isReconnectOfferShown {
           reconnectCard
             .padding(.bottom, NomiSpacing.xxs)
         }
@@ -140,14 +88,14 @@ public struct ConnectMailScreen: View {
           .foregroundStyle(NomiColor.inkSecondary)
           .padding(.top, NomiSpacing.xs + NomiSpacing.xxs)
           .padding(.horizontal, NomiSpacing.xxs)
-        if let errorText {
+        if let errorText = model.errorText {
           errorLine(errorText)
             .padding(.top, NomiSpacing.sm)
         }
       }
       .padding(.horizontal, NomiSpacing.screenGutter)
       .padding(.bottom, NomiSpacing.sm)
-      .disabled(isConnecting || connectionState == .connecting)
+      .disabled(model.isConnecting || model.connectionState == .connecting)
     }
     .safeAreaInset(edge: .bottom) {
       connectFooter
@@ -163,7 +111,7 @@ public struct ConnectMailScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
       Button("Try again") {
-        reconnect()
+        model.tryAgain()
       }
       .buttonStyle(NomiPrimaryButtonStyle(height: 52))
     }
@@ -262,9 +210,9 @@ public struct ConnectMailScreen: View {
   private var connectFooter: some View {
     VStack(spacing: NomiSpacing.xs) {
       Button {
-        connect()
+        model.connect(typedCredentials())
       } label: {
-        if isConnecting {
+        if model.isConnecting {
           ProgressView()
             .tint(NomiColor.onPrimary)
         } else {
@@ -272,7 +220,7 @@ public struct ConnectMailScreen: View {
         }
       }
       .buttonStyle(NomiPrimaryButtonStyle(height: 52))
-      .disabled(!canConnect || isConnecting)
+      .disabled(!canConnect || model.isConnecting)
 
       Text(ConnectMailCopy.credentialCaption)
         .nomiTextStyle(.caption)
@@ -296,19 +244,19 @@ public struct ConnectMailScreen: View {
           Text(address)
             .nomiTextStyle(.rowTitle)
             .foregroundStyle(NomiColor.ink)
-          SyncStatusRow(state: connectionState)
+          SyncStatusRow(state: model.connectionState)
         }
         .padding(NomiSpacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
         .nomiCard(padding: EdgeInsets())
 
         VStack(spacing: 0) {
-          Button("Sync now") { syncNow() }
+          Button("Sync now") { model.syncNow() }
             .buttonStyle(NomiSecondaryButtonStyle())
             .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
             .padding(.horizontal, NomiSpacing.sm)
           cardDivider
-          NomiDestructiveRow(title: "Disconnect") { isConfirmingDisconnect = true }
+          NomiDestructiveRow(title: "Disconnect") { model.requestDisconnect() }
             .padding(.horizontal, NomiSpacing.sm)
         }
         .nomiCard(padding: EdgeInsets())
@@ -326,11 +274,11 @@ public struct ConnectMailScreen: View {
     }
     .confirmationDialog(
       "Disconnect mail?",
-      isPresented: $isConfirmingDisconnect,
+      isPresented: $model.isConfirmingDisconnect,
       titleVisibility: .visible
     ) {
-      Button("Disconnect", role: .destructive) { disconnect() }
-      Button("Cancel", role: .cancel) {}
+      Button("Disconnect", role: .destructive) { model.confirmDisconnect() }
+      Button("Cancel", role: .cancel) { model.cancelDisconnect() }
     } message: {
       Text("Nomi stops scanning this mailbox and forgets the saved password. Your transactions stay in Nomi.")
     }
@@ -338,61 +286,17 @@ public struct ConnectMailScreen: View {
 
   // MARK: - Actions
 
-  /// Try again: reconnects with the saved password, with the same flags as
-  /// `connect()`. The thrown error is discarded on purpose, as `connect()` does:
-  /// the failure reaches the screen as `.failed` on the state stream (I-3). The
-  /// offer is re-read afterwards, so a rejected password that was deleted hides it.
-  private func reconnect() {
-    didAttemptOnce = true
-    isConnecting = true
-    Task {
-      defer {
-        isConnecting = false
-        hasSaved = mailConnectionService.hasStoredCredential
-      }
-      try? await mailConnectionService.reconnectWithStoredCredential()
-    }
-  }
-
-  private func connect() {
-    didAttemptOnce = true
-    isConnecting = true
-    // Trimmed values only — a pasted app password or address carrying a
-    // stray newline must never reach `IMAPCredentials`. `try?` here is
-    // deliberate, not an oversight: a failed connect already renders through
-    // `connectionState`'s `.failed` case above, so a second, separate alert
-    // would just repeat the same message.
+  /// The typed form values, as credentials. Trimmed values only: a pasted app
+  /// password or address carrying a stray newline must never reach
+  /// `IMAPCredentials`.
+  private func typedCredentials() -> IMAPCredentials {
     let resolvedHost = provider.fixedHost ?? ConnectFormGate.normalized(host)
-    let credentials = IMAPCredentials(
+    return IMAPCredentials(
       host: resolvedHost,
       port: provider.port,
       address: ConnectFormGate.normalized(address),
       password: ConnectFormGate.normalized(password)
     )
-    Task {
-      defer { isConnecting = false }
-      try? await mailConnectionService.connect(credentials)
-    }
-  }
-
-  private func syncNow() {
-    Task {
-      do {
-        try await mailConnectionService.syncNow()
-      } catch {
-        errorMessage = "Couldn't sync right now. Try again in a moment."
-      }
-    }
-  }
-
-  private func disconnect() {
-    Task {
-      do {
-        try await mailConnectionService.disconnect()
-      } catch {
-        errorMessage = "Couldn't disconnect right now. Try again in a moment."
-      }
-    }
   }
 }
 
@@ -476,11 +380,12 @@ private struct MailAttentionCard: View {
   }
 }
 
-/// `errorMessage` is private `@State`, not exposed via `init` — there is no
+/// `errorMessage` lives on `ConnectMailModel`, not in `init`, so there is no
 /// existing precedent in this codebase for seeding another view's
 /// presented-alert state from a preview, same reasoning as `LedgerScreen`'s
 /// delete-error preview. `.constant(true)` overlays the exact alert
-/// `syncNow`/`disconnect` present, atop the real connected-state screen.
+/// `ConnectMailModel.syncNow` and `confirmDisconnect` present, atop the real
+/// connected-state screen.
 #Preview("Connect mail — sync error alert") {
   NavigationStack {
     ConnectMailScreen(mailConnectionService: ConnectedFakeMailConnectionService())

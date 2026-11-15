@@ -19,10 +19,8 @@ struct BudgetEditorSheet: View {
   var onSaved: (() -> Void)?
 
   @Environment(\.dismiss) private var dismiss
-  @State private var amountText: String
-  @State private var selectedCategoryID: UUID?
-  @State private var errorMessage: String?
-  @State private var isConfirmingRemove = false
+  /// The sheet's state and actions (T2a). See `BudgetEditorModel`.
+  @State private var model: BudgetEditorModel
 
   init(
     budgetStore: BudgetStore,
@@ -36,16 +34,9 @@ struct BudgetEditorSheet: View {
     self.availableCategories = availableCategories
     self.currentAmountMinor = currentAmountMinor
     self.onSaved = onSaved
-    _amountText = State(initialValue: currentAmountMinor > 0 ? String(format: "%.2f", Double(currentAmountMinor) / 100) : "")
-    _selectedCategoryID = State(initialValue: category?.id)
-  }
-
-  private var isCreating: Bool { category == nil }
-  /// The Remove row is offered only for a category that already has a budget.
-  private var isExistingBudget: Bool { !isCreating && currentAmountMinor > 0 }
-  private var amountMinor: Int { EntryAmount.minorUnits(from: amountText) }
-  private var canSave: Bool {
-    BudgetFormGate.isValid(categoryID: selectedCategoryID, amountMinor: amountMinor)
+    _model = State(
+      initialValue: BudgetEditorModel(
+        store: budgetStore, category: category, currentAmountMinor: currentAmountMinor))
   }
 
   var body: some View {
@@ -56,23 +47,23 @@ struct BudgetEditorSheet: View {
           categoryCard
           sectionLabel("Monthly amount")
           amountCard
-          if let hint = BudgetAmountHint.text(for: amountText) {
+          if let hint = BudgetAmountHint.text(for: model.amountText) {
             Text(hint)
               .nomiTextStyle(.footnote)
               .foregroundStyle(NomiColor.inkSecondary)
               .padding(.top, NomiSpacing.xs)
               .padding(.horizontal, NomiSpacing.xxs)
           }
-          if let errorMessage {
+          if let errorMessage = model.errorMessage {
             Text(errorMessage)
               .nomiTextStyle(.caption)
               .foregroundStyle(NomiColor.error)
               .padding(.top, NomiSpacing.xs)
               .padding(.horizontal, NomiSpacing.xxs)
           }
-          if isExistingBudget {
+          if model.isExistingBudget {
             NomiDestructiveRow(title: "Remove budget") {
-              isConfirmingRemove = true
+              model.requestRemove()
             }
             .padding(.top, NomiSpacing.sm)
           }
@@ -81,7 +72,7 @@ struct BudgetEditorSheet: View {
         .padding(.vertical, NomiSpacing.xs)
       }
       .background(NomiColor.ground)
-      .navigationTitle(isCreating ? "Add Budget" : "Edit Budget")
+      .navigationTitle(model.isCreating ? "Add Budget" : "Edit Budget")
       #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
       #endif
@@ -97,19 +88,27 @@ struct BudgetEditorSheet: View {
         }
         ToolbarItem(placement: .confirmationAction) {
           Button {
-            save()
+            if model.save() {
+              onSaved?()
+              dismiss()
+            }
           } label: {
             Text("Save")
               .nomiTextStyle(.navActionStrong)
               .foregroundStyle(NomiColor.navy)
           }
-          .disabled(!canSave)
-          .opacity(canSave ? 1 : 0.4)
+          .disabled(!model.canSave)
+          .opacity(model.canSave ? 1 : 0.4)
         }
       }
-      .confirmationDialog("Remove this budget?", isPresented: $isConfirmingRemove, titleVisibility: .visible) {
-        Button("Remove", role: .destructive) { remove() }
-        Button("Cancel", role: .cancel) {}
+      .confirmationDialog("Remove this budget?", isPresented: $model.isConfirmingRemove, titleVisibility: .visible) {
+        Button("Remove", role: .destructive) {
+          if model.confirmRemove() {
+            onSaved?()
+            dismiss()
+          }
+        }
+        Button("Cancel", role: .cancel) { model.cancelRemove() }
       } message: {
         Text(BudgetRemoveConfirmation.message(categoryName: category?.name ?? ""))
       }
@@ -141,9 +140,9 @@ struct BudgetEditorSheet: View {
 
   @ViewBuilder
   private var categoryCard: some View {
-    if isCreating {
+    if model.isCreating {
       fieldCard {
-        Picker("Category", selection: $selectedCategoryID) {
+        Picker("Category", selection: $model.selectedCategoryID) {
           Text("Choose a category").tag(nil as UUID?)
           ForEach(availableCategories) { option in
             Text(option.name).tag(Optional(option.id))
@@ -173,45 +172,17 @@ struct BudgetEditorSheet: View {
         Text("₹")
           .font(TabularFigures.font(name: NomiFont.interSemiBold, size: 24))
           .foregroundStyle(NomiColor.ink)
-        TextField("0", text: $amountText)
+        TextField("0", text: $model.amountText)
           #if os(iOS)
           .keyboardType(.decimalPad)
           #endif
           .font(TabularFigures.font(name: NomiFont.interSemiBold, size: 24))
           .foregroundStyle(NomiColor.ink)
           .accessibilityLabel("Monthly amount")
-          .onChange(of: amountText) { _, newValue in
-            let sanitized = EntryAmount.sanitizeInput(newValue)
-            if sanitized != newValue { amountText = sanitized }
+          .onChange(of: model.amountText) { _, newValue in
+            model.amountDidChange(newValue)
           }
       }
-    }
-  }
-
-  // MARK: - Actions
-
-  /// Only ever sets. Removal is `remove()`, behind the Remove row's confirmation.
-  private func save() {
-    do {
-      guard
-        try BudgetSaveAction.perform(
-          categoryID: selectedCategoryID, amountMinor: amountMinor, store: budgetStore)
-      else { return }
-      onSaved?()
-      dismiss()
-    } catch {
-      errorMessage = "Could not save this budget."
-    }
-  }
-
-  private func remove() {
-    guard let categoryID = category?.id else { return }
-    do {
-      try budgetStore.removeBudget(categoryID: categoryID)
-      onSaved?()
-      dismiss()
-    } catch {
-      errorMessage = "Could not remove this budget."
     }
   }
 }

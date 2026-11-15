@@ -33,13 +33,8 @@ public struct SettingsScreen: View {
 
   @State private var connectionState: MailConnectionState = .disconnected
   @State private var permissionDenied = false
-  @State private var isRescanning = false
-  @State private var isScanningRecent = false
-  @State private var lastSyncSummary: SyncSummary?
-  @State private var rescanError: String?
-  /// R7's notice. Read from `StoreRecoveryRecord` when the screen is built and
-  /// cleared by its Dismiss button, which hides the row for this view too.
-  @State private var storeRecovery: StoreRecoveryNotice?
+  /// The scans, their error copy and R7's notice (T2a). See `SettingsModel`.
+  @State private var model: SettingsModel
   private let forcedPermissionDenied: Bool?
 
   @Environment(\.scenePhase) private var scenePhase
@@ -71,7 +66,9 @@ public struct SettingsScreen: View {
     self.budgetStore = budgetStore
     self.insightsStore = insightsStore
     self.refreshToken = refreshToken
-    _storeRecovery = State(initialValue: storeRecovery)
+    _model = State(
+      initialValue: SettingsModel(
+        service: mailConnectionService, storeRecovery: storeRecovery, recoveryDefaults: .standard))
     forcedPermissionDenied = nil
   }
 
@@ -102,7 +99,9 @@ public struct SettingsScreen: View {
     self.budgetStore = budgetStore
     self.insightsStore = insightsStore
     self.refreshToken = refreshToken
-    _storeRecovery = State(initialValue: storeRecovery)
+    _model = State(
+      initialValue: SettingsModel(
+        service: mailConnectionService, storeRecovery: storeRecovery, recoveryDefaults: .standard))
     self.forcedPermissionDenied = forcedPermissionDenied
   }
 
@@ -136,11 +135,11 @@ public struct SettingsScreen: View {
     .background(NomiColor.ground)
     .alert(
       "Couldn't re-scan",
-      isPresented: Binding(get: { rescanError != nil }, set: { if !$0 { rescanError = nil } })
+      isPresented: Binding(get: { model.rescanError != nil }, set: { if !$0 { model.rescanError = nil } })
     ) {
-      Button("OK", role: .cancel) { rescanError = nil }
+      Button("OK", role: .cancel) { model.rescanError = nil }
     } message: {
-      Text(rescanError ?? "")
+      Text(model.rescanError ?? "")
     }
     .navigationTitle("Settings")
     #if os(iOS)
@@ -245,10 +244,10 @@ public struct SettingsScreen: View {
   private var scanMailRow: some View {
     Menu {
       Button("Force re-scan") {
-        rescan()
+        model.rescan()
       }
       Button("Scan last 6 months") {
-        scanRecent()
+        model.scanRecent()
       }
     } label: {
       HStack(spacing: NomiSpacing.xs) {
@@ -256,7 +255,7 @@ public struct SettingsScreen: View {
           .nomiTextStyle(.rowTitle)
           .foregroundStyle(NomiColor.navy)
         Spacer(minLength: 0)
-        if isRescanning || isScanningRecent {
+        if model.isRescanning || model.isScanningRecent {
           ProgressView()
         } else {
           Image(systemName: "ellipsis")
@@ -316,7 +315,7 @@ public struct SettingsScreen: View {
   private var dataGroup: some View {
     settingsGroup("Data") {
       VStack(alignment: .leading, spacing: NomiSpacing.cardGap) {
-        if let storeRecovery {
+        if let storeRecovery = model.storeRecovery {
           storeRecoveryNotice(storeRecovery)
         }
         VStack(alignment: .leading, spacing: 0) {
@@ -337,15 +336,9 @@ public struct SettingsScreen: View {
   /// rather than inside it, as the Mail group's attention row does.
   private func storeRecoveryNotice(_ notice: StoreRecoveryNotice) -> some View {
     VStack(alignment: .leading, spacing: NomiSpacing.xs) {
-      NomiAttentionRow(
-        systemImage: "exclamationmark.triangle",
-        title: "Saved data couldn’t be opened",
-        message: StoreRecoveryDisplay.caption(for: notice),
-        showsChevron: false
-      )
+      Self.storeRecoveryRow(notice)
       Button("Dismiss") {
-        StoreRecoveryRecord.clear(in: .standard)
-        storeRecovery = nil
+        model.dismissStoreRecovery()
       }
       .buttonStyle(NomiSecondaryButtonStyle())
       .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget, alignment: .leading)
@@ -478,41 +471,19 @@ public struct SettingsScreen: View {
   }
 
   private var unmatchedSenderRows: [String] {
-    guard let lastSyncSummary else { return [] }
+    guard let lastSyncSummary = model.lastSyncSummary else { return [] }
     return UnmatchedSenderDisplay.rows(for: lastSyncSummary.unmatchedSenders)
   }
 
-  /// The `try?` here swallowed every re-scan failure - a wrong password, a
-  /// dropped socket, a server that said no - and left the button springing
-  /// back with nothing shown. F3's pattern, the one `TransactionDetailScreen`
-  /// already uses: `do/catch` into an `.alert`.
-  private func rescan() {
-    isRescanning = true
-    rescanError = nil
-    Task {
-      defer { isRescanning = false }
-      do {
-        lastSyncSummary = try await SettingsActions.rescan(using: mailConnectionService)
-      } catch {
-        rescanError = SettingsActions.alertText(for: error)
-      }
-    }
-  }
-
-  /// M7: same shape as `rescan()` — its own loading flag, so the menu shows
-  /// which action is running, but the same `lastSyncSummary`/`rescanError`,
-  /// since both feed the same "Not matched" list and the same failure alert.
-  private func scanRecent() {
-    isScanningRecent = true
-    rescanError = nil
-    Task {
-      defer { isScanningRecent = false }
-      do {
-        lastSyncSummary = try await SettingsActions.scanRecent(using: mailConnectionService)
-      } catch {
-        rescanError = SettingsActions.alertText(for: error)
-      }
-    }
+  /// The R7 notice's row. It has no chevron: the notice does not navigate, so
+  /// a chevron would look tappable.
+  static func storeRecoveryRow(_ notice: StoreRecoveryNotice) -> NomiAttentionRow {
+    NomiAttentionRow(
+      systemImage: "exclamationmark.triangle",
+      title: "Saved data couldn’t be opened",
+      message: StoreRecoveryDisplay.caption(for: notice),
+      showsChevron: false
+    )
   }
 
   private func refreshPermissionStatus() async {
