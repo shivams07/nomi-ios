@@ -66,29 +66,58 @@ enum LedgerGrouping {
   }
 }
 
-/// The day header's total. A day can net negative (more spent than
-/// received), so — like `TrackedBalanceText` in `Accounts/AccountsLogic.swift`
-/// — this formats a raw signed total rather than a per-transaction
-/// debit/credit, and needs its own sign prefix since
-/// `NomiFormatters.amountString` always strips it. DEC-03 / A-03.4: the sign
-/// is U+2212 for a negative total and "+" for a positive one, and zero carries
-/// neither.
-enum LedgerDayTotalText {
-  static func string(minor: Int) -> String {
-    let sign = minor < 0 ? "\u{2212}" : (minor > 0 ? "+" : "")
-    return sign + NomiFormatters.amountString(minor: abs(minor))
+/// A day's two sides, spent and received (S2, artboard Activity). They are display
+/// sums of rows already counted, so nothing here is money arithmetic. Transfer legs
+/// are out (DEC-05), and so is any row not in INR: the same exclusions as
+/// `LedgerDayGroup.totalMinor`, which keeps the period's day totals agreeing with
+/// Home's net.
+enum LedgerDayTotals {
+  static func of<Row: LedgerRow>(_ rows: [Row]) -> (spentMinor: Int, receivedMinor: Int) {
+    var spent = 0
+    var received = 0
+    for row in rows where row.currencyCode == "INR" && !row.isTransfer {
+      if row.direction == .credit {
+        received += row.amountMinor
+      } else {
+        spent += row.amountMinor
+      }
+    }
+    return (spent, received)
   }
 }
 
-/// Which chip is active. Single-select, not a set — "All", one category,
-/// "Uncategorized", or "Needs review" are mutually exclusive views of the
-/// same ledger, not independent toggles to combine. Public so `LedgerScreen`'s
-/// `initialChip:` can be set from outside the package.
+/// The day header's total: spent as "−₹240.00", received as "+₹38,500.00", or
+/// both joined by " · " (artboard Activity). A sign is always printed, so the
+/// direction is never colour alone (DEC-03 / A-03.4). U+2212 is the minus.
+/// `nil` when neither side has money, so a day of transfers shows no total.
+enum LedgerDayTotalText {
+  static func string(spentMinor: Int, receivedMinor: Int) -> String? {
+    var parts: [String] = []
+    if spentMinor > 0 {
+      parts.append("\u{2212}" + NomiFormatters.amountString(minor: spentMinor))
+    }
+    if receivedMinor > 0 {
+      parts.append("+" + NomiFormatters.amountString(minor: receivedMinor))
+    }
+    return parts.isEmpty ? nil : parts.joined(separator: " · ")
+  }
+}
+
+/// Which chip is active. Single-select, not a set: the chips are mutually
+/// exclusive views of the same ledger, not toggles to combine. Public so
+/// `LedgerScreen`'s `initialChip:` can be set from outside the package.
+///
+/// `.category` and `.uncategorized` are routed only (Home and Import send them
+/// through `ActivityRequest`); the chip row never offers them directly. `.spent`,
+/// `.income` and `.transfers` are the row's three kind chips (S2).
 public enum LedgerChipSelection: Equatable {
   case all
   case category(UUID)
   case uncategorized
   case needsReview
+  case spent
+  case income
+  case transfers
 }
 
 enum LedgerFiltering {
@@ -111,7 +140,57 @@ enum LedgerFiltering {
       // it stays only for `LedgerFiltering`'s existing tests, so there is
       // nothing meaningful to filter by here.
       return rows
+    case .spent, .income, .transfers:
+      return rows.filter { kindMatches($0, selection: selection) }
     }
+  }
+
+  /// The Spent, Income and Transfers chips (S2). Spent is a debit that is not a
+  /// transfer, Income a credit that is not one, and Transfers the transfer legs
+  /// in both directions. Every other chip keeps the row, so this is the one rule
+  /// the kind chips share. Pure: `LedgerScreen` applies it to the fetched rows.
+  static func kindMatches<Row: LedgerRow>(_ row: Row, selection: LedgerChipSelection) -> Bool {
+    switch selection {
+    case .spent:
+      return row.direction == .debit && !row.isTransfer
+    case .income:
+      return row.direction == .credit && !row.isTransfer
+    case .transfers:
+      return row.isTransfer
+    case .all, .category, .uncategorized, .needsReview:
+      return true
+    }
+  }
+}
+
+/// The chip row's state (S2). Pure, so the routed chip and its fall-back are pinned.
+enum LedgerChipRow {
+  /// The selection the list actually applies. A routed category that no longer
+  /// exists has nothing to filter by, so it falls back to All.
+  static func effective(_ selection: LedgerChipSelection, categoryNames: [UUID: String]) -> LedgerChipSelection {
+    if case .category(let id) = selection, categoryNames[id] == nil {
+      return .all
+    }
+    return selection
+  }
+
+  /// The routed chip's title, drawn first in the row with a cross, or nil when the
+  /// selection is not routed. Tapping it returns to All.
+  static func routedTitle(for selection: LedgerChipSelection, categoryNames: [UUID: String]) -> String? {
+    switch selection {
+    case .category(let id):
+      return categoryNames[id].map { "\($0) ✕" }
+    case .uncategorized:
+      return "Uncategorized ✕"
+    case .all, .needsReview, .spent, .income, .transfers:
+      return nil
+    }
+  }
+
+  /// The To review count's text. Nil at zero, so the tag is hidden rather than
+  /// reading "0".
+  static func reviewCount(_ count: Int) -> String? {
+    count > 0 ? "\(count)" : nil
   }
 }
 
@@ -162,7 +241,7 @@ enum LedgerEmptyKind: Equatable {
   /// filter. The period pill stays (LedgerEmpty artboard).
   case empty
   /// The selected period is empty but the store holds rows elsewhere, and no
-  /// filter is set. Shows "Nothing in <period>". The period pill, search bar
+  /// filter is set. Shows "No transactions in <period> yet". The header, search bar
   /// and chips stay, and "Show <previous period>" sits below.
   case nothingRecent
   /// A chip or search is active and empties the list. Shows the query and
@@ -186,9 +265,10 @@ enum LedgerCopy {
     return "No matches for “\(text)”"
   }
 
-  /// "Nothing in October 2026": the period-scoped empty title (DEC-04, item 8).
+  /// "No transactions in November 2026 yet": the period-scoped empty title, from the
+  /// States board (S2 step 6). It replaces DEC-04 item 8's "Nothing in <period>".
   static func nothingInPeriodTitle(label: String) -> String {
-    "Nothing in \(label)"
+    "No transactions in \(label) yet"
   }
 
   /// The no-results message. `periodLabel` is nil when no period is in effect
@@ -210,18 +290,34 @@ enum LedgerCopy {
     "Show \(label)"
   }
 
-  /// The search box's prompt. "Search all transactions" only when a whole-ledger
-  /// search service is wired; otherwise the box only filters the period.
-  static func searchPrompt(wholeLedger: Bool) -> String {
-    wholeLedger ? "Search all transactions" : "Search"
-  }
+  /// The search field's prompt, from the artboard (S2 step 2).
+  static let searchPlaceholder = "Search merchant, note or amount"
 
-  /// The period-empty message. The whole-ledger clause appears only when
-  /// search can actually reach other periods.
-  static func nothingInPeriodMessage(wholeLedger: Bool) -> String {
-    wholeLedger
-      ? "Choose another period from the menu, or search the whole ledger."
-      : "Choose another period from the menu."
+  /// The period-empty message, from the States board. It says what goes here and
+  /// how it gets there, and claims nothing about other periods.
+  static let nothingInPeriodMessage = "They appear here when a bank alert arrives, or when you add one."
+}
+
+/// The Activity routing's search prefill (S2 step 3). `.search(text)` from Home or
+/// Import puts its text in the search box once. Blank text prefills nothing.
+enum LedgerSearchRouting {
+  static func prefill(for request: ActivityRequest?) -> String? {
+    guard case .search(let text)? = request else { return nil }
+    return LedgerSearch.normalized(text)
+  }
+}
+
+/// Hands the search prefill out once per screen instance (S2 review, Lim M3). The
+/// first take spends the gate, whatever the request was. A later take, from a
+/// re-appear or a pop back to Activity, gets nothing, so a typed query is not
+/// overwritten. `LedgerScreen` holds one as `@State`.
+struct LedgerPrefillGate {
+  private var spent = false
+
+  mutating func take(_ request: ActivityRequest?) -> String? {
+    guard !spent else { return nil }
+    spent = true
+    return LedgerSearchRouting.prefill(for: request)
   }
 }
 

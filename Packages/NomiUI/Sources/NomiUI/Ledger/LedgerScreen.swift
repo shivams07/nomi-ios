@@ -25,16 +25,10 @@ private enum LedgerMetrics {
 }
 
 /// The first-run Ledger's band: the scroll container's height less the tab bar's
-/// reserved space, so the block centres between the pill row and the bar's top.
-/// Pure, so `LedgerFirstRunBandTests` pins the arithmetic.
+/// reserved space, so the block centres between the header and the bar's top.
+/// Pure, so `LedgerFirstRunBandTests` pins the arithmetic. The reserve is the
+/// environment's `\.nomiTabBarReserve` (S2), which RootView measures from the bar.
 enum LedgerFirstRunBand {
-  /// The tab bar's bottom reserve: the bar's height plus its offset from the physical
-  /// bottom (F3a, I-16), 68 + 26 = 94 pt. The band is measured from the safe-area edge,
-  /// which sits 34 pt above the physical bottom on Face ID phones, so the bar's real top
-  /// is 60 pt above that edge. 94 overstates that by the safe area, so the block always
-  /// clears the bar. Fixed, not measured, so it is a pure constant.
-  static let tabBarReserve: CGFloat = NomiTabBarMetrics.barHeight + NomiTabBarMetrics.bottomOffset
-
   static func height(containerHeight: CGFloat, tabBottomReserve: CGFloat) -> CGFloat {
     guard containerHeight.isFinite, tabBottomReserve.isFinite else { return 0 }
     return max(0, containerHeight - max(0, tabBottomReserve))
@@ -105,6 +99,11 @@ public struct LedgerScreen: View {
   @State private var windowSummary = LedgerWindowSummary.unreported
   /// The bottom reserve for the Activity tab (F3b). 0 on a pushed screen.
   @Environment(\.nomiTabBarReserve) private var tabBarReserve
+  /// The request the Activity stack was opened with (RootView sets it). `.search`
+  /// prefills the search box once, in `onAppear`.
+  @Environment(\.nomiActivityRequest) private var activityRequest
+  /// Spent by the first `onAppear`, so the prefill is written once per screen instance.
+  @State private var prefillGate = LedgerPrefillGate()
 
   /// A sheet does not inherit the root's `modelContainer` — the detail
   /// screen's own `@Query` would trap at runtime (not in CI, which never
@@ -145,8 +144,14 @@ public struct LedgerScreen: View {
     LedgerSearch.normalized(searchText) != nil && searchResults != nil
   }
 
+  /// The chip the list applies. A routed category that no longer exists falls back
+  /// to All (S2), so nothing filters by an id that matches no category.
+  private var activeSelection: LedgerChipSelection {
+    LedgerChipRow.effective(selection, categoryNames: categoryNamesByID)
+  }
+
   private var scope: LedgerScope {
-    LedgerScope.resolve(selection: selection, wholeLedgerSearchActive: wholeLedgerSearchActive)
+    LedgerScope.resolve(selection: activeSelection, wholeLedgerSearchActive: wholeLedgerSearchActive)
   }
 
   /// The period named in copy, or nil when no period is in effect.
@@ -159,8 +164,10 @@ public struct LedgerScreen: View {
   /// carries a `Set` of category ids for a caller that might multi-select;
   /// this screen's chip never produces more than one.
   private var filter: TransactionFilter {
-    switch selection {
-    case .all:
+    switch activeSelection {
+    case .all, .spent, .income, .transfers:
+      // The kind chips are applied in memory by `LedgerFiltering.kindMatches`, so
+      // the predicate carries only the search here.
       return TransactionFilter(searchText: searchText)
     case .category(let id):
       return TransactionFilter(categoryIDs: [id], searchText: searchText)
@@ -173,7 +180,7 @@ public struct LedgerScreen: View {
 
   /// A chip other than All is selected, or the search box holds a query.
   private var isFiltered: Bool {
-    selection != .all || LedgerSearch.normalized(searchText) != nil
+    activeSelection != .all || LedgerSearch.normalized(searchText) != nil
   }
 
   /// Decides the empty treatment, and whether the chip row and search bar show.
@@ -230,7 +237,7 @@ public struct LedgerScreen: View {
         now: now,
         periodLabel: periodLabel,
         scope: scope,
-        wholeLedgerSearch: transactionSearch != nil,
+        kind: activeSelection,
         isFiltered: isFiltered,
         transactionStore: transactionStore,
         categoryNamesByID: categoryNamesByID,
@@ -258,20 +265,20 @@ public struct LedgerScreen: View {
       .id(queryKey)
   }
 
-  /// The first-run Ledger (no transactions): the pill row, then the empty block in
-  /// the space the pill row leaves above the tab bar (D15). Flexible frames split
+  /// The first-run Ledger (no transactions): the header, then the empty block in
+  /// the space the header leaves above the tab bar (D15). Flexible frames split
   /// the visible height, so the block centres in that space with no measurement.
   private var firstRunLayout: some View {
     // The scroll view ends at the tab bar's top, so its visible height is the band
     // the block must fill. `containerRelativeFrame` pins the stack to that height.
     ScrollView {
       VStack(spacing: 0) {
-        periodRow
+        header
         transactionList
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
       }
       .containerRelativeFrame(.vertical, alignment: .top) { length, _ in
-        LedgerFirstRunBand.height(containerHeight: length, tabBottomReserve: LedgerFirstRunBand.tabBarReserve)
+        LedgerFirstRunBand.height(containerHeight: length, tabBottomReserve: tabBarReserve)
       }
     }
   }
@@ -288,20 +295,25 @@ public struct LedgerScreen: View {
             .frame(height: 0)
             .id(LedgerScrollTarget.top)
 
-          // The period pill stays in the first-run state too: the LedgerEmpty
-          // artboard shows it. Only the chip row is hidden there.
-          periodRow
+          // The header, with the period pill, stays in the first-run state too: the
+          // LedgerEmpty artboard shows it. The search field and chips are hidden there.
+          header
           if emptyKind != .empty {
+            NomiSearchField(prompt: LedgerCopy.searchPlaceholder, text: $searchText)
+              .padding(.horizontal, NomiSpacing.screenGutter)
+              .padding(.top, NomiSpacing.xs)
             chipRow
               .padding(.top, NomiSpacing.xs)
           }
 
           if searchFailed {
-            Text(LedgerCopy.searchFailedText(periodLabel: scopedPeriodLabel))
-              .nomiTextStyle(.caption)
-              .foregroundStyle(NomiColor.inkSecondary)
-              .padding(.horizontal, NomiSpacing.screenGutter)
-              .padding(.bottom, NomiSpacing.xs)
+            NomiStatusNote(
+              LedgerCopy.searchFailedText(periodLabel: scopedPeriodLabel),
+              tone: .error,
+              systemImage: "exclamationmark.circle"
+            )
+            .padding(.horizontal, NomiSpacing.screenGutter)
+            .padding(.top, NomiSpacing.xs)
           }
 
           // `.id(queryKey)` is load-bearing: SwiftData's `@Query` fixes its
@@ -326,20 +338,19 @@ public struct LedgerScreen: View {
     }
     }
     .background(NomiColor.ground)
-    .modifier(
-      LedgerSearchModifier(
-        text: $searchText,
-        isEnabled: emptyKind != .empty,
-        prompt: LedgerCopy.searchPrompt(wholeLedger: transactionSearch != nil)
-      )
-    )
-    .navigationTitle("Ledger")
+    // The title is the page header in the content (artboard Activity), so the bar goes.
     #if os(iOS)
-      .navigationBarTitleDisplayMode(.large)
+      .toolbar(.hidden, for: .navigationBar)
     #endif
     // Sets `now` once per appearance rather than every `dayHeader` call —
     // day headers read it from here, not from a fresh `Date()` in `body`.
-    .onAppear { now = Date() }
+    // The Home and Import routes may send a search: its text prefills the box once.
+    .onAppear {
+      now = Date()
+      if let text = prefillGate.take(activityRequest) {
+        searchText = text
+      }
+    }
     // A basis switch re-anchors to the current period, as the menu reads
     // (DEC-04, item 3). The anchor is otherwise kept, so leaving Needs review
     // or a search restores the period that was on screen.
@@ -405,12 +416,12 @@ public struct LedgerScreen: View {
 
   // MARK: - Period
 
-  /// The period pill, trailing on its own row above the chips (DEC-04). Its
-  /// menu is Home's shape: a basis picker, a divider, then the recent periods.
-  /// While the list is a queue the pill reads "All time" and is disabled.
-  private var periodRow: some View {
-    HStack(spacing: 0) {
-      Spacer(minLength: NomiSpacing.xs)
+  /// The page header (S2): "Activity" on the left, the period pill on the right, as
+  /// the artboard draws it. The pill's menu is Home's shape: a basis picker, a
+  /// divider, then the recent periods (DEC-04). While the list is a queue the pill
+  /// reads "All time" and is disabled.
+  private var header: some View {
+    NomiPageHeader("Activity") {
       NomiPeriodPill(title: scope == .period ? periodLabel : "All time", style: .onGround) {
         periodMenu
       }
@@ -436,28 +447,38 @@ public struct LedgerScreen: View {
 
   // MARK: - Filter chips
 
-  /// One horizontal row of `NomiChip`: All, Needs review (with its count),
-  /// Uncategorized, then one chip per category. Scrolls sideways when it
-  /// overflows, and the gutter is inside the scroll so the first chip is not
-  /// clipped at the edge.
+  /// One horizontal row (artboard Activity): All, To review with its warning count,
+  /// then Spent, Income and Transfers. A routed category or Uncategorized comes first
+  /// as a sixth selected chip, "<name> ✕", and tapping it returns to All. Scrolls
+  /// sideways when it overflows, and the gutter is inside the scroll so the first
+  /// chip is not clipped at the edge.
   private var chipRow: some View {
-    ScrollView(.horizontal, showsIndicators: false) {
+    let routed = LedgerChipRow.routedTitle(for: activeSelection, categoryNames: categoryNamesByID)
+    return ScrollView(.horizontal, showsIndicators: false) {
       HStack(spacing: NomiSpacing.xxs) {
-        NomiChip(title: "All", isSelected: selection == .all) {
+        if let routed {
+          LedgerChip(title: routed, isSelected: true) {
+            selection = .all
+          }
+        }
+        LedgerChip(title: "All", isSelected: activeSelection == .all) {
           selection = .all
         }
-        NomiChip(
-          title: "Needs review", count: windowSummary.needsReviewCount, isSelected: selection == .needsReview
+        LedgerChip(
+          title: "To review",
+          count: LedgerChipRow.reviewCount(windowSummary.needsReviewCount),
+          isSelected: activeSelection == .needsReview
         ) {
           selection = .needsReview
         }
-        NomiChip(title: "Uncategorized", isSelected: selection == .uncategorized) {
-          selection = .uncategorized
+        LedgerChip(title: "Spent", isSelected: activeSelection == .spent) {
+          selection = .spent
         }
-        ForEach(categories) { category in
-          NomiChip(title: category.name, isSelected: selection == .category(category.id)) {
-            selection = .category(category.id)
-          }
+        LedgerChip(title: "Income", isSelected: activeSelection == .income) {
+          selection = .income
+        }
+        LedgerChip(title: "Transfers", isSelected: activeSelection == .transfers) {
+          selection = .transfers
         }
       }
       .padding(.horizontal, NomiSpacing.screenGutter)
@@ -489,25 +510,47 @@ public struct LedgerScreen: View {
   }
 }
 
-/// Hides the search bar, not just its text, when there is nothing to search
-/// (`LedgerEmptyKind.empty`).
-private struct LedgerSearchModifier: ViewModifier {
-  @Binding var text: String
-  let isEnabled: Bool
-  let prompt: String
+/// One chip of the Activity row (artboard `.chip`): the `NomiChip` look, with an
+/// optional `NomiTag` count, which `NomiChip` cannot draw (it prints the count as
+/// text). 36 pt high with a 44 pt tap area. Selected is navy with white text, and
+/// unselected is `card` with a 1 pt `separator` stroke.
+private struct LedgerChip: View {
+  let title: String
+  var count: String?
+  let isSelected: Bool
+  let action: () -> Void
 
-  func body(content: Content) -> some View {
-    if isEnabled {
-      #if os(iOS)
-      // Under the large title, not at the bottom: the iOS 26 default bottom
-      // placement sits under the tab bar (fid-ledger-search, D2).
-      content.searchable(text: $text, placement: .navigationBarDrawer(displayMode: .always), prompt: prompt)
-      #else
-      content.searchable(text: $text, prompt: prompt)
-      #endif
-    } else {
-      content
+  private var shape: RoundedRectangle {
+    RoundedRectangle(cornerRadius: NomiRadius.chip, style: .continuous)
+  }
+
+  var body: some View {
+    Button(action: action) {
+      HStack(spacing: NomiSpacing.xxs) {
+        Text(title)
+          .nomiTextStyle(isSelected ? .chipSelected : .chip)
+          .foregroundStyle(isSelected ? NomiColor.onPrimary : NomiColor.ink)
+          .lineLimit(1)
+        if let count {
+          NomiTag(count, tone: .warning)
+        }
+      }
+      .padding(.horizontal, 14)
+      .frame(height: 36)
+      .background {
+        shape.fill(isSelected ? NomiColor.navy : NomiColor.card)
+      }
+      .overlay {
+        if !isSelected {
+          shape.strokeBorder(NomiColor.separator, lineWidth: 1)
+        }
+      }
+      .frame(minHeight: NomiSpacing.minTarget)
+      .contentShape(Rectangle())
     }
+    .buttonStyle(.plain)
+    .accessibilityLabel(count.map { "\(title), \($0)" } ?? title)
+    .accessibilityAddTraits(isSelected ? .isSelected : [])
   }
 }
 
@@ -544,13 +587,13 @@ private struct LedgerTransactionList: View {
   /// The selected period. The list's period query is built from it at init.
   let range: Range<Date>
   let now: Date
-  /// The period's label, for the "Nothing in <period>" title.
+  /// The period's label, for the "No transactions in <period> yet" title.
   let periodLabel: String
   /// Which rows the list draws. `.period` names the period in copy; the queues do not.
   let scope: LedgerScope
-  /// Whether a whole-ledger search service is wired. Without one, the search
-  /// box only filters the period, and the copy must not say otherwise.
-  let wholeLedgerSearch: Bool
+  /// The chip the list applies. The kind chips (Spent, Income, Transfers) are
+  /// applied in memory here, after the predicate; the other chips are in `filter`.
+  let kind: LedgerChipSelection
   /// A chip other than All is selected, or the search box holds a query.
   let isFiltered: Bool
   let transactionStore: TransactionStore
@@ -570,6 +613,8 @@ private struct LedgerTransactionList: View {
   let onClearFilters: () -> Void
 
   @Query private var periodRows: [NomiCore.Transaction]
+  /// Sizes the day header's totals: at accessibility sizes the label stacks above them.
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Query(
     filter: LedgerFilterPredicate.makeNeedsReview(),
     sort: [SortDescriptor(\NomiCore.Transaction.date, order: .reverse)]
@@ -588,7 +633,7 @@ private struct LedgerTransactionList: View {
     now: Date,
     periodLabel: String,
     scope: LedgerScope,
-    wholeLedgerSearch: Bool,
+    kind: LedgerChipSelection,
     isFiltered: Bool,
     transactionStore: TransactionStore,
     categoryNamesByID: [UUID: String],
@@ -606,7 +651,7 @@ private struct LedgerTransactionList: View {
     self.now = now
     self.periodLabel = periodLabel
     self.scope = scope
-    self.wholeLedgerSearch = wholeLedgerSearch
+    self.kind = kind
     self.isFiltered = isFiltered
     self.transactionStore = transactionStore
     self.categoryNamesByID = categoryNamesByID
@@ -631,6 +676,9 @@ private struct LedgerTransactionList: View {
   /// ledger and ignores the period. Needs review is the flagged queue. Otherwise
   /// the selected period. The chip and search rules apply to each.
   private var rows: [NomiCore.Transaction] {
+    // The kind chips (Spent, Income, Transfers) are applied to whichever set the
+    // branch below draws. Every other chip returns true there.
+    let byKind: (NomiCore.Transaction) -> Bool = { LedgerFiltering.kindMatches($0, selection: kind) }
     // A blank box never shows whole-ledger rows, even for the one frame before
     // `runSearch` clears `searchMatches`.
     if let searchMatches, LedgerSearch.normalized(filter.searchText) != nil {
@@ -638,12 +686,12 @@ private struct LedgerTransactionList: View {
       // applies, so the text is cleared here rather than matched twice.
       var chipOnly = filter
       chipOnly.searchText = ""
-      return searchMatches.filter { LedgerFilterPredicate.matches($0, filter: chipOnly, within: nil) }
+      return searchMatches.filter { LedgerFilterPredicate.matches($0, filter: chipOnly, within: nil) && byKind($0) }
     }
     if filter.needsReviewOnly {
       return flagged.filter { LedgerFilterPredicate.matches($0, filter: filter, within: nil) }
     }
-    return periodRows.filter { LedgerFilterPredicate.matches($0, filter: filter, within: range) }
+    return periodRows.filter { LedgerFilterPredicate.matches($0, filter: filter, within: range) && byKind($0) }
   }
 
   /// The period, not the search: see `LedgerWindowSummary`. `storeHasRows` is
@@ -660,7 +708,7 @@ private struct LedgerTransactionList: View {
 
   /// Whether the whole table holds any transaction. A one-row fetch, so it
   /// never loads the table (F1). If the fetch throws it answers true, so the
-  /// screen says "Nothing in <period>" rather than the first-run copy.
+  /// screen says "No transactions in <period> yet" rather than the first-run copy.
   private var storeHasAnyRow: Bool {
     var descriptor = FetchDescriptor<NomiCore.Transaction>()
     descriptor.fetchLimit = 1
@@ -730,7 +778,8 @@ private struct LedgerTransactionList: View {
           }
         }
       }
-      .nomiCard()
+      // The flush card (artboard `.card.flush`): 6 pt above and below, 18 pt at the sides.
+      .nomiCard(padding: EdgeInsets(top: 6, leading: 18, bottom: 6, trailing: 18))
       .padding(.horizontal, NomiSpacing.screenGutter)
     } header: {
       dayHeader(group)
@@ -739,25 +788,55 @@ private struct LedgerTransactionList: View {
 
   // MARK: - Day header
 
-  /// The day label on the left, the day's net on the right with its sign
-  /// (A-03.4). Opaque, so content scrolling beneath a pinned header does not
+  /// The day label on the left, in ink (artboard), and the day's totals on the
+  /// right: spent, received, or both (`LedgerDayTotalText`). A day with neither side
+  /// shows no total. Opaque, so content scrolling beneath a pinned header does not
   /// show through.
   private func dayHeader(_ group: LedgerDayGroup<NomiCore.Transaction>) -> some View {
-    HStack {
-      Text(LedgerDayHeaderText.string(for: group.day, relativeTo: now))
-        .nomiTextStyle(.label)
-        .foregroundStyle(NomiColor.dayHeader)
-      Spacer(minLength: NomiSpacing.xs)
-      Text(LedgerDayTotalText.string(minor: group.totalMinor))
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.inkSecondary)
+    let totals = LedgerDayTotals.of(group.rows)
+    let totalText = LedgerDayTotalText.string(spentMinor: totals.spentMinor, receivedMinor: totals.receivedMinor)
+    let label = Text(LedgerDayHeaderText.string(for: group.day, relativeTo: now))
+      .nomiTextStyle(.label)
+      .foregroundStyle(NomiColor.ink)
+    return Group {
+      if dynamicTypeSize.isAccessibilitySize {
+        // At accessibility sizes the total takes its own line, so it never shares a
+        // row with the label and cannot break across lines.
+        VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+          label
+          if let totalText {
+            dayTotal(totalText)
+          }
+        }
+      } else {
+        HStack {
+          label
+          Spacer(minLength: NomiSpacing.xs)
+          if let totalText {
+            dayTotal(totalText)
+              .layoutPriority(1)
+          }
+        }
+      }
     }
-    .frame(minHeight: LedgerMetrics.dayHeaderHeight)
+    .frame(minHeight: LedgerMetrics.dayHeaderHeight, alignment: .leading)
     .padding(.horizontal, NomiSpacing.screenGutter)
     .padding(.top, NomiSpacing.cardGap)
     .padding(.bottom, NomiSpacing.xs)
     .frame(maxWidth: .infinity, alignment: .leading)
+    // Opaque and layered above the card beneath: a pinned header must not show rows
+    // through it, at any Dynamic Type size (Lim PR #212, AX3).
     .background(NomiColor.ground)
+    .zIndex(1)
+  }
+
+  /// A day total on one line. It never wraps mid-amount: it shrinks to fit instead.
+  private func dayTotal(_ text: String) -> some View {
+    Text(text)
+      .nomiTextStyle(.caption)
+      .foregroundStyle(NomiColor.inkSecondary)
+      .lineLimit(1)
+      .minimumScaleFactor(0.5)
   }
 
   // MARK: - Rows
@@ -797,7 +876,7 @@ private struct LedgerTransactionList: View {
       hasRows: summary.hasRows, storeHasRows: summary.storeHasRows, isFiltered: isFiltered)
     {
     case .empty:
-      // Centred in the space the pill row leaves above the tab bar (D15); the
+      // Centred in the space the header leaves above the tab bar (D15); the
       // list's flexible frame gives it that space (`firstRunLayout`).
       NomiEmptyState(
         systemImage: "receipt",
@@ -809,10 +888,13 @@ private struct LedgerTransactionList: View {
       .padding(.horizontal, NomiSpacing.md)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     case .nothingRecent:
+      // The States board's empty copy, with its one next step (S2 step 6).
       NomiEmptyState(
-        systemImage: "clock",
+        systemImage: "tray",
         title: LedgerCopy.nothingInPeriodTitle(label: periodLabel),
-        message: LedgerCopy.nothingInPeriodMessage(wholeLedger: wholeLedgerSearch)
+        message: LedgerCopy.nothingInPeriodMessage,
+        actionTitle: addAction == nil ? nil : "Add a transaction",
+        action: addAction
       )
       .padding(.horizontal, NomiSpacing.md)
       .padding(.top, NomiSpacing.lg)

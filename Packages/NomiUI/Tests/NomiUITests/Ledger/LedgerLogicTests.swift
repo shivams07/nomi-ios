@@ -242,24 +242,332 @@ final class LedgerDayHeaderTests: XCTestCase {
   }
 }
 
-/// A-03.4: the day total carries U+2212 for a negative net and "+" for a
-/// positive one, zero carries neither. The sign is always printed, never
-/// colour alone.
+/// The day's two sides, spent and received, are display sums of rows already
+/// counted (S2). Transfers and foreign-currency rows stay out, as in `totalMinor`.
+final class LedgerDayTotalsTests: XCTestCase {
+  private func rows(_ specs: [(Direction, Int, Bool, String)]) -> [StubRow] {
+    specs.map { direction, amount, isTransfer, currency in
+      StubRow(
+        label: "row", date: date("2026-11-05"), amountMinor: amount, direction: direction,
+        categoryID: nil, currencyCode: currency, isTransfer: isTransfer)
+    }
+  }
+
+  func testSpentOnlyDayHasNoReceivedSide() {
+    let totals = LedgerDayTotals.of(rows([(.debit, 240_00, false, "INR"), (.debit, 100_00, false, "INR")]))
+    XCTAssertEqual(totals.spentMinor, 340_00)
+    XCTAssertEqual(totals.receivedMinor, 0)
+  }
+
+  func testReceivedOnlyDayHasNoSpentSide() {
+    let totals = LedgerDayTotals.of(rows([(.credit, 38_500_00, false, "INR")]))
+    XCTAssertEqual(totals.spentMinor, 0)
+    XCTAssertEqual(totals.receivedMinor, 38_500_00)
+  }
+
+  func testBothSidesAreSummedSeparately() {
+    let totals = LedgerDayTotals.of(rows([(.debit, 18_000_00, false, "INR"), (.credit, 38_500_00, false, "INR")]))
+    XCTAssertEqual(totals.spentMinor, 18_000_00)
+    XCTAssertEqual(totals.receivedMinor, 38_500_00)
+  }
+
+  func testTransferLegsAreLeftOutOfBothSides() {
+    let totals = LedgerDayTotals.of(rows([(.debit, 6_200_00, true, "INR"), (.credit, 6_200_00, true, "INR")]))
+    XCTAssertEqual(totals.spentMinor, 0)
+    XCTAssertEqual(totals.receivedMinor, 0)
+  }
+
+  func testForeignCurrencyRowsAreLeftOut() {
+    let totals = LedgerDayTotals.of(rows([(.debit, 1_299, false, "USD"), (.debit, 500_00, false, "INR")]))
+    XCTAssertEqual(totals.spentMinor, 500_00)
+  }
+
+  func testADayOfOnlyTransfersTotalsZeroOnBothSides() {
+    let totals = LedgerDayTotals.of(rows([(.debit, 100, true, "INR")]))
+    XCTAssertEqual(totals.spentMinor, 0)
+    XCTAssertEqual(totals.receivedMinor, 0)
+  }
+}
+
+/// A-03.4: the day total carries U+2212 for spent and "+" for received, and the
+/// two sides are separated by " · " when both are present (artboard Activity).
+/// The sign is always printed, never colour alone. A day with neither side has
+/// no total at all.
 final class LedgerDayTotalTextTests: XCTestCase {
-  func testPositiveTotalGetsPlusSign() {
-    XCTAssertEqual(LedgerDayTotalText.string(minor: 500), "+" + NomiFormatters.amountString(minor: 500))
+  func testSpentOnlyReadsWithAMinusSign() {
+    XCTAssertEqual(
+      LedgerDayTotalText.string(spentMinor: 240_00, receivedMinor: 0),
+      "\u{2212}" + NomiFormatters.amountString(minor: 240_00))
   }
 
-  func testNegativeTotalGetsMinusSignNotHyphen() {
-    XCTAssertEqual(LedgerDayTotalText.string(minor: -500), "\u{2212}" + NomiFormatters.amountString(minor: 500))
+  func testReceivedOnlyReadsWithAPlusSign() {
+    XCTAssertEqual(
+      LedgerDayTotalText.string(spentMinor: 0, receivedMinor: 38_500_00),
+      "+" + NomiFormatters.amountString(minor: 38_500_00))
   }
 
-  func testZeroTotalHasNoSign() {
-    XCTAssertEqual(LedgerDayTotalText.string(minor: 0), NomiFormatters.amountString(minor: 0))
+  func testBothSidesAreJoinedByAMiddleDot() {
+    XCTAssertEqual(
+      LedgerDayTotalText.string(spentMinor: 18_000_00, receivedMinor: 38_500_00),
+      "\u{2212}" + NomiFormatters.amountString(minor: 18_000_00)
+        + " · +" + NomiFormatters.amountString(minor: 38_500_00))
   }
 
-  func testLakhScaleNegativeTotalKeepsItsSign() {
-    XCTAssertEqual(LedgerDayTotalText.string(minor: -1_148_00), "\u{2212}" + NomiFormatters.amountString(minor: 1_148_00))
+  func testNeitherSideHasNoTotal() {
+    XCTAssertNil(LedgerDayTotalText.string(spentMinor: 0, receivedMinor: 0))
+  }
+
+  func testLakhScaleSpentKeepsItsSign() {
+    XCTAssertEqual(
+      LedgerDayTotalText.string(spentMinor: 1_148_00, receivedMinor: 0),
+      "\u{2212}" + NomiFormatters.amountString(minor: 1_148_00))
+  }
+}
+
+/// The Spent, Income and Transfers chips (S2). Pure, so the rule is pinned for
+/// the in-memory path, and the Ledger's predicate reads the same function.
+final class LedgerKindChipTests: XCTestCase {
+  private let food = UUID()
+
+  private func rows() -> [StubRow] {
+    [
+      StubRow(label: "spend", date: date("2026-08-20"), amountMinor: 100, direction: .debit, categoryID: food),
+      StubRow(label: "income", date: date("2026-08-20"), amountMinor: 200, direction: .credit, categoryID: nil),
+      StubRow(label: "transfer out", date: date("2026-08-20"), amountMinor: 300, direction: .debit, categoryID: nil, isTransfer: true),
+      StubRow(label: "transfer in", date: date("2026-08-20"), amountMinor: 400, direction: .credit, categoryID: nil, isTransfer: true),
+    ]
+  }
+
+  func testSpentKeepsDebitsThatAreNotTransfers() {
+    XCTAssertEqual(LedgerFiltering.apply(rows(), selection: .spent).map(\.label), ["spend"])
+  }
+
+  func testIncomeKeepsCreditsThatAreNotTransfers() {
+    XCTAssertEqual(LedgerFiltering.apply(rows(), selection: .income).map(\.label), ["income"])
+  }
+
+  func testTransfersKeepsBothLegsOfATransfer() {
+    XCTAssertEqual(LedgerFiltering.apply(rows(), selection: .transfers).map(\.label), ["transfer out", "transfer in"])
+  }
+
+  func testAllStillKeepsEveryRow() {
+    XCTAssertEqual(LedgerFiltering.apply(rows(), selection: .all).count, 4)
+  }
+
+  func testKindMatchesAgreesWithApplyForEachRow() {
+    for row in rows() {
+      XCTAssertEqual(
+        LedgerFiltering.kindMatches(row, selection: .spent),
+        LedgerFiltering.apply([row], selection: .spent).count == 1)
+    }
+  }
+}
+
+/// The chip row's state (S2): the routed chip, the fall-back when a routed
+/// category is gone, and the To review count, hidden at zero.
+final class LedgerChipRowTests: XCTestCase {
+  private let food = UUID()
+
+  func testRoutedCategoryTitleIsItsNameWithACross() {
+    XCTAssertEqual(LedgerChipRow.routedTitle(for: .category(food), categoryNames: [food: "Food"]), "Food ✕")
+  }
+
+  func testRoutedUncategorizedTitleIsUncategorizedWithACross() {
+    XCTAssertEqual(LedgerChipRow.routedTitle(for: .uncategorized, categoryNames: [:]), "Uncategorized ✕")
+  }
+
+  func testRoutedCategoryThatNoLongerExistsFallsBackToAll() {
+    XCTAssertEqual(LedgerChipRow.effective(.category(food), categoryNames: [:]), .all)
+    XCTAssertNil(LedgerChipRow.routedTitle(for: .category(food), categoryNames: [:]))
+  }
+
+  func testAKnownRoutedCategoryIsKept() {
+    XCTAssertEqual(LedgerChipRow.effective(.category(food), categoryNames: [food: "Food"]), .category(food))
+  }
+
+  func testNoRoutedChipForTheChipsThatAreNotRouted() {
+    let plain: [LedgerChipSelection] = [.all, .needsReview, .spent, .income, .transfers]
+    for selection in plain {
+      XCTAssertNil(LedgerChipRow.routedTitle(for: selection, categoryNames: [:]))
+    }
+  }
+
+  func testReviewCountIsHiddenAtZero() {
+    XCTAssertNil(LedgerChipRow.reviewCount(0))
+  }
+
+  func testReviewCountReadsItsNumber() {
+    XCTAssertEqual(LedgerChipRow.reviewCount(7), "7")
+  }
+}
+
+/// `.search(text)` from Home or Import prefills the search box once (S2). Blank
+/// text prefills nothing, so the list opens on All as before.
+final class LedgerSearchRoutingTests: XCTestCase {
+  func testSearchRequestPrefillsItsText() {
+    XCTAssertEqual(LedgerSearchRouting.prefill(for: .search("Swiggy")), "Swiggy")
+  }
+
+  func testSearchRequestIsTrimmedLikeTheSearchItself() {
+    XCTAssertEqual(LedgerSearchRouting.prefill(for: .search("  Swiggy ")), "Swiggy")
+  }
+
+  func testBlankSearchRequestPrefillsNothing() {
+    XCTAssertNil(LedgerSearchRouting.prefill(for: .search("")))
+    XCTAssertNil(LedgerSearchRouting.prefill(for: .search("  \n")))
+  }
+
+  func testOtherRequestsPrefillNothing() {
+    XCTAssertNil(LedgerSearchRouting.prefill(for: nil))
+    XCTAssertNil(LedgerSearchRouting.prefill(for: .all))
+    XCTAssertNil(LedgerSearchRouting.prefill(for: .toReview))
+    XCTAssertNil(LedgerSearchRouting.prefill(for: .uncategorized))
+    XCTAssertNil(LedgerSearchRouting.prefill(for: .category(UUID())))
+  }
+
+  /// Lim M3 (PR #212): the prefill is handed out once per screen instance. A second
+  /// take, from a re-appear or a pop back to Activity, must not write the text again.
+  func testPrefillGateHandsTheTextOutOnce() {
+    var gate = LedgerPrefillGate()
+    XCTAssertEqual(gate.take(.search("Swiggy")), "Swiggy")
+    XCTAssertNil(gate.take(.search("Swiggy")))
+  }
+
+  /// The gate is spent by the first take even when that request prefills nothing,
+  /// so a later `.search` on the same instance does not write the box.
+  func testPrefillGateStaysSpentAfterANonSearchRequest() {
+    var gate = LedgerPrefillGate()
+    XCTAssertNil(gate.take(.all))
+    XCTAssertNil(gate.take(.search("Swiggy")))
+  }
+}
+
+/// Lim M4b (PR #212): a routed category that no longer exists falls back to All for
+/// every consumer on the screen, not only the chip. The pure part is pinned here.
+final class LedgerRoutedFallbackTests: XCTestCase {
+  private let gone = UUID()
+  private let rows: [StubRow] = [
+    StubRow(label: "food", date: date("2026-08-20"), amountMinor: 100, direction: .debit, categoryID: UUID()),
+    StubRow(label: "other", date: date("2026-08-20"), amountMinor: 200, direction: .debit, categoryID: nil),
+  ]
+
+  func testAMissingRoutedCategoryListsEveryRow() {
+    let applied = LedgerChipRow.effective(.category(gone), categoryNames: [:])
+    XCTAssertEqual(applied, .all)
+    XCTAssertEqual(LedgerFiltering.apply(rows, selection: applied).count, 2)
+  }
+
+  func testTheFallbackKeepsThePeriodScope() {
+    let applied = LedgerChipRow.effective(.category(gone), categoryNames: [:])
+    XCTAssertEqual(LedgerScope.resolve(selection: applied, wholeLedgerSearchActive: false), .period)
+  }
+}
+
+/// The Activity screen's header, search and day rows are one SwiftUI body, so
+/// they are pinned by source, as `TabRootReserveWiringTests` pins the reserve.
+final class ActivityScreenWiringTests: XCTestCase {
+  private func source(_ relativePath: String) throws -> String {
+    // This file is Packages/NomiUI/Tests/NomiUITests/Ledger/<name>.swift.
+    let packages = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()  // Ledger
+      .deletingLastPathComponent()  // NomiUITests
+      .deletingLastPathComponent()  // Tests
+      .deletingLastPathComponent()  // NomiUI
+      .deletingLastPathComponent()  // Packages
+    let url = packages.appendingPathComponent("NomiUI/Sources/NomiUI/\(relativePath)")
+    return try String(contentsOf: url, encoding: .utf8)
+  }
+
+  func testHeaderIsThePageHeaderWithTheBarHidden() throws {
+    let text = try source("Ledger/LedgerScreen.swift")
+    XCTAssertTrue(text.contains("NomiPageHeader(\"Activity\")"), "the Activity title is NomiPageHeader")
+    XCTAssertTrue(text.contains(".toolbar(.hidden, for: .navigationBar)"), "the navigation bar is hidden")
+    XCTAssertFalse(text.contains(".searchable("), "search is NomiSearchField, not .searchable")
+    XCTAssertFalse(text.contains(".navigationTitle(\"Ledger\")"), "the old large title is gone")
+  }
+
+  func testSearchFieldUsesTheArtboardPrompt() throws {
+    let text = try source("Ledger/LedgerScreen.swift")
+    XCTAssertTrue(text.contains("NomiSearchField(prompt: LedgerCopy.searchPlaceholder"))
+    XCTAssertEqual(LedgerCopy.searchPlaceholder, "Search merchant, note or amount")
+  }
+
+  func testChipRowHasTheFiveArtboardChips() throws {
+    let text = try source("Ledger/LedgerScreen.swift")
+    for title in ["\"All\"", "\"To review\"", "\"Spent\"", "\"Income\"", "\"Transfers\""] {
+      XCTAssertTrue(text.contains(title), "chip \(title) is in the row")
+    }
+  }
+
+  func testRoutedRequestReadsTheEnvironmentForTheSearchPrefill() throws {
+    let text = try source("Ledger/LedgerScreen.swift")
+    XCTAssertTrue(text.contains("@Environment(\\.nomiActivityRequest) private var activityRequest"))
+  }
+
+  func testDayTotalsAreSpentAndReceivedNotOneNet() throws {
+    let text = try source("Ledger/LedgerScreen.swift")
+    XCTAssertTrue(text.contains("LedgerDayTotals.of(group.rows)"))
+    XCTAssertTrue(text.contains("LedgerDayTotalText.string(spentMinor:"))
+  }
+
+  func testFirstRunBandReadsTheReserveFromTheEnvironment() throws {
+    let text = try source("Ledger/LedgerScreen.swift")
+    XCTAssertFalse(text.contains("LedgerFirstRunBand.tabBarReserve"), "the band takes the environment reserve")
+    XCTAssertTrue(text.contains("tabBottomReserve: tabBarReserve"))
+  }
+
+  /// Lim PR #212 M3: the prefill goes through the once-only gate, not a bare write.
+  func testPrefillIsTakenThroughTheOnceOnlyGate() throws {
+    let text = try source("Ledger/LedgerScreen.swift")
+    XCTAssertTrue(text.contains("prefillGate.take(activityRequest)"), "the prefill is handed out by the gate")
+    XCTAssertTrue(text.contains("@State private var prefillGate = LedgerPrefillGate()"))
+  }
+
+  /// Lim PR #212 M4b: every consumer on the screen reads the fallback selection.
+  /// A consumer that reads the raw `selection` filters by a category that is gone.
+  func testEveryConsumerOnTheScreenReadsTheFallbackSelection() throws {
+    let text = try source("Ledger/LedgerScreen.swift")
+    XCTAssertTrue(text.contains("LedgerScope.resolve(selection: activeSelection"))
+    XCTAssertTrue(text.contains("switch activeSelection {"))
+    XCTAssertTrue(text.contains("activeSelection != .all || LedgerSearch"))
+    XCTAssertTrue(text.contains("kind: activeSelection,"))
+    XCTAssertTrue(text.contains("routedTitle(for: activeSelection"))
+    XCTAssertTrue(text.contains("isSelected: activeSelection == .all"))
+    XCTAssertFalse(text.contains("selection: selection"))
+    XCTAssertFalse(text.contains("switch selection {"))
+  }
+
+  /// Lim PR #212 AX3: a day total never breaks an amount, and at accessibility sizes
+  /// the label stacks above the total.
+  func testDayTotalsNeverBreakAnAmountAndStackAtAccessibilitySizes() throws {
+    let text = try source("Ledger/LedgerScreen.swift")
+    XCTAssertTrue(text.contains("@Environment(\\.dynamicTypeSize) private var dynamicTypeSize"))
+    XCTAssertTrue(text.contains("if dynamicTypeSize.isAccessibilitySize {"))
+    XCTAssertTrue(text.contains("minimumScaleFactor("), "an amount scales down rather than wrapping")
+  }
+}
+
+/// The Review tag is `TransactionRow`'s trailing view for an unparseable row
+/// (F2b follow-up, Lim PR 205: the wiring into the row body was untested, and a
+/// mutant with `if false` survived). The row is F2b's file, so the wiring is pinned
+/// by source here, as the rest of the Activity body is.
+final class TransactionRowReviewWiringTests: XCTestCase {
+  func testTrailingShowsTheReviewTagForAnUnparseableRow() throws {
+    let packages = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()  // Ledger
+      .deletingLastPathComponent()  // NomiUITests
+      .deletingLastPathComponent()  // Tests
+      .deletingLastPathComponent()  // NomiUI
+      .deletingLastPathComponent()  // Packages
+    let url = packages.appendingPathComponent("NomiUI/Sources/NomiUI/Shell/TransactionRow.swift")
+    let text = try String(contentsOf: url, encoding: .utf8)
+    XCTAssertTrue(
+      text.contains(
+        "if isUnparseable {\n      NomiTag(String(localized: \"Review\", bundle: .module), tone: .warning)"),
+      "TransactionRow.trailing must show the warning Review tag for an unparseable row")
+    XCTAssertTrue(
+      text.contains("if transaction.needsReview && !isUnparseable {"),
+      "the review dot is not drawn beside the Review tag")
   }
 }
 
@@ -308,9 +616,18 @@ final class LedgerEmptyKindTests: XCTestCase {
 }
 
 final class LedgerCopyTests: XCTestCase {
-  func testNothingInPeriodNamesThePeriod() {
-    XCTAssertEqual(LedgerCopy.nothingInPeriodTitle(label: "October 2026"), "Nothing in October 2026")
-    XCTAssertEqual(LedgerCopy.nothingInPeriodTitle(label: "FY 2025–26"), "Nothing in FY 2025–26")
+  /// The States board's empty copy: it names the period, says what goes here,
+  /// and offers the one next step (S2 step 6).
+  func testNothingInPeriodStatesTheStatesBoardCopy() {
+    XCTAssertEqual(LedgerCopy.nothingInPeriodTitle(label: "November 2026"), "No transactions in November 2026 yet")
+    XCTAssertEqual(LedgerCopy.nothingInPeriodTitle(label: "FY 2025–26"), "No transactions in FY 2025–26 yet")
+    XCTAssertEqual(
+      LedgerCopy.nothingInPeriodMessage,
+      "They appear here when a bank alert arrives, or when you add one.")
+  }
+
+  func testSearchPlaceholderIsTheArtboardPrompt() {
+    XCTAssertEqual(LedgerCopy.searchPlaceholder, "Search merchant, note or amount")
   }
 
   /// With a period in effect the no-results message names it; a queue (Needs
@@ -329,22 +646,6 @@ final class LedgerCopyTests: XCTestCase {
 
   func testShowPreviousNamesThePreviousPeriod() {
     XCTAssertEqual(LedgerCopy.showPreviousTitle(label: "October 2026"), "Show October 2026")
-  }
-
-  /// With a whole-ledger search wired, the prompt and message say so.
-  func testWholeLedgerSearchKeepsTheWholeLedgerCopy() {
-    XCTAssertEqual(LedgerCopy.searchPrompt(wholeLedger: true), "Search all transactions")
-    XCTAssertTrue(LedgerCopy.nothingInPeriodMessage(wholeLedger: true).contains("search the whole ledger"))
-  }
-
-  /// Without one (RootView passes no `transactionSearch` until S1), search
-  /// filters only the period, so the copy must not promise the whole ledger.
-  func testWithoutWholeLedgerSearchTheCopyPromisesOnlyThePeriod() {
-    XCTAssertEqual(LedgerCopy.searchPrompt(wholeLedger: false), "Search")
-    let message = LedgerCopy.nothingInPeriodMessage(wholeLedger: false)
-    XCTAssertFalse(message.contains("whole ledger"))
-    XCTAssertFalse(message.contains("search"))
-    XCTAssertTrue(message.contains("period"))
   }
 
   func testNoQueryReadsNoMatches() {
