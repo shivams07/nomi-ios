@@ -188,6 +188,30 @@ public final class SwiftDataTransactionEditor: TransactionEditing {
     return candidates.first { $0.id == partnerID }
   }
 
+  /// I-11. Flips a row between debit and credit, and only a row that is not a transfer leg. A
+  /// transfer's legs are fixed (unmark it first), so a flip cannot put one leg on the wrong side.
+  ///
+  /// The dedupe key carries the direction, so it is re-derived here with the same function the other
+  /// writes use. The save and rollback are the `update` shape (R8b): a failed save leaves the row as it
+  /// was and nothing dirty behind. The category is reported because a flip moves that category's spend.
+  public func setDirection(_ id: UUID, to direction: Direction) throws {
+    guard let row = try row(id: id) else { return }
+    guard !row.isTransfer else { throw TransactionEditError.transferLeg }
+
+    let timestamp = now()
+    row.directionRaw = direction.rawValue
+    row.dedupeKey = makeDedupeKey(
+      date: row.date,
+      amountMinor: row.amountMinor,
+      directionRaw: direction.rawValue,
+      normalizedDescription: row.normalizedDescription
+    )
+    row.updatedAt = timestamp
+
+    do { try saveEdit(context) } catch { context.rollback(); throw error }
+    coordinator.didWrite(affectedCategoryIDs: Set([row.categoryID].compactMap { $0 }))
+  }
+
   private func row(id: UUID) throws -> Transaction? {
     var descriptor = FetchDescriptor<Transaction>(predicate: #Predicate<Transaction> { $0.id == id })
     descriptor.fetchLimit = 1

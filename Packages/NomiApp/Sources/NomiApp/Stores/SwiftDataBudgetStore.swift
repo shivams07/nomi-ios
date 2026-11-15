@@ -126,17 +126,49 @@ public final class SwiftDataAccountStore: AccountStore {
     lastFour: String,
     kindRaw: String
   ) throws -> Account {
+    try create(
+      displayName: displayName,
+      institution: institution,
+      lastFour: lastFour,
+      kindRaw: kindRaw,
+      openingBalanceMinor: nil
+    )
+  }
+
+  /// The four-argument create with an opening balance (I-11, step 5).
+  ///
+  /// The opening balance is checked the way `update` checks it, after the name, `lastFour` and kind,
+  /// and before anything is inserted. The account is inserted with its balance already set and saved
+  /// once, so the account and its balance cannot land separately. A failed save rolls the context back,
+  /// so nothing is left dirty for a later save to flush.
+  @discardableResult
+  public func create(
+    displayName: String,
+    institution: String,
+    lastFour: String,
+    kindRaw: String,
+    openingBalanceMinor: Int?
+  ) throws -> Account {
     let trimmedName = try Self.validated(
       displayName: displayName, lastFour: lastFour, kindRaw: kindRaw)
+    if let opening = openingBalanceMinor, !AmountRules.isValidOpeningBalance(opening) {
+      throw AmountValidationError.outOfRange(amountMinor: opening)
+    }
 
     let account = Account(
       displayName: trimmedName,
       institution: institution,
       lastFour: lastFour,
-      kindRaw: kindRaw
+      kindRaw: kindRaw,
+      openingBalanceMinor: openingBalanceMinor
     )
     context.insert(account)
-    try context.save()
+    do {
+      try context.save()
+    } catch {
+      context.rollback()
+      throw error
+    }
     coordinator.didWrite()
     return account
   }

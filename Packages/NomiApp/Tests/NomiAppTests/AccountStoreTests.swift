@@ -578,6 +578,93 @@ final class AccountStoreTests: XCTestCase {
 
   // MARK: -
 
+  // MARK: - B2: create with an opening balance
+
+  /// I-11 step 5. The opening balance is stored with the account, and the account is saved once:
+  /// no change is left pending, and the summaries show the balance.
+  func testCreateWithAnOpeningBalancePersistsItInOneSave() throws {
+    let (store, context, cache) = try makeStore()
+    let insights = SwiftDataInsightsStore(context: context, cache: cache)
+
+    let created = try store.create(
+      displayName: "HDFC 4471", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank",
+      openingBalanceMinor: 1_00_000_00)
+
+    let stored = try XCTUnwrap(context.fetch(FetchDescriptor<Account>()).first)
+    XCTAssertEqual(stored.id, created.id)
+    XCTAssertEqual(stored.openingBalanceMinor, 10_000_000, "the opening balance was not stored")
+    XCTAssertFalse(context.hasChanges, "the account was not saved in one save")
+    let summary = try XCTUnwrap(insights.accountSummaries(includeArchived: false).first)
+    XCTAssertEqual(summary.openingBalanceMinor, 10_000_000)
+    XCTAssertEqual(summary.trackedBalanceMinor, 10_000_000, "an opening balance is not the tracked balance")
+  }
+
+  /// A nil opening balance is the four-argument create: nothing stored, and the same account otherwise.
+  func testCreateWithANilOpeningBalanceStoresNone() throws {
+    let (store, context, _) = try makeStore()
+
+    try store.create(
+      displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank",
+      openingBalanceMinor: nil)
+
+    let stored = try XCTUnwrap(context.fetch(FetchDescriptor<Account>()).first)
+    XCTAssertNil(stored.openingBalanceMinor)
+    XCTAssertEqual(stored.displayName, "HDFC")
+  }
+
+  /// Validated the way `update` validates an opening balance: beyond ±10^11 is refused, and nothing
+  /// is inserted, not even the account the same call would have made.
+  func testCreateRefusesAnOpeningBalanceBeyondTheBoundsAndInsertsNothing() throws {
+    let (store, context, _) = try makeStore()
+
+    for balance in [100_000_000_001, -100_000_000_001] {
+      XCTAssertThrowsError(
+        try store.create(
+          displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank",
+          openingBalanceMinor: balance)
+      ) { error in
+        XCTAssertEqual(error as? AmountValidationError, .outOfRange(amountMinor: balance))
+      }
+    }
+
+    XCTAssertEqual(try context.fetch(FetchDescriptor<Account>()).count, 0, "a refused create inserted an account")
+    XCTAssertFalse(context.hasChanges, "a refused create left changes for a later save to flush")
+  }
+
+  /// The name, `lastFour` and kind are still checked on the five-argument create, first.
+  func testCreateWithAnOpeningBalanceStillRefusesABlankName() throws {
+    let (store, context, _) = try makeStore()
+
+    XCTAssertThrowsError(
+      try store.create(
+        displayName: "   ", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank",
+        openingBalanceMinor: 25_000)
+    ) { error in
+      XCTAssertEqual(error as? AccountStoreError, .blankName)
+    }
+    XCTAssertEqual(try context.fetch(FetchDescriptor<Account>()).count, 0)
+  }
+
+  /// The fake refuses the same balance and adds nothing, as the real store does.
+  func testTheFakeCreateRefusesAnOpeningBalanceBeyondTheBounds() throws {
+    let fake = FakeAccountStore(accounts: [])
+
+    XCTAssertThrowsError(
+      try fake.create(
+        displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank",
+        openingBalanceMinor: 100_000_000_001)
+    ) { error in
+      XCTAssertEqual(error as? AmountValidationError, .outOfRange(amountMinor: 100_000_000_001))
+    }
+    XCTAssertTrue(fake.accounts.isEmpty, "a refused fake create appended an account")
+
+    let made = try fake.create(
+      displayName: "HDFC", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank",
+      openingBalanceMinor: 25_000)
+    XCTAssertEqual(fake.accounts.map(\.id), [made.id])
+    XCTAssertEqual(fake.accounts.first?.openingBalanceMinor, 25_000)
+  }
+
   /// A fresh container per test, and one `InsightsCache` shared by the store
   /// that writes and the store that reads — sharing it is the point, since a
   /// second cache would make `didWrite` invisible to the reader and every

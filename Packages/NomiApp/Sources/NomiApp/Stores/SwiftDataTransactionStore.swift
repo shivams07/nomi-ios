@@ -39,6 +39,9 @@ public final class SwiftDataTransactionStore: TransactionStore {
   /// The one save `setAccount` makes. A seam so a test can make it fail and
   /// prove the rollback; production passes the real `save()`.
   private let saveAccountWrite: (ModelContext) throws -> Void
+  /// The one save `addTransfer` makes (I-11). A seam for the same reason: a test makes it fail
+  /// and proves neither leg is left behind. Production passes the real `save()`.
+  private let saveTransferWrite: (ModelContext) throws -> Void
 
   public init(
     context: ModelContext,
@@ -46,7 +49,8 @@ public final class SwiftDataTransactionStore: TransactionStore {
     calendar: Calendar = NomiCalendar.india,
     transferCalendar: Calendar = .current,
     now: @escaping () -> Date = { Date() },
-    saveAccountWrite: @escaping (ModelContext) throws -> Void = { try $0.save() }
+    saveAccountWrite: @escaping (ModelContext) throws -> Void = { try $0.save() },
+    saveTransferWrite: @escaping (ModelContext) throws -> Void = { try $0.save() }
   ) {
     self.context = context
     self.coordinator = coordinator
@@ -54,6 +58,7 @@ public final class SwiftDataTransactionStore: TransactionStore {
     self.transferCalendar = transferCalendar
     self.now = now
     self.saveAccountWrite = saveAccountWrite
+    self.saveTransferWrite = saveTransferWrite
   }
 
   public func add(_ draft: ManualTransactionDraft) throws -> Transaction {
@@ -124,13 +129,159 @@ public final class SwiftDataTransactionStore: TransactionStore {
       sourceRefs: snapshot.sourceRefs,
       dedupeKey: snapshot.dedupeKey,
       createdAt: snapshot.createdAt,
-      updatedAt: snapshot.updatedAt
+      updatedAt: snapshot.updatedAt,
+      note: Self.storedNote(draft.note)
     )
 
     context.insert(transaction)
     try context.save()
     coordinator.didWrite(affectedCategoryIDs: Set([snapshot.categoryID].compactMap { $0 }))
     return transaction
+  }
+
+  /// Two legs in one save (I-11). The debit leaves `fromAccountID` and the credit lands on
+  /// `toAccountID`, same amount and date. Both are manual and categoryless, and neither needs review.
+  ///
+  /// Neither leg is `needsReview`, and `RuleEngine` is not run: a transfer is not categorised, and
+  /// a rule that claimed it would put a category on a leg that must never carry one.
+  ///
+  /// The group id is a fresh UUID: one transfer is created once, on one device, so there is no pair
+  /// for two devices to agree on. (`setTransfer`'s marked pairs use `TransferGroupID.make` because
+  /// two devices can mark the same pair.)
+  public func addTransfer(
+    amountMinor: Int,
+    date: Date,
+    fromAccountID: UUID,
+    toAccountID: UUID,
+    note: String?
+  ) throws -> (Transaction, Transaction) {
+    // R8. Refused before anything is built, so a refused transfer writes nothing.
+    guard AmountRules.isValidTransactionAmount(amountMinor) else {
+      throw AmountValidationError.outOfRange(amountMinor: amountMinor)
+    }
+    guard fromAccountID != toAccountID else { throw TransactionStoreError.sameAccount }
+
+    let timestamp = now()
+    let group = UUID()
+    let storedNote = Self.storedNote(note)
+    let debit = makeTransferLeg(
+      .debit, amountMinor: amountMinor, date: date, accountID: fromAccountID,
+      group: group, note: storedNote, timestamp: timestamp)
+    let credit = makeTransferLeg(
+      .credit, amountMinor: amountMinor, date: date, accountID: toAccountID,
+      group: group, note: storedNote, timestamp: timestamp)
+    context.insert(debit)
+    context.insert(credit)
+
+    // One save for both legs. A failed save rolls the context back, so neither leg is left for a
+    // later save to flush (the TR4 shape the other writes here use).
+    do {
+      try saveTransferWrite(context)
+    } catch {
+      context.rollback()
+      throw error
+    }
+    coordinator.didWrite(affectedCategoryIDs: [])
+    return (debit, credit)
+  }
+
+  private func makeTransferLeg(
+    _ direction: Direction,
+    amountMinor: Int,
+    date: Date,
+    accountID: UUID,
+    group: UUID,
+    note: String?,
+    timestamp: Date
+  ) -> Transaction {
+    let descriptionText = "Transfer"
+    let normalized = normalizeDescription(descriptionText)
+    return Transaction(
+      date: date,
+      descriptionText: descriptionText,
+      normalizedDescription: normalized,
+      amountMinor: amountMinor,
+      directionRaw: direction.rawValue,
+      categoryID: nil,
+      categorySourceRaw: CategorySource.none.rawValue,
+      accountID: accountID,
+      sourceRaw: IngestSource.manual.rawValue,
+      sourceRefs: [
+        SourceRef(source: .manual, externalID: UUID().uuidString, capturedAt: timestamp)
+      ],
+      dedupeKey: makeDedupeKey(
+        date: date,
+        amountMinor: amountMinor,
+        directionRaw: direction.rawValue,
+        normalizedDescription: normalized,
+        calendar: calendar
+      ),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      note: note,
+      transferGroupID: group,
+      transferSourceRaw: TransferSource.manual.rawValue
+    )
+  }
+
+  /// I-11. The note as stored: trimmed, and nil when nothing is left after trimming.
+  private static func storedNote(_ raw: String?) -> String? {
+    guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+      return nil
+    }
+    return trimmed
+  }
+
+  /// I-11. The account of the most recently created manual row that has one, or nil. Mail and file
+  /// rows do not count: they say nothing about what the user chose on the entry sheet. `fetchLimit`
+  /// 1 on a sort by `createdAt`, so this is an index read.
+  public func lastUsedAccountID() -> UUID? {
+    let manual = IngestSource.manual.rawValue
+    var descriptor = FetchDescriptor<Transaction>(
+      predicate: #Predicate<Transaction> { $0.sourceRaw == manual && $0.accountID != nil },
+      sortBy: [SortDescriptor(\Transaction.createdAt, order: .reverse)]
+    )
+    descriptor.fetchLimit = 1
+    do {
+      return try context.fetch(descriptor).first?.accountID
+    } catch {
+      NomiLog.store.error("last used account fetch failed: \(NomiLog.describe(error), privacy: .public)")
+      return nil
+    }
+  }
+
+  /// I-11. Categories past rows with a similar description were filed under. The text is normalised
+  /// the way the rows were, so a query finds `SWIGGY ORDER` from `swiggy 4411`. Transfer legs and
+  /// uncategorised rows do not count, and a category that no longer exists is dropped, so a suggestion
+  /// is never a category the picker cannot show. Most frequent first, ties by the most recent matching
+  /// row's date, then by id so the order is the same on every read.
+  public func suggestedCategories(forDescription text: String, limit: Int) throws -> [UUID] {
+    let needle = normalizeDescription(text)
+    // Fewer than two characters matches nearly every row, so it is not a hint.
+    guard needle.count >= 2, limit > 0 else { return [] }
+
+    let rows = try context.fetch(
+      FetchDescriptor<Transaction>(
+        predicate: #Predicate<Transaction> {
+          $0.normalizedDescription.contains(needle) && $0.categoryID != nil && $0.transferGroupID == nil
+        }
+      ))
+    let existing = Set(try context.fetch(FetchDescriptor<NomiCore.Category>()).map(\.id))
+
+    var count: [UUID: Int] = [:]
+    var newest: [UUID: Date] = [:]
+    for row in rows {
+      guard let category = row.categoryID, existing.contains(category) else { continue }
+      count[category, default: 0] += 1
+      newest[category] = max(newest[category] ?? .distantPast, row.date)
+    }
+
+    let ordered = count.keys.sorted { lhs, rhs in
+      if count[lhs] != count[rhs] { return (count[lhs] ?? 0) > (count[rhs] ?? 0) }
+      if newest[lhs] != newest[rhs] { return (newest[lhs] ?? .distantPast) > (newest[rhs] ?? .distantPast) }
+      return lhs.uuidString < rhs.uuidString
+    }
+    return Array(ordered.prefix(limit))
   }
 
   public func setCategory(_ id: UUID, to categoryID: UUID?) throws {

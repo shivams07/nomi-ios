@@ -47,6 +47,30 @@ public final class FakeAccountStore: AccountStore {
 
   /// Validates, like the real store. A preview of the edit sheet whose Save
   /// always succeeds would not show the error state the sheet exists to have.
+  /// The five-argument create with an opening balance, validated the way the real store validates it:
+  /// the same rules as `update`, and nothing appended when one fails.
+  @discardableResult
+  public func create(
+    displayName: String,
+    institution: String,
+    lastFour: String,
+    kindRaw: String,
+    openingBalanceMinor: Int?
+  ) throws -> Account {
+    let trimmedName = try Self.validated(
+      displayName: displayName, lastFour: lastFour, kindRaw: kindRaw,
+      openingBalanceMinor: openingBalanceMinor)
+    let account = Account(
+      displayName: trimmedName,
+      institution: institution,
+      lastFour: lastFour,
+      kindRaw: kindRaw,
+      openingBalanceMinor: openingBalanceMinor
+    )
+    accounts.append(account)
+    return account
+  }
+
   public func update(
     _ id: UUID,
     displayName: String,
@@ -55,19 +79,11 @@ public final class FakeAccountStore: AccountStore {
     kindRaw: String,
     openingBalanceMinor: Int?
   ) throws {
-    let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedName.isEmpty else { throw AccountStoreError.blankName }
-    guard lastFour.isEmpty
-      || (lastFour.count == 4 && lastFour.allSatisfy { $0.isASCII && $0.isNumber })
-    else { throw AccountStoreError.malformedLastFour }
-    guard AccountKind(rawValue: kindRaw) != nil else {
-      throw AccountStoreError.unknownKind(kindRaw)
-    }
     // R8b: an opening balance outside AmountRules is refused before the lookup, as the
     // real store refuses it.
-    if let opening = openingBalanceMinor, !AmountRules.isValidOpeningBalance(opening) {
-      throw AmountValidationError.outOfRange(amountMinor: opening)
-    }
+    let trimmedName = try Self.validated(
+      displayName: displayName, lastFour: lastFour, kindRaw: kindRaw,
+      openingBalanceMinor: openingBalanceMinor)
 
     guard let account = accounts.first(where: { $0.id == id }) else { return }
     account.displayName = trimmedName
@@ -84,5 +100,27 @@ public final class FakeAccountStore: AccountStore {
   /// instead.
   public func delete(_ id: UUID) throws {
     accounts.removeAll { $0.id == id }
+  }
+
+  /// The rules `create` and `update` both enforce, in the real store's order: name, `lastFour`, kind,
+  /// then the opening balance. Returns the trimmed name.
+  private static func validated(
+    displayName: String,
+    lastFour: String,
+    kindRaw: String,
+    openingBalanceMinor: Int?
+  ) throws -> String {
+    let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedName.isEmpty else { throw AccountStoreError.blankName }
+    guard lastFour.isEmpty
+      || (lastFour.count == 4 && lastFour.allSatisfy { $0.isASCII && $0.isNumber })
+    else { throw AccountStoreError.malformedLastFour }
+    guard AccountKind(rawValue: kindRaw) != nil else {
+      throw AccountStoreError.unknownKind(kindRaw)
+    }
+    if let opening = openingBalanceMinor, !AmountRules.isValidOpeningBalance(opening) {
+      throw AmountValidationError.outOfRange(amountMinor: opening)
+    }
+    return trimmedName
   }
 }

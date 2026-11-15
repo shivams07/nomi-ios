@@ -67,6 +67,20 @@ public final class FakeTransactionEditor: TransactionEditing {
     return candidates.first { $0.id == partnerID }
   }
 
+  /// Mirrors `SwiftDataTransactionEditor.setDirection` over the in-memory row.
+  public func setDirection(_ id: UUID, to direction: Direction) throws {
+    guard let transaction = transactions.first(where: { $0.id == id }) else { return }
+    guard !transaction.isTransfer else { throw TransactionEditError.transferLeg }
+    transaction.directionRaw = direction.rawValue
+    transaction.dedupeKey = makeDedupeKey(
+      date: transaction.date,
+      amountMinor: transaction.amountMinor,
+      directionRaw: direction.rawValue,
+      normalizedDescription: transaction.normalizedDescription
+    )
+    transaction.updatedAt = Date()
+  }
+
   public func update(_ id: UUID, amountMinor: Int, date: Date, descriptionText: String, note: String?) throws {
     guard let transaction = transactions.first(where: { $0.id == id }) else { return }
     let normalized = normalizeDescription(descriptionText)

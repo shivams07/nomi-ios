@@ -24,4 +24,14 @@ public protocol TransactionEditing: AnyObject {
   /// touched. Never changes a balance: `accountSummaries` reads the rows, not
   /// the marks.
   func setTransfer(_ id: UUID, isTransfer: Bool) throws
+
+  /// Flips direction. Throws `TransactionEditError.transferLeg` when the row `isTransfer` (unmark first).
+  /// Re-derives `dedupeKey` (direction is part of it). Reports the row's category to `didWrite`.
+  /// No default: every conformer implements it, so none can silently drop the flip.
+  func setDirection(_ id: UUID, to direction: Direction) throws
+}
+
+public enum TransactionEditError: Error, Sendable, Equatable {
+  /// The row is a transfer leg. Unmark the transfer first; its direction is not edited.
+  case transferLeg
 }
