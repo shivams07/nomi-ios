@@ -17,20 +17,28 @@ public enum NomiStatusBarTone: String, Equatable, Sendable {
 public enum NomiStatusBarToneRule {
   /// `nil` when the hero is not on screen (pushed over, tab switched away).
   /// Otherwise `.light` if and only if the hero gradient covers the vertical
-  /// midpoint of the status-bar band, where the band's midpoint is
-  /// `safeTop / 2`: `heroMinY <= mid && heroMaxY - overlap >= mid`. Else `.dark`.
-  /// `heroMaxY - overlap` is the visible bottom, because the sheet rises
-  /// `overlap` points into the hero block.
+  /// midpoint of the status-bar band, where the band's midpoint is `safeTop / 2`,
+  /// and the midpoint is no further than `whiteLimitY` below the hero's top:
+  /// `heroMinY <= mid && heroMaxY - overlap >= mid && mid - heroMinY <= whiteLimitY`.
+  /// Else `.dark`. `heroMaxY - overlap` is the visible bottom, because the sheet
+  /// rises `overlap` points into the hero block.
+  ///
+  /// `whiteLimitY` is the Moss floor (D5): white text passes 4.5:1 only down to
+  /// `NomiHeroGradient.whiteTextFloor`, so a band below that line is dark even while
+  /// the hero covers it. `NomiHeroScaffold` passes the floor shifted by the safe area.
   public static func tone(
     isOnScreen: Bool,
     heroMinY: CGFloat,
     heroMaxY: CGFloat,
     overlap: CGFloat,
-    safeTop: CGFloat
+    safeTop: CGFloat,
+    whiteLimitY: CGFloat
   ) -> NomiStatusBarTone? {
     guard isOnScreen else { return nil }
     let mid = safeTop / 2
-    return (heroMinY <= mid && heroMaxY - overlap >= mid) ? .light : .dark
+    let covered = heroMinY <= mid && heroMaxY - overlap >= mid
+    let withinFloor = (mid - heroMinY) <= whiteLimitY
+    return (covered && withinFloor) ? .light : .dark
   }
 
   /// Preference reduction: `.light` if either side is `.light`, else the first

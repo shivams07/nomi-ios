@@ -12,7 +12,7 @@ struct RouteTokens: Equatable {
   let subscriptions: Int
   let settings: Int
   let reports: Int
-  let accounts: Int
+  let plan: Int
 
   init(generation: Int) {
     dashboard = generation
@@ -20,6 +20,6 @@ struct RouteTokens: Equatable {
     subscriptions = generation
     settings = generation
     reports = generation
-    accounts = generation
+    plan = generation
   }
 }

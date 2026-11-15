@@ -60,6 +60,9 @@ public struct BudgetsScreen: View {
     budgetRows.first { $0.categoryID == categoryID }?.amountMinor ?? 0
   }
 
+  /// The bottom reserve for the Plan tab (F3b). 0 when pushed from Home or Settings.
+  @Environment(\.nomiTabBarReserve) private var tabBarReserve
+
   public var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: NomiSpacing.md) {
@@ -79,6 +82,7 @@ public struct BudgetsScreen: View {
       .padding(.horizontal, NomiSpacing.screenGutter)
       .padding(.vertical, NomiSpacing.sm)
     }
+    .contentMargins(.bottom, tabBarReserve, for: .scrollContent)
     .background(NomiColor.ground)
     .navigationTitle("Budgets")
     #if os(iOS)

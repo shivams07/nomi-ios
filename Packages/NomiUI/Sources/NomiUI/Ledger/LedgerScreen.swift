@@ -101,6 +101,8 @@ public struct LedgerScreen: View {
   /// Reported by the list: whether the period holds any row, and how many need
   /// review across the whole ledger (the chip's count).
   @State private var windowSummary = LedgerWindowSummary.unreported
+  /// The bottom reserve for the Activity tab (F3b). 0 on a pushed screen.
+  @Environment(\.nomiTabBarReserve) private var tabBarReserve
 
   /// A sheet does not inherit the root's `modelContainer` — the detail
   /// screen's own `@Query` would trap at runtime (not in CI, which never
@@ -315,6 +317,9 @@ public struct LedgerScreen: View {
           }
         }
       }
+      // The last row clears the floating tab bar (D4). The first-run layout is not
+      // given it: its band already ends above the bar (LedgerFirstRunBand).
+      .contentMargins(.bottom, tabBarReserve, for: .scrollContent)
     }
     }
     }

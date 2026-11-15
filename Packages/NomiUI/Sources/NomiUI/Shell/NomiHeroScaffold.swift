@@ -27,6 +27,8 @@ public struct NomiHeroScaffold<NavRow: View, Hero: View, Sheet: View>: View {
   private let hero: Hero
   private let sheet: Sheet
   @State private var isOnScreen = false
+  /// The bottom reserve for a tab root (F3b). 0 on a pushed screen.
+  @Environment(\.nomiTabBarReserve) private var tabBarReserve
 
   public init(
     heroBottomSpacing: CGFloat,
@@ -64,6 +66,9 @@ public struct NomiHeroScaffold<NavRow: View, Hero: View, Sheet: View>: View {
         .frame(maxWidth: .infinity)
       }
       .ignoresSafeArea(.container, edges: .top)
+      // The last row clears the floating tab bar (D4). Explicit here, not in RootView,
+      // so a horizontal row in a parent never picks it up.
+      .contentMargins(.bottom, tabBarReserve, for: .scrollContent)
       .background(NomiColor.ground)
     }
     .background(NomiColor.ground.ignoresSafeArea())
@@ -97,7 +102,8 @@ public struct NomiHeroScaffold<NavRow: View, Hero: View, Sheet: View>: View {
               heroMinY: frame.minY,
               heroMaxY: frame.maxY,
               overlap: NomiSpacing.heroSheetOverlap,
-              safeTop: safeTop
+              safeTop: safeTop,
+              whiteLimitY: NomiHeroGradient.whiteTextFloor + (safeTop - NomiHeroGradient.artboardSafeTop)
             )
           )
       }
