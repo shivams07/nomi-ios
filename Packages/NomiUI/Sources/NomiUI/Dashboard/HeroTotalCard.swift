@@ -1,50 +1,261 @@
 import NomiCore
-import NomiPreview
 import SwiftUI
 
-/// The hero total's prior-period comparison. A pure calculation so the
-/// increase/decrease framing is unit-testable without a live store.
-enum HeroDelta {
-  struct Result: Equatable {
-    let deltaMinor: Int
-    let isIncrease: Bool
+/// The hero's comparison chip (S1a). The words are `NomiComparisonCopy`'s, so
+/// this type decides only which figure is compared, which way the arrow
+/// points, and when there is nothing to state.
+enum HeroComparison {
+  enum Direction: Equatable {
+    case up
+    case down
   }
 
-  /// `nil` only when there is no comparable prior period at all — v5: a zero
-  /// prior is a real prior now, so `compute(1000, 0)` is `+1000`, not `nil`;
-  /// the delta is simply the whole current figure.
-  static func compute(current: Int, prior: Int?) -> Result? {
-    guard let prior else { return nil }
-    return Result(deltaMinor: current - prior, isIncrease: current >= prior)
+  struct Chip: Equatable {
+    let text: String
+    /// `nil` when the copy has no direction: an equal figure, or an empty earlier period.
+    let direction: Direction?
   }
 
-  /// The chip's copy (HM1, the artboard): "up ₹6,420 vs last period". The
-  /// direction is a word, so it reads without colour.
-  ///
-  /// Whole-rupee deltas drop the ".00", as `ReportsPeriod.changeCopy` does, so
-  /// Home and Insights state the same change the same way (D27).
-  static func chipCopy(_ result: Result) -> String {
-    let direction = result.isIncrease ? "up" : "down"
-    var amount = NomiFormatters.amountString(minor: abs(result.deltaMinor))
-    if abs(result.deltaMinor) % 100 == 0, amount.hasSuffix(".00") {
-      amount.removeLast(3)
-    }
-    return "\(direction) \(amount) vs last period"
+  /// The figure the kind counts for this period.
+  static func amount(kind: NomiComparisonCopy.Kind, insights: PeriodInsights) -> Int {
+    kind == .spent ? insights.debitMinor : insights.creditMinor
   }
 
-  /// The delta the chip may state, or `nil` when it has nothing to say.
-  ///
-  /// Hidden when there is no prior period, and when the delta is exactly zero.
-  /// The zero case covers zero spend against a zero prior (the first-run Home,
-  /// HomeFirstRun artboard: no chip) and an unchanged figure against a real
-  /// prior. Neither has a direction to state, so the chip never prints
-  /// "up ₹0.00". The test is on minor units, not on the formatted string, so a
-  /// one-paisa change is still a change and is never rounded away.
-  static func visibleDelta(current: Int, prior: Int?) -> Result? {
-    guard let delta = compute(current: current, prior: prior), delta.deltaMinor != 0 else {
+  /// The same figure for the earlier period, `nil` when there is none.
+  static func priorAmount(kind: NomiComparisonCopy.Kind, insights: PeriodInsights) -> Int? {
+    kind == .spent ? insights.priorDebitMinor : insights.priorCreditMinor
+  }
+
+  /// The chip for this kind, or `nil` when there is nothing to say. Nothing is
+  /// said when there is no earlier period, and when the figure and its earlier
+  /// period are both zero (FR1: the first-run Home draws no chip). An empty
+  /// earlier period reads "Nothing spent in <label> to compare", never a figure
+  /// of zero to compare against.
+  static func chip(kind: NomiComparisonCopy.Kind, insights: PeriodInsights, priorLabel: String) -> Chip? {
+    let current = amount(kind: kind, insights: insights)
+    let prior = priorAmount(kind: kind, insights: insights)
+    if current == 0, (prior ?? 0) == 0 {
       return nil
     }
-    return delta
+    guard let text = NomiComparisonCopy.line(
+      kind: kind,
+      currentMinor: current,
+      priorMinor: prior,
+      priorLabel: priorLabel
+    ) else {
+      return nil
+    }
+    // The copy's arrow only means something against a real earlier figure.
+    guard let prior, prior != 0, current != prior else {
+      return Chip(text: text, direction: nil)
+    }
+    return Chip(text: text, direction: current < prior ? .down : .up)
+  }
+}
+
+/// The Home hero (S1a; the approved Main artboard): the Spent or Income control,
+/// the label with its comparison chip, the figure, and the chart. The figure
+/// is `Figures.loaded` only when the period's insights were read. Loading and
+/// failure keep the same layout, so the sheet below does not move.
+struct HeroTotalCard: View {
+  enum Figures {
+    case loading
+    case unavailable
+    case loaded(PeriodInsights)
+  }
+
+  let figures: Figures
+  let period: InsightPeriod
+  @Binding var kind: NomiComparisonCopy.Kind
+
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var displayedMinor = 0
+
+  init(figures: Figures, period: InsightPeriod, kind: Binding<NomiComparisonCopy.Kind>) {
+    self.figures = figures
+    self.period = period
+    self._kind = kind
+    if case .loaded(let insights) = figures {
+      _displayedMinor = State(initialValue: HeroComparison.amount(kind: kind.wrappedValue, insights: insights))
+    }
+  }
+
+  /// "Spent this month", "Received this year" and so on. The label names the
+  /// kind and the basis, and never the figure.
+  static func label(kind: NomiComparisonCopy.Kind, period: InsightPeriod) -> String {
+    switch (kind, period) {
+    case (.spent, .month):
+      return String(localized: "Spent this month", bundle: .module)
+    case (.income, .month):
+      return String(localized: "Received this month", bundle: .module)
+    case (.spent, .financialYear):
+      return String(localized: "Spent this year", bundle: .module)
+    case (.income, .financialYear):
+      return String(localized: "Received this year", bundle: .module)
+    case (.spent, _):
+      return String(localized: "Spent this period", bundle: .module)
+    case (.income, _):
+      return String(localized: "Received this period", bundle: .module)
+    }
+  }
+
+  private static var options: [(value: NomiComparisonCopy.Kind, title: String, systemImage: String?)] {
+    [
+      (value: .spent, title: "Spent", systemImage: "arrow.down"),
+      (value: .income, title: "Income", systemImage: "arrow.up"),
+    ]
+  }
+
+  private var targetMinor: Int {
+    guard case .loaded(let insights) = figures else { return 0 }
+    return HeroComparison.amount(kind: kind, insights: insights)
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      NomiSegmented(Self.options, selection: $kind, style: .onHero)
+        .padding(.top, 6)
+      switch figures {
+      case .loaded(let insights):
+        loaded(insights)
+      case .loading, .unavailable:
+        placeholder
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .onAppear { animateIn() }
+    .onChange(of: targetMinor) { _, _ in animateIn() }
+  }
+
+  private func loaded(_ insights: PeriodInsights) -> some View {
+    let chip = HeroComparison.chip(kind: kind, insights: insights, priorLabel: priorLabel(for: insights))
+    return VStack(alignment: .leading, spacing: 0) {
+      VStack(alignment: .leading, spacing: 0) {
+        labelRow(chip: chip)
+        NomiAmountText(
+          minor: displayedMinor,
+          context: .hero,
+          style: .heroAmount,
+          accessibilityLabel: "\(Self.label(kind: kind, period: period)), \(NomiFormatters.amountString(minor: targetMinor))"
+        )
+        .contentTransition(.numericText(value: Double(displayedMinor)))
+        .padding(.top, 8)
+      }
+      .padding(.top, 22)
+      NomiHeroChartSlot {
+        chart(insights)
+          .padding(.top, 14)
+      }
+    }
+  }
+
+  /// The loading and failed hero: the same label row, a "₹—" figure, and the
+  /// same space for the chart, so the sheet starts where it does when loaded.
+  private var placeholder: some View {
+    let accessibility: String
+    switch figures {
+    case .loading:
+      accessibility = String(localized: "Loading spending", bundle: .module)
+    case .unavailable, .loaded:
+      accessibility = String(localized: "Spending unavailable", bundle: .module)
+    }
+    return VStack(alignment: .leading, spacing: 0) {
+      VStack(alignment: .leading, spacing: 0) {
+        labelRow(chip: nil)
+        Text("₹—")
+          .nomiTextStyle(.heroAmount)
+          .foregroundStyle(NomiColor.heroText)
+          .lineLimit(1)
+          .accessibilityLabel(accessibility)
+          .padding(.top, 8)
+      }
+      .padding(.top, 22)
+      NomiHeroChartSlot {
+        Color.clear
+          .frame(height: 14 + HeroSparklineView.height + 8 + 16)
+      }
+    }
+  }
+
+  private func labelRow(chip: HeroComparison.Chip?) -> some View {
+    HStack(alignment: .center, spacing: 8) {
+      Text(Self.label(kind: kind, period: period))
+        .nomiTextStyle(.chip)
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+      if let chip {
+        HeroComparisonChip(chip: chip)
+      }
+    }
+    .foregroundStyle(NomiColor.heroText)
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  /// The chart and its inputs, all from the figures already loaded: the dense
+  /// series, the prior line aligned to the period's days, and the tooltip.
+  private func chart(_ insights: PeriodInsights) -> HeroSparklineView {
+    let calendar = Calendar.current
+    let today = Date()
+    let range = HeroSparkline.range(for: insights.period, calendar: calendar)
+    let span = HomeSparklineSeries.dayCount(in: range, calendar: calendar)
+    let current = HomeSparklineSeries.cumulative(
+      byDay: insights.byDay,
+      kind: kind,
+      periodRange: range,
+      today: today,
+      calendar: calendar
+    )
+
+    var prior: [Double]?
+    var priorLabelText: String?
+    if HeroComparison.priorAmount(kind: kind, insights: insights) != nil,
+       let priorPeriod = DashboardPeriod.priorPeriod(for: insights.period) {
+      let priorRange = dateRange(for: priorPeriod, calendar: calendar)
+      let priorSeries = HomeSparklineSeries.cumulative(
+        byDay: insights.priorByDay,
+        kind: kind,
+        periodRange: priorRange,
+        today: priorRange.upperBound,
+        calendar: calendar
+      )
+      prior = HomeSparklineSeries.aligned(priorSeries, count: span)
+      priorLabelText = NomiComparisonCopy.priorLabel(period: insights.period, short: false, calendar: calendar)
+    }
+
+    let markerIndex = max(0, current.count - 1)
+    let markerDay = calendar.date(byAdding: .day, value: markerIndex, to: range.lowerBound) ?? range.lowerBound
+    let markerText = HeroSparkline.dayMonthText(markerDay, calendar: calendar)
+    let tipDate = range.contains(today)
+      ? String(localized: "Today, \(markerText)", bundle: .module)
+      : markerText
+    let ticks = HeroSparkline.tickLabels(for: insights.period, calendar: calendar)
+
+    return HeroSparklineView(
+      current: current,
+      prior: prior,
+      span: span,
+      tipMinor: Int(current.last ?? 0),
+      tipDate: tipDate,
+      startLabel: ticks.first,
+      endLabel: ticks.last,
+      priorLabel: priorLabelText,
+      accessibilityLabel: kind == .spent
+        ? String(localized: "Spending this period", bundle: .module)
+        : String(localized: "Income this period", bundle: .module),
+      accessibilityValue: HeroSparkline.accessibilityValue(byDay: insights.byDay, kind: kind, calendar: calendar)
+    )
+  }
+
+  private func priorLabel(for insights: PeriodInsights) -> String {
+    NomiComparisonCopy.priorLabel(period: insights.period, short: false, calendar: Calendar.current)
+  }
+
+  private func animateIn() {
+    displayedMinor = HeroCountUp.initialDisplayValue(target: targetMinor, reduceMotion: reduceMotion)
+    guard !reduceMotion else { return }
+    withAnimation(.easeOut(duration: 0.8)) {
+      displayedMinor = targetMinor
+    }
   }
 }
 
@@ -58,239 +269,70 @@ enum HeroCountUp {
   }
 }
 
-/// The two figures behind the hero's income/expenses caption line (v5: the
-/// nested tiles became text, but the pure source of both strings survives
-/// unchanged). Pulled out as a pure function, same reasoning as `HeroDelta`/
-/// `HeroCountUp` above: this package's `swift test` runner has no
-/// view-inspection library, so what the line is supposed to show is tested
-/// as data rather than by rendering.
-enum HeroIncomeExpense {
-  struct Tile: Equatable {
-    let title: String
-    let amountText: String
-  }
-
-  static func tiles(for insights: PeriodInsights) -> [Tile] {
-    [
-      Tile(title: "Income", amountText: NomiFormatters.amountString(minor: insights.creditMinor)),
-      Tile(title: "Expenses", amountText: NomiFormatters.amountString(minor: insights.debitMinor)),
-    ]
-  }
-}
-
-/// The Home hero's figures (HM1; the approved Main artboard): the spent
-/// amount on the hero, a "Spent" and "Income" label row above it, one
-/// read-only delta chip, and the chart with its two day ticks. Layout sits
-/// inside `NomiHeroScaffold`, which places the hero at 110 pt and the sheet
-/// at 332 pt. The heights below reproduce the artboard (label 110, amount
-/// 130, chip 194, chart 232, ticks 304). The count-up is kept from v5.
-public struct HeroTotalCard: View {
-  public let insights: PeriodInsights
-
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @State private var displayedMinor: Int
-
-  public init(insights: PeriodInsights) {
-    self.insights = insights
-    _displayedMinor = State(initialValue: insights.debitMinor)
-  }
-
-  public var body: some View {
-    let ticks = HeroSparkline.tickLabels(for: insights.period)
-    VStack(alignment: .leading, spacing: 0) {
-      HeroLabelRow(income: incomeText)
-        .padding(.bottom, 2)
-      NomiAmountText(
-        minor: displayedMinor,
-        context: .hero,
-        style: .heroAmount,
-        accessibilityLabel: "Spent in \(DashboardPeriod.label(for: insights.period)), \(NomiFormatters.amountString(minor: insights.debitMinor))"
-      )
-      .contentTransition(.numericText(value: Double(displayedMinor)))
-      chipRow
-      NomiHeroChartSlot {
-        VStack(spacing: 0) {
-          HeroSparklineView(byDay: insights.byDay, range: HeroSparkline.range(for: insights.period))
-          HStack {
-            Text(ticks.first)
-            Spacer(minLength: 8)
-            Text(ticks.last)
-          }
-          .nomiTextStyle(.micro)
-          .foregroundStyle(NomiColor.inkDeep)
-          .padding(.top, 8)
-          .accessibilityHidden(true)
-        }
-        .padding(.top, 12)
-      }
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .onAppear { animateIn() }
-    .onChange(of: insights.debitMinor) { _, _ in animateIn() }
-  }
-
-  private func animateIn() {
-    displayedMinor = HeroCountUp.initialDisplayValue(target: insights.debitMinor, reduceMotion: reduceMotion)
-    guard !reduceMotion else { return }
-    withAnimation(.easeOut(duration: 0.8)) {
-      displayedMinor = insights.debitMinor
-    }
-  }
-
-  private var incomeText: String {
-    HeroIncomeExpense.tiles(for: insights).first { $0.title == "Income" }?.amountText ?? ""
-  }
-
-  /// The chip keeps its 26 pt row when there is nothing to state, so the chart
-  /// stays at 232 pt. A zero spend against a real prior period still shows its
-  /// "down" chip. See `HeroDelta.visibleDelta` for the hidden cases.
-  private var chipRow: some View {
-    Group {
-      if let delta = HeroDelta.visibleDelta(current: insights.debitMinor, prior: insights.priorDebitMinor) {
-        HeroDeltaChip(text: HeroDelta.chipCopy(delta))
-      } else {
-        Color.clear.frame(height: 26)
-      }
-    }
-    .padding(.top, 8)
-  }
-}
-
-/// The hero's state when the period's figures did not load (HM1, the LoadFailed
-/// artboard): "₹—" and "Income —", no chip and no chart. The reserved space
-/// matches `HeroTotalCard`, so the sheet still starts at 332 pt.
-struct HeroUnavailableCard: View {
-  var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      HeroLabelRow(income: "—")
-        .padding(.bottom, 2)
-      Text("₹—")
-        .nomiTextStyle(.heroAmount)
-        .foregroundStyle(NomiColor.heroText)
-        .lineLimit(1)
-        .accessibilityLabel("Spending unavailable")
-      Color.clear
-        .frame(height: 26)
-        .padding(.top, 8)
-      NomiHeroChartSlot {
-        Color.clear
-          .frame(height: 64 + 12 + 8 + 16)
-      }
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-  }
-}
-
-/// "Spent" on the left and "Income <amount>" on the right, both 13/500
-/// `heroTextSecondary`.
-private struct HeroLabelRow: View {
-  let income: String
-
-  var body: some View {
-    HStack(alignment: .firstTextBaseline, spacing: 8) {
-      Text("Spent")
-        .lineLimit(1)
-        .minimumScaleFactor(0.75)
-      Spacer(minLength: 8)
-      Text("Income \(income)")
-        .lineLimit(1)
-        .minimumScaleFactor(0.75)
-    }
-    .nomiTextStyle(.subhead)
-    .foregroundStyle(NomiColor.heroTextSecondary)
-    .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
-  }
-}
-
 /// The one read-only chip on the hero: dark glass, 26 pt high, 12/500 white. It
-/// is text, not a button, and has no chevron.
-private struct HeroDeltaChip: View {
-  let text: String
+/// is text, not a button, and has no chevron. The arrow shows the direction.
+private struct HeroComparisonChip: View {
+  let chip: HeroComparison.Chip
 
   var body: some View {
-    Text(text)
-      .nomiTextStyle(.heroChip)
-      .foregroundStyle(NomiColor.heroText)
-      .lineLimit(1)
-      .minimumScaleFactor(0.75)
-      .padding(.horizontal, 10)
-      .frame(minHeight: 26)
-      .nomiGlass(.heroControl, in: Capsule())
+    HStack(spacing: 6) {
+      if let direction = chip.direction {
+        Image(systemName: direction == .up ? "arrow.up" : "arrow.down")
+          .resizable()
+          .scaledToFit()
+          .frame(width: 12, height: 12)
+          .accessibilityHidden(true)
+      }
+      Text(chip.text)
+        .nomiTextStyle(.heroChip)
+    }
+    .foregroundStyle(NomiColor.heroText)
+    .lineLimit(1)
+    .minimumScaleFactor(0.75)
+    .padding(.horizontal, 10)
+    .frame(minHeight: 26)
+    .nomiGlass(.heroControl, in: Capsule())
   }
 }
 
-#Preview("Hero total · default") {
+#Preview("Hero · spent, with prior") {
   HeroTotalCard(
-    insights: PeriodInsights(
-      period: .month(year: 2026, month: 11),
-      debitMinor: 64_824_24,
-      creditMinor: 38_500_00,
-      netMinor: -26_324_24,
-      priorDebitMinor: 58_404_00,
-      priorCreditMinor: 55_000_00,
-      transactionCount: 74,
-      byDay: [
-        DayBucket(id: Date(timeIntervalSince1970: 1_793_500_800), debitMinor: 2_000_00),
-        DayBucket(id: Date(timeIntervalSince1970: 1_793_673_600), debitMinor: 1_500_00),
-      ],
-      byCategory: [],
-      topMerchants: [],
-      needsReviewCount: 0,
-      uncategorizedCount: 0
-    )
+    figures: .loaded(
+      PeriodInsights(
+        period: .month(year: 2026, month: 11),
+        debitMinor: 35_318_00,
+        creditMinor: 38_500_00,
+        netMinor: 3_182_00,
+        priorDebitMinor: 50_173_00,
+        priorCreditMinor: 55_000_00,
+        transactionCount: 74,
+        byDay: [
+          DayBucket(id: Date(timeIntervalSince1970: 1_793_500_800), debitMinor: 2_000_00),
+          DayBucket(id: Date(timeIntervalSince1970: 1_793_673_600), debitMinor: 1_500_00),
+        ],
+        byCategory: [],
+        topMerchants: [],
+        needsReviewCount: 0,
+        uncategorizedCount: 0
+      )
+    ),
+    period: .month(year: 2026, month: 11),
+    kind: .constant(.spent)
   )
   .padding(20)
-  .background(NomiHeroGradient.gradient(height: 356, safeTop: 54))
+  .background(NomiHeroGradient.gradient(height: 504, safeTop: 54))
   .preferredColorScheme(.light)
 }
 
-#Preview("Hero total · no prior period") {
-  HeroTotalCard(
-    insights: PeriodInsights(
-      period: .month(year: 2026, month: 11),
-      debitMinor: 12_000_00,
-      creditMinor: 20_000_00,
-      netMinor: 8_000_00,
-      priorDebitMinor: nil,
-      priorCreditMinor: nil,
-      transactionCount: 9,
-      byDay: [],
-      byCategory: [],
-      topMerchants: [],
-      needsReviewCount: 0,
-      uncategorizedCount: 0
-    )
-  )
-  .padding(20)
-  .background(NomiHeroGradient.gradient(height: 356, safeTop: 54))
-  .preferredColorScheme(.light)
+#Preview("Hero · loading") {
+  HeroTotalCard(figures: .loading, period: .month(year: 2026, month: 11), kind: .constant(.spent))
+    .padding(20)
+    .background(NomiHeroGradient.gradient(height: 356, safeTop: 54))
+    .preferredColorScheme(.light)
 }
 
-#Preview("Hero total · accessibility 3") {
-  HeroTotalCard(
-    insights: PeriodInsights(
-      period: .month(year: 2026, month: 11),
-      debitMinor: 64_824_24,
-      creditMinor: 38_500_00,
-      netMinor: -26_324_24,
-      priorDebitMinor: 58_404_00,
-      priorCreditMinor: 55_000_00,
-      transactionCount: 74,
-      byDay: [],
-      byCategory: [],
-      topMerchants: [],
-      needsReviewCount: 0,
-      uncategorizedCount: 0
-    )
-  )
-  .padding(20)
-  .background(NomiHeroGradient.gradient(height: 356, safeTop: 54))
-  .environment(\.dynamicTypeSize, .accessibility3)
-  .preferredColorScheme(.light)
-}
-
-#Preview("Hero unavailable") {
-  HeroUnavailableCard()
+#Preview("Hero · unavailable") {
+  HeroTotalCard(figures: .unavailable, period: .month(year: 2026, month: 11), kind: .constant(.income))
     .padding(20)
     .background(NomiHeroGradient.gradient(height: 356, safeTop: 54))
     .preferredColorScheme(.light)

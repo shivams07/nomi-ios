@@ -196,6 +196,14 @@ enum DashboardWiring {
   }
 }
 
+/// The `.task(id:)` identity for Home's load (S1a). A change of period, of the
+/// cache generation or of the retry token reloads every module, once.
+private struct HomeLoadKey: Hashable {
+  let period: InsightPeriod
+  let refreshToken: Int
+  let retryToken: Int
+}
+
 /// The home screen (U9; v5 `nomi-ui-refresh` §Home, M2; HM1 `home-hero`).
 /// The approved Main artboard: a gradient hero with the period pill and
 /// Settings gear, the spent figure, one delta chip and the sparkline, over a
@@ -246,11 +254,14 @@ public struct DashboardView: View {
   @State private var followsToday = true
   @State private var mailState: MailConnectionState = .disconnected
 
-  /// Bumped by every "tap to retry" — a stored property changing is what
-  /// makes SwiftUI re-invoke `body` (and so re-run the `Load`-returning
-  /// computed properties below) even though none of them read it, same
-  /// mechanism `refreshToken` above already relies on.
+  /// Bumped by every "tap to retry". It is part of `HomeLoadKey`, so the bump
+  /// re-runs the load in `.task(id:)`, which is the only read path (S1a).
   @State private var retryToken = 0
+
+  /// Every read the screen shows, loaded by `.task(id:)` (S1a). Built once with
+  /// the view's stores; the stores are the app's own and do not change for the
+  /// life of the Home tab.
+  @State private var model: HomeModel
 
   /// The "Add a transaction" action (F3). `nil` until RootView sets it, and
   /// the second first-run card's button is hidden while it is nil.
@@ -280,30 +291,11 @@ public struct DashboardView: View {
     self.onSelectTransaction = onSelectTransaction
     _basis = State(initialValue: basis)
     _anchor = State(initialValue: anchor)
+    _model = State(initialValue: HomeModel(insightsStore: insightsStore, recurringStore: recurringStore))
   }
 
   private var period: InsightPeriod {
     DashboardPeriod.period(basis: basis, anchor: anchor)
-  }
-
-  private var insights: DashboardWiring.Load<PeriodInsights> {
-    DashboardWiring.insights(for: period, from: insightsStore)
-  }
-
-  private var budgetProgress: DashboardWiring.Load<[BudgetProgress]>? {
-    DashboardWiring.budgetProgress(
-      month: DashboardWiring.budgetMonth(basis: basis, anchor: anchor, calendar: .current),
-      from: insightsStore
-    )
-  }
-
-  private var recentTransactions: DashboardWiring.Load<[NomiCore.Transaction]> {
-    DashboardWiring.recentTransactions(from: insightsStore)
-  }
-
-  /// D26. All time, not the selected period: see `DashboardWiring.needsReviewAllTime`.
-  private var needsReviewAllTime: DashboardWiring.Load<Int> {
-    DashboardWiring.needsReviewAllTime(from: insightsStore)
   }
 
   /// D14. Read through the service on each render: `MailStack.history` reads the
@@ -311,15 +303,6 @@ public struct DashboardView: View {
   /// render. No service means no connection has ever been made here.
   private var mailHistory: MailConnectionHistory {
     mailConnectionService?.history ?? .never
-  }
-
-  /// `nil` when there is no `recurringStore` at all — distinct from
-  /// `DashboardWiring.Load`'s own two cases, same shape `budgetProgress`
-  /// already uses for its own third, store-independent "nothing to show"
-  /// state.
-  private var recurringSeries: DashboardWiring.Load<[RecurringSeries]>? {
-    guard let recurringStore else { return nil }
-    return DashboardWiring.recurringSeries(from: recurringStore)
   }
 
   /// A failed read is not evidence that there are no transactions, so only a
@@ -333,27 +316,15 @@ public struct DashboardView: View {
     }
   }
 
+  /// The body reads only `model`. Every store read happens in `model.load`, once
+  /// per `HomeLoadKey`, from the `.task(id:)` below (S1a).
   public var body: some View {
-    let insightsResult = insights
-    let transactionsResult = recentTransactions
-    let reviewResult = needsReviewAllTime
-    let mode = HomeLayout.mode(mail: mailState, hasAnyTransaction: hasAnyTransaction(transactionsResult))
-    return NomiHeroScaffold(heroBottomSpacing: 12) {
+    NomiHeroScaffold(heroBottomSpacing: 12) {
       navRow
     } hero: {
-      heroContent(insightsResult)
+      heroContent
     } sheet: {
-      switch mode {
-      case .firstRun:
-        firstRunCards
-      case .normal(let showAttention):
-        homeSheet(
-          showAttention: showAttention,
-          insights: insightsResult,
-          needsReview: reviewResult,
-          transactions: transactionsResult
-        )
-      }
+      sheetContent
     }
     .task {
       guard let mailConnectionService else { return }
@@ -361,28 +332,64 @@ public struct DashboardView: View {
         mailState = state
       }
     }
+    .task(id: HomeLoadKey(period: period, refreshToken: refreshToken, retryToken: retryToken)) {
+      model.load(period: period)
+    }
     .onChange(of: refreshToken) { _, _ in
       anchor = PeriodAnchorPolicy.anchorAfterRefresh(current: anchor, followsToday: followsToday, now: Date())
     }
   }
 
+  /// The sheet in its state. Nothing is drawn until the transactions, the period
+  /// and the review count have loaded, since the first-run rule needs the first.
+  @ViewBuilder
+  private var sheetContent: some View {
+    if let transactions = model.recentTransactions,
+       let insights = model.insights,
+       let needsReview = model.needsReview {
+      switch HomeLayout.mode(mail: mailState, hasAnyTransaction: hasAnyTransaction(transactions)) {
+      case .firstRun:
+        firstRunCards
+      case .normal(let showAttention):
+        homeSheet(
+          showAttention: showAttention,
+          insights: insights,
+          needsReview: needsReview,
+          transactions: transactions
+        )
+      }
+    }
+  }
+
   // MARK: - Hero
 
-  /// The nav row (HM1): the period pill on the left and the Settings gear on
-  /// the right. Both are dark glass over the hero, 44 pt high. The pill's menu
-  /// holds the basis picker and the recent periods, and replaces the shipped
-  /// chevrons and segmented pill.
+  /// The nav row (HM1, S1a): the period pill on the left, and on the right a
+  /// search circle and the Settings circle, both 44 pt heroControl glass and 8 pt
+  /// apart. The pill's menu holds the basis picker and the recent periods. The
+  /// search circle opens Activity with its search field (I-15); it is hidden
+  /// while no root has wired `\.nomiShowLedger`.
   private var navRow: some View {
     HStack(spacing: 0) {
       NomiPeriodPill(title: DashboardPeriod.label(for: period), style: .onHero) {
         periodMenu
       }
       Spacer(minLength: 12)
-      NavigationLink(value: HomeRoute.settings) {
-        NomiHeroIcon(systemName: "gearshape")
+      HStack(spacing: 8) {
+        if NomiShowLedgerLogic.showsControl(isWired: showLedger != nil), let showLedger {
+          Button {
+            showLedger(.search(""))
+          } label: {
+            NomiHeroIcon(systemName: "magnifyingglass")
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel("Search")
+        }
+        NavigationLink(value: HomeRoute.settings) {
+          NomiHeroIcon(systemName: "gearshape")
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Settings")
       }
-      .buttonStyle(.plain)
-      .accessibilityLabel("Settings")
     }
   }
 
@@ -401,13 +408,22 @@ public struct DashboardView: View {
     }
   }
 
-  @ViewBuilder
-  private func heroContent(_ result: DashboardWiring.Load<PeriodInsights>) -> some View {
-    switch result {
-    case .loaded(let insights):
-      HeroTotalCard(insights: insights)
-    case .failed:
-      HeroUnavailableCard()
+  /// The hero's Spent or Income control writes the model's kind. Switching it
+  /// reads nothing.
+  private var heroContent: some View {
+    HeroTotalCard(figures: heroFigures, period: period, kind: $model.kind)
+  }
+
+  /// A loading hero is not a zero, and a failed one is not a loaded one. Each
+  /// is its own figure state.
+  private var heroFigures: HeroTotalCard.Figures {
+    switch model.insights {
+    case .loaded(let insights)?:
+      return .loaded(insights)
+    case .failed?:
+      return .unavailable
+    case nil:
+      return .loading
     }
   }
 
@@ -494,20 +510,23 @@ public struct DashboardView: View {
 
   @ViewBuilder
   private var budgetModule: some View {
-    switch budgetProgress {
-    case .loaded(let items):
+    switch model.budgets {
+    case .monthly(.loaded(let items))?:
       NavigationLink(value: DashboardRoute.budgets) {
         RemainingBudgetCard(state: DashboardWiring.budgetModule(items), referenceDate: anchor)
       }
       .buttonStyle(.plain)
-    case .failed:
+    case .monthly(.failed)?:
       NomiLoadFailedCard(message: "Budgets didn’t load.") { retryToken += 1 }
-    case nil:
+    case .notMonthly?:
       // FY basis: budgets are monthly, so there is nothing to show progress
       // against — a caption, not a hidden module masquerading as "on time".
       Text("Budgets are monthly — switch to Calendar Month to see progress.")
         .nomiTextStyle(.caption)
         .foregroundStyle(NomiColor.textTertiary)
+    case nil:
+      // Not loaded yet: the module is drawn once its read has finished.
+      EmptyView()
     }
   }
 
@@ -563,15 +582,15 @@ public struct DashboardView: View {
   /// three-way shape `budgetModule` already handles for its own `nil` case.
   @ViewBuilder
   private var upcomingModule: some View {
-    switch recurringSeries {
-    case .loaded(let series):
+    switch model.upcoming {
+    case .loaded(.loaded(let series))?:
       NavigationLink(value: DashboardRoute.subscriptions) {
         UpcomingCard(series: series)
       }
       .buttonStyle(.plain)
-    case .failed:
+    case .loaded(.failed)?:
       NomiLoadFailedCard(message: "Upcoming didn’t load.") { retryToken += 1 }
-    case nil:
+    case .absent?, nil:
       EmptyView()
     }
   }
