@@ -8,9 +8,14 @@ public enum AppRoute: Sendable, Equatable {
   case main
 }
 
-/// The two screens U7 built and nothing ever sequenced.
+/// The screens of first run, in the order a user passes them. Two routes leave
+/// Bring in your data: `connectMail` then `backfill` (mail), or
+/// `importStatement` alone (a file).
 public enum OnboardingStep: Sendable, Equatable {
+  case welcome
+  case bringData
   case connectMail
+  case importStatement
   case backfill
 }
 
@@ -44,7 +49,43 @@ public final class FirstRunGate: ObservableObject {
   /// onboarding and a subsequent run does not") and a test can call it without
   /// constructing anything.
   public static func initialRoute(hasCompletedFirstRun: Bool) -> AppRoute {
-    hasCompletedFirstRun ? .main : .onboarding(.connectMail)
+    hasCompletedFirstRun ? .main : .onboarding(.welcome)
+  }
+
+  /// Welcome's "Get started". Only from Welcome.
+  public func start() {
+    guard case .onboarding(.welcome) = route else { return }
+    route = .onboarding(.bringData)
+  }
+
+  /// Bring in your data: "Continue with email". Only from Bring in your data.
+  public func chooseMail() {
+    guard case .onboarding(.bringData) = route else { return }
+    route = .onboarding(.connectMail)
+  }
+
+  /// Bring in your data: "Import a bank statement". Only from Bring in your data.
+  public func chooseImport() {
+    guard case .onboarding(.bringData) = route else { return }
+    route = .onboarding(.importStatement)
+  }
+
+  /// Bring in your data: "Add by hand". Leaves first run, as Skip does.
+  public func chooseManual() {
+    completeFirstRun()
+  }
+
+  /// The back control on connect mail, on import, and on Bring in your data.
+  /// Welcome has no back, and backfill has no way back into setup.
+  public func back() {
+    switch route {
+    case .onboarding(.connectMail), .onboarding(.importStatement):
+      route = .onboarding(.bringData)
+    case .onboarding(.bringData):
+      route = .onboarding(.welcome)
+    case .onboarding(.welcome), .onboarding(.backfill), .main:
+      return
+    }
   }
 
   /// Mail connected during onboarding — advance to the backfill screen.
@@ -71,6 +112,6 @@ public final class FirstRunGate: ObservableObject {
   /// raw `store.set` scattered through a view.
   public func resetForTesting() {
     store.set(false, forKey: PreferenceKey.hasCompletedFirstRun)
-    route = .onboarding(.connectMail)
+    route = .onboarding(.welcome)
   }
 }

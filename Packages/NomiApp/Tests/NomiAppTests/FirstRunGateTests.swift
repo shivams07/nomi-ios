@@ -7,17 +7,17 @@ import XCTest
 @MainActor
 final class FirstRunGateTests: XCTestCase {
 
-  func testAFirstRunLandsOnOnboarding() {
-    XCTAssertEqual(FirstRunGate.initialRoute(hasCompletedFirstRun: false), .onboarding(.connectMail))
+  func testAFirstRunLandsOnWelcome() {
+    XCTAssertEqual(FirstRunGate.initialRoute(hasCompletedFirstRun: false), .onboarding(.welcome))
   }
 
   func testASubsequentRunDoesNot() {
     XCTAssertEqual(FirstRunGate.initialRoute(hasCompletedFirstRun: true), .main)
   }
 
-  func testAFreshStoreOpensOnOnboarding() {
+  func testAFreshStoreOpensOnWelcome() {
     let gate = FirstRunGate(store: InMemoryKeyValueStore())
-    XCTAssertEqual(gate.route, .onboarding(.connectMail))
+    XCTAssertEqual(gate.route, .onboarding(.welcome))
   }
 
   /// The flag survives a relaunch — the same key-value store, a new gate, which
@@ -32,6 +32,102 @@ final class FirstRunGateTests: XCTestCase {
     let second = FirstRunGate(store: store)
     XCTAssertEqual(second.route, .main)
   }
+
+  // MARK: - The Welcome and Bring in your data steps
+
+  func testGetStartedOpensBringData() {
+    let gate = FirstRunGate(store: InMemoryKeyValueStore())
+    gate.start()
+    XCTAssertEqual(gate.route, .onboarding(.bringData))
+  }
+
+  func testChoosingEmailOpensConnectMail() {
+    let gate = FirstRunGate(store: InMemoryKeyValueStore())
+    gate.start()
+    gate.chooseMail()
+    XCTAssertEqual(gate.route, .onboarding(.connectMail))
+  }
+
+  func testChoosingAStatementOpensImport() {
+    let gate = FirstRunGate(store: InMemoryKeyValueStore())
+    gate.start()
+    gate.chooseImport()
+    XCTAssertEqual(gate.route, .onboarding(.importStatement))
+  }
+
+  /// "Add by hand" is a complete first run, the same as Skip: the flag is set
+  /// and the route is `.main`.
+  func testChoosingByHandCompletesFirstRunAndSetsTheFlag() {
+    let store = InMemoryKeyValueStore()
+    let gate = FirstRunGate(store: store)
+    gate.start()
+
+    gate.chooseManual()
+
+    XCTAssertEqual(gate.route, .main)
+    XCTAssertTrue(store.bool(forKey: PreferenceKey.hasCompletedFirstRun))
+  }
+
+  /// A step can only be reached from the step before it. Each transition is a
+  /// no-op from any other route, so a button wired to the wrong step cannot skip
+  /// Welcome or jump across Bring in your data.
+  func testBringDataChoicesAreIgnoredOnWelcome() {
+    let gate = FirstRunGate(store: InMemoryKeyValueStore())
+
+    gate.chooseMail()
+    XCTAssertEqual(gate.route, .onboarding(.welcome))
+
+    gate.chooseImport()
+    XCTAssertEqual(gate.route, .onboarding(.welcome))
+  }
+
+  func testStartIsIgnoredOnceBringDataIsShown() {
+    let gate = FirstRunGate(store: InMemoryKeyValueStore())
+    gate.start()
+
+    gate.start()
+
+    XCTAssertEqual(gate.route, .onboarding(.bringData))
+  }
+
+  func testBackFromConnectMailReturnsToBringData() {
+    let gate = FirstRunGate(store: InMemoryKeyValueStore())
+    gate.start()
+    gate.chooseMail()
+
+    gate.back()
+
+    XCTAssertEqual(gate.route, .onboarding(.bringData))
+  }
+
+  func testBackFromImportReturnsToBringData() {
+    let gate = FirstRunGate(store: InMemoryKeyValueStore())
+    gate.start()
+    gate.chooseImport()
+
+    gate.back()
+
+    XCTAssertEqual(gate.route, .onboarding(.bringData))
+  }
+
+  func testBackFromBringDataReturnsToWelcome() {
+    let gate = FirstRunGate(store: InMemoryKeyValueStore())
+    gate.start()
+
+    gate.back()
+
+    XCTAssertEqual(gate.route, .onboarding(.welcome))
+  }
+
+  func testBackFromWelcomeHasNowhereToGo() {
+    let gate = FirstRunGate(store: InMemoryKeyValueStore())
+
+    gate.back()
+
+    XCTAssertEqual(gate.route, .onboarding(.welcome))
+  }
+
+  // MARK: - Mail
 
   func testConnectingMailDuringOnboardingAdvancesToBackfill() {
     let gate = FirstRunGate(store: InMemoryKeyValueStore())
@@ -66,14 +162,54 @@ final class FirstRunGateTests: XCTestCase {
     XCTAssertEqual(FirstRunGate(store: store).route, .main)
   }
 
-  func testResetReturnsToOnboardingAndClearsTheFlag() {
+  // MARK: - Data safety: skip stays skipped, and a returning user stays out
+
+  /// The whole skip path, through the new steps: Welcome, Bring in your data,
+  /// email, then Skip on the mail step. The next launch opens on the app.
+  func testSkipAfterTheNewStepsStaysDismissedAcrossRelaunch() {
+    let store = InMemoryKeyValueStore()
+    let first = FirstRunGate(store: store)
+    first.start()
+    first.chooseMail()
+
+    first.completeFirstRun()
+
+    XCTAssertEqual(first.route, .main)
+    XCTAssertEqual(FirstRunGate(store: store).route, .main)
+  }
+
+  /// A user who finished first run (by any exit) and then reaches a route that
+  /// begins onboarding, from Settings or any other entry, is not sent back.
+  func testAReturningUserIsNeverRoutedBackIntoOnboarding() {
+    let store = InMemoryKeyValueStore()
+    let gate = FirstRunGate(store: store)
+    gate.completeFirstRun()
+
+    gate.start()
+    gate.chooseMail()
+    gate.chooseImport()
+    gate.back()
+    gate.mailConnected()
+
+    XCTAssertEqual(gate.route, .main)
+    XCTAssertEqual(FirstRunGate(store: store).route, .main)
+  }
+
+  func testAReturningUserWithTheFlagSetOpensOnTheAppAtLaunch() {
+    let store = InMemoryKeyValueStore()
+    store.set(true, forKey: PreferenceKey.hasCompletedFirstRun)
+
+    XCTAssertEqual(FirstRunGate(store: store).route, .main)
+  }
+
+  func testResetReturnsToWelcomeAndClearsTheFlag() {
     let store = InMemoryKeyValueStore()
     let gate = FirstRunGate(store: store)
     gate.completeFirstRun()
 
     gate.resetForTesting()
 
-    XCTAssertEqual(gate.route, .onboarding(.connectMail))
+    XCTAssertEqual(gate.route, .onboarding(.welcome))
     XCTAssertFalse(store.bool(forKey: PreferenceKey.hasCompletedFirstRun))
   }
 }
