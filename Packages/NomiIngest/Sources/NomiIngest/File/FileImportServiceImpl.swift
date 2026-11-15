@@ -49,10 +49,14 @@ public final class FileImportServiceImpl: FileImportService, @unchecked Sendable
       rows: file.dataRows, mapping: mapping, formatSignature: signature, calendar: calendar
     )
 
+    // A row is unreadable when RowMapper cannot map it, or when its amount is
+    // outside AmountRules (RowMapper has no upper bound, wave-1 Risk 10). The
+    // second case is counted here so the screen never shows an amount it would
+    // not accept; commit still imports such a row (see ImportDryRunTests).
     var parsed: [(index: Int, row: ParsedRow)] = []
     var unreadable: [[String]] = []
     for (index, entry) in mapped.enumerated() {
-      if let row = entry {
+      if let row = entry, AmountRules.isValidTransactionAmount(row.amountMinor) {
         parsed.append((index: index, row: row))
       } else {
         unreadable.append(file.dataRows[index])

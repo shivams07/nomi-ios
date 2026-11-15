@@ -124,9 +124,9 @@ final class ImportDryRunTests: XCTestCase {
     XCTAssertEqual(dry.sample.first?.direction, .credit)
   }
 
-  /// Two identical lines with no reference are two rows: L10 keeps both, so
-  /// both count as new (tier 4). The commit would create both too, or merge the
-  /// second at tier 4 and say so in its own summary.
+  /// Two identical lines with no reference are two rows: L10 keeps both, so both
+  /// count as new (nothing is stored). Commit's created + merged is 2; the split
+  /// between created and merged is the pipeline's, and this test does not assert it.
   func testTwoIdenticalLinesAreBothNew() async throws {
     let url = try write(Self.csv([
       "Date,Narration,Amount",
@@ -346,9 +346,11 @@ final class ImportDryRunTests: XCTestCase {
       }
       let imported = committed.map { $0.created + $0.merged } ?? 0
 
+      // I-12 invariant: every parsed row is new or already stored, and commit
+      // creates or merges every one of them.
       XCTAssertEqual(
-        dry.newCount, imported,
-        "\(shape.name): the dry run's new count and the rows the commit imports must agree")
+        dry.newCount + dry.alreadyImportedCount, imported,
+        "\(shape.name): new + already must equal the rows the commit creates or merges")
       XCTAssertEqual(dry.alreadyImportedCount, 0, "\(shape.name): nothing stored, nothing already imported")
       XCTAssertEqual(dry.newCount, shape.parsed, "\(shape.name): new count")
       XCTAssertEqual(dry.unreadable.count, shape.skipped, "\(shape.name): unreadable rows")
@@ -433,11 +435,14 @@ final class ImportDryRunTests: XCTestCase {
 
     let secondCommit = try await service.commit(url, mapping: withReference, accountID: nil)
     XCTAssertEqual(secondCommit.created, secondDry.newCount, "re-import: new rows equal created rows")
+    XCTAssertEqual(secondCommit.merged, secondDry.alreadyImportedCount, "re-import: already rows are merged")
+    XCTAssertEqual(secondCommit.merged, 3, "re-import of three stored rows: dry 0/3, commit created 0, merged 3")
   }
 
-  /// An overlapping statement: two rows are stored, two are new. The dry run
-  /// reports 2 new and 2 already, and the commit creates the 2 new.
-  func testOverlappingStatementCountsOnlyTheNewRows() async throws {
+  /// An overlapping statement: three rows are stored, and the file repeats one of
+  /// them. Dry run 2 new / 1 already. Commit creates the 2 and merges the 1 into
+  /// the stored row (I-12 count semantics).
+  func testOverlappingStatementCountsNewAndAlreadySeparately() async throws {
     let container = try makeContainer()
     let store = SwiftDataPipelineStore(modelContainer: container)
     let service = makeService(store: store)
@@ -452,7 +457,6 @@ final class ImportDryRunTests: XCTestCase {
 
     let overlap = try write(Self.csv([
       "Date,Narration,Amount,Reference",
-      "03/11/2026,ZOMATO,120.00,REF2",
       "04/11/2026,UBER,80.00,REF3",
       "05/11/2026,BIGBASKET,60.00,REF4",
       "06/11/2026,OLA,30.00,REF5",
@@ -461,11 +465,105 @@ final class ImportDryRunTests: XCTestCase {
 
     let dry = try await service.dryRun(overlap, mapping: withReference)
     XCTAssertEqual(dry.newCount, 2)
-    XCTAssertEqual(dry.alreadyImportedCount, 2)
-    XCTAssertEqual(dry.sample.map(\.id), [2, 3])
+    XCTAssertEqual(dry.alreadyImportedCount, 1)
+    XCTAssertEqual(dry.sample.map(\.id), [1, 2])
 
     let summary = try await service.commit(overlap, mapping: withReference, accountID: nil)
-    XCTAssertEqual(summary.created, dry.newCount, "new rows equal created rows")
-    XCTAssertEqual(summary.merged, dry.alreadyImportedCount, "already-imported rows are merged, not created")
+    XCTAssertEqual(summary.created, 2)
+    XCTAssertEqual(summary.merged, 1)
+    XCTAssertEqual(summary.created + summary.merged, dry.newCount + dry.alreadyImportedCount)
+  }
+
+  /// Two rows with one narration, amount and date, under two references. Neither
+  /// reference is stored, so the dry run counts both new. Commit creates the first
+  /// and folds the second into it (an in-file merge), so created + merged is still 2.
+  func testSameNarrationDifferentReferenceCountsBothNew() async throws {
+    let container = try makeContainer()
+    let store = SwiftDataPipelineStore(modelContainer: container)
+    let service = makeService(store: store)
+    let url = try write(Self.csv([
+      "Date,Narration,Amount,Reference",
+      "02/11/2026,SWIGGY,450.00,REFA",
+      "02/11/2026,SWIGGY,450.00,REFB",
+    ]))
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let dry = try await service.dryRun(url, mapping: withReference)
+    XCTAssertEqual(dry.newCount, 2)
+    XCTAssertEqual(dry.alreadyImportedCount, 0)
+
+    let summary = try await service.commit(url, mapping: withReference, accountID: nil)
+    XCTAssertEqual(summary.created, 1, "the first row is created")
+    XCTAssertEqual(summary.merged, 1, "the second row folds into it")
+    XCTAssertEqual(summary.created + summary.merged, dry.newCount + dry.alreadyImportedCount)
+  }
+
+  /// Every stored Transaction, in id order, as the pipeline reads and writes it:
+  /// narration, category, source refs, timestamps, transfer pair and so on.
+  private func storedSnapshots(_ container: ModelContainer) throws -> [TransactionSnapshot] {
+    let rows = try ModelContext(container).fetch(FetchDescriptor<Transaction>())
+    return rows.map { TransactionSnapshot($0) }.sorted { $0.id.uuidString < $1.id.uuidString }
+  }
+
+  /// I-12: a dry run writes nothing. Commit stores three rows; a dry run of an
+  /// overlapping file then runs against them. Every stored field of every row must
+  /// be unchanged, read back through a fresh context. Lim's M4 (a lookup that saves
+  /// a changed narration) fails this test.
+  func testDryRunChangesNoStoredField() async throws {
+    let container = try makeContainer()
+    let store = SwiftDataPipelineStore(modelContainer: container)
+    let service = makeService(store: store)
+    let first = try write(Self.csv([
+      "Date,Narration,Amount,Reference",
+      "02/11/2026,SWIGGY,450.00,REF1",
+      "03/11/2026,ZOMATO,120.00,REF2",
+      "04/11/2026,UBER,80.00,REF3",
+    ]))
+    defer { try? FileManager.default.removeItem(at: first) }
+    _ = try await service.commit(first, mapping: withReference, accountID: nil)
+    let before = try storedSnapshots(container)
+
+    let overlap = try write(Self.csv([
+      "Date,Narration,Amount,Reference",
+      "04/11/2026,UBER,80.00,REF3",
+      "05/11/2026,BIGBASKET,60.00,REF4",
+    ]))
+    defer { try? FileManager.default.removeItem(at: overlap) }
+    _ = try await service.dryRun(overlap, mapping: withReference)
+
+    let after = try storedSnapshots(container)
+    XCTAssertEqual(before.count, 3)
+    XCTAssertEqual(after, before, "a dry run must not change any stored field of any row")
+  }
+
+  /// RowMapper has no upper bound on amounts (wave-1 Risk 10), so a row can map to
+  /// an amount beyond `AmountRules.maximumMinor`. The dry run counts that row
+  /// unreadable. Commit still imports it: B4 does not change commit or RowMapper,
+  /// so the commit side is pinned as a strict known failure, not a fix.
+  func testAmountBeyondTheCapIsUnreadableInTheDryRun() async throws {
+    let container = try makeContainer()
+    let store = SwiftDataPipelineStore(modelContainer: container)
+    let service = makeService(store: store)
+    let url = try write(Self.csv([
+      "Date,Narration,Amount,Reference",
+      "02/11/2026,SWIGGY,450.00,REF1",
+      "03/11/2026,BIG TRANSFER,2000000000.00,REF2",
+    ]))
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let dry = try await service.dryRun(url, mapping: withReference)
+    XCTAssertEqual(dry.newCount, 1)
+    XCTAssertEqual(dry.alreadyImportedCount, 0)
+    XCTAssertEqual(dry.unreadable, [["03/11/2026", "BIG TRANSFER", "2000000000.00", "REF2"]])
+    XCTAssertEqual(dry.sample.map(\.id), [0])
+
+    let summary = try await service.commit(url, mapping: withReference, accountID: nil)
+    XCTAssertEqual(summary.created + summary.merged, 2, "commit imports the over-cap row as well")
+    XCTExpectFailure(
+      "commit does not skip over-cap amounts (RowMapper has no upper bound, wave-1 Risk 10); not B4's to change",
+      strict: true
+    ) {
+      XCTAssertEqual(summary.skipped, dry.unreadable.count, "rows commit skips must equal dry-run unreadable")
+    }
   }
 }

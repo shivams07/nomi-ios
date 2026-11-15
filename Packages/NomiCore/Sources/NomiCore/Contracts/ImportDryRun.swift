@@ -27,13 +27,34 @@ public struct ImportDryRunRow: Sendable, Equatable, Identifiable {
 }
 
 /// What `FileImportService.dryRun` found in a file under a mapping, before any
-/// write (I-12). Its counts describe the rows `commit` would import.
+/// write (I-12). The counts describe what `commit` does with the same file.
+///
+/// - `alreadyImportedCount`: parsed rows whose (source `.file`, externalID) is
+///   already stored. Commit **merges** each one into the stored row. None is
+///   created.
+/// - `newCount`: every other parsed row. Commit **creates** it, or folds it into
+///   an earlier row of the same file (same narration, amount and date under a
+///   different reference). The Done screen's `created` and `merged` say which.
+/// - `unreadable`: raw cells of rows that cannot be read, including rows whose
+///   amount is outside `AmountRules` (RowMapper has no upper bound).
+///
+/// Invariants, asserted in `ImportDryRunTests`:
+/// `newCount + alreadyImportedCount == created + merged` and
+/// `unreadable.count == skipped`. The second holds for every amount inside
+/// `AmountRules`. An over-cap row is unreadable here but commit still imports it;
+/// that is a commit fix for a later unit.
+///
+/// S11 copy: "new" here is not "will be added as a new row". The screen must not
+/// say a row marked new is added as a new row, and must not say an already-known
+/// row is skipped; it is merged.
 public struct ImportDryRun: Sendable, Equatable {
-  /// Parsed rows whose externalID is not already in the store.
+  /// Parsed rows that are not already stored. Commit creates them or folds them
+  /// into an earlier row of the same file (see above).
   public let newCount: Int
-  /// Parsed rows whose (source `.file`, externalID) already exists.
+  /// Parsed rows whose (source `.file`, externalID) is already stored. Commit merges them.
   public let alreadyImportedCount: Int
-  /// Raw cells of the rows `RowMapper` could not map, in file order.
+  /// Raw cells of rows `RowMapper` could not map, or whose amount is outside
+  /// `AmountRules`, in file order.
   public let unreadable: [[String]]
   /// The first five parsed rows that are new, in file order.
   public let sample: [ImportDryRunRow]
