@@ -69,7 +69,7 @@ public struct WelcomeScreen: View {
   }
 
   private var bodyCopy: some View {
-    Text("Nomi reads the bank and card alerts already in your inbox and turns them into a ledger. Nothing leaves your phone.", bundle: .module)
+    Text("Nomi reads the bank and card alerts already in your inbox and turns them into a ledger, kept on this iPhone.", bundle: .module)
       .nomiTextStyle(.body)
       .foregroundStyle(NomiColor.heroText)
       .frame(maxWidth: 310, alignment: .leading)
@@ -155,7 +155,7 @@ public struct WelcomeScreen: View {
       .buttonStyle(NomiHeroButtonStyle(.primary))
       .frame(maxWidth: .infinity)
 
-      Text("No sign-up. No server. Sync is your own iCloud, if you turn it on.", bundle: .module)
+      Text("No sign-up and no server. Your data stays on this iPhone and syncs to your private iCloud if you use iCloud.", bundle: .module)
         .nomiTextStyle(.caption)
         .foregroundStyle(NomiColor.heroText)
         .multilineTextAlignment(.center)

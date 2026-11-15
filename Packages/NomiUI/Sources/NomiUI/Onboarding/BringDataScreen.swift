@@ -126,7 +126,7 @@ public struct BringDataScreen: View {
     RouteCard(
       symbol: "envelope",
       title: "Bank alert emails",
-      detail: "Needs an app password · includes the last 6 months",
+      detail: "Needs a mail password · includes the last 6 months",
       note: OnboardingRoutes.emailRouteNote(),
       isOn: $emailOn
     )
@@ -217,7 +217,7 @@ public struct BringDataScreen: View {
       .buttonStyle(NomiPrimaryButtonStyle(height: 54))
       .disabled(continueTitle == nil)
 
-      Text("Everything stays on this iPhone. Nomi has no server and no account.", bundle: .module)
+      Text("Your data stays on this iPhone, and syncs to your private iCloud if you use iCloud. Nomi has no server and no account.", bundle: .module)
         .nomiTextStyle(.caption)
         .foregroundStyle(NomiColor.inkSecondary)
         .multilineTextAlignment(.center)

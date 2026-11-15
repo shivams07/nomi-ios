@@ -30,16 +30,30 @@ final class OnboardingRoutesTests: XCTestCase {
   func testEmailNoteNamesOnlyTheProvidersTheAppSupports() {
     let note = OnboardingRoutes.emailRouteNote()
     for provider in MailProvider.allCases {
-      XCTAssertTrue(note.contains(provider.displayName), "missing \(provider.displayName) in \(note)")
+      XCTAssertTrue(
+        note.contains(OnboardingRoutes.providerName(provider)),
+        "missing \(provider) in \(note)")
     }
     XCTAssertFalse(note.contains("Yahoo"))
-    XCTAssertTrue(note.hasSuffix("Nomi keeps only the amount, merchant and date."))
+    XCTAssertFalse(note.contains("Generic IMAP"), "user wording, not the enum's display name")
+    XCTAssertTrue(
+      note.hasSuffix(
+        "Nomi reads only bank-like senders and keeps each transaction's amount, date and a short description of the alert, not the whole email."),
+      note)
   }
 
   func testProviderListJoinsWithCommasAndAnd() {
     XCTAssertEqual(
       OnboardingRoutes.providerList([.gmail, .icloud, .zoho]),
       "Gmail, iCloud Mail and Zoho Mail")
+  }
+
+  /// The generic case is worded as the user would say it.
+  func testGenericProviderIsWordedAsOtherIMAPMail() {
+    XCTAssertEqual(OnboardingRoutes.providerName(.generic), "other IMAP mail")
+    XCTAssertEqual(
+      OnboardingRoutes.providerList([.gmail, .generic]),
+      "Gmail and other IMAP mail")
   }
 
   func testProviderListOfOneNameHasNoJoin() {

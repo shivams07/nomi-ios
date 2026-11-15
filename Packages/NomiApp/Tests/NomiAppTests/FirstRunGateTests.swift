@@ -102,21 +102,51 @@ final class FirstRunGateTests: XCTestCase {
   /// account or transaction row is enough to count as data.
   func testAnEmptyStoreHoldsNoData() throws {
     let stack = try InMemoryStack()
-    XCTAssertFalse(FirstRunGate.storeHoldsData(in: stack.context))
+    XCTAssertFalse(try FirstRunGate.storeHoldsData(in: stack.context))
   }
 
   func testAnAccountRowCountsAsData() throws {
     let stack = try InMemoryStack()
     stack.context.insert(Account(displayName: "HDFC Savings"))
     try stack.context.save()
-    XCTAssertTrue(FirstRunGate.storeHoldsData(in: stack.context))
+    XCTAssertTrue(try FirstRunGate.storeHoldsData(in: stack.context))
   }
 
   func testATransactionRowCountsAsData() throws {
     let stack = try InMemoryStack()
     stack.context.insert(Transaction())
     try stack.context.save()
-    XCTAssertTrue(FirstRunGate.storeHoldsData(in: stack.context))
+    XCTAssertTrue(try FirstRunGate.storeHoldsData(in: stack.context))
+  }
+
+  // MARK: - A check that cannot be read (M4)
+
+  private struct DataCheckFailed: Error {}
+
+  /// A failed check is never a reason to show Welcome. The user lands in the app
+  /// for this launch.
+  func testAFailedDataCheckRoutesToTheAppNeverWelcome() {
+    let gate = FirstRunGate(store: InMemoryKeyValueStore(), hasStoredData: { throw DataCheckFailed() })
+    XCTAssertEqual(gate.route, .main)
+  }
+
+  /// A failed check persists nothing. Writing the flag on a check that could not
+  /// be read would dismiss onboarding for good on a guess.
+  func testAFailedDataCheckWritesNoFlag() {
+    let store = InMemoryKeyValueStore()
+    _ = FirstRunGate(store: store, hasStoredData: { throw DataCheckFailed() })
+    XCTAssertFalse(store.bool(forKey: PreferenceKey.hasCompletedFirstRun))
+  }
+
+  /// The next launch asks again. With the store readable and empty, that launch
+  /// is a first run, and it opens on Welcome.
+  func testTheNextLaunchAsksAgainAfterAFailedCheck() {
+    let store = InMemoryKeyValueStore()
+    _ = FirstRunGate(store: store, hasStoredData: { throw DataCheckFailed() })
+
+    let relaunch = FirstRunGate(store: store, hasStoredData: { false })
+
+    XCTAssertEqual(relaunch.route, .onboarding(.welcome))
   }
 
   // MARK: - The Welcome and Bring in your data steps

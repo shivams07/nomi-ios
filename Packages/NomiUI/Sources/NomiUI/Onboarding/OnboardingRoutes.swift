@@ -11,16 +11,30 @@ public enum OnboardingRoutes {
   /// same list the connect step offers, so the copy cannot name a provider the
   /// app does not support. The canvas said "Gmail, Yahoo and iCloud Mail"; Yahoo
   /// has no provider here, so it is not named.
+  /// The note is true of the code: the sender gate admits bank-like domains
+  /// (`MailPreFilter.isCandidateDomain`), and the stored description is a
+  /// narration of at most 160 characters (`MailNarration`), not the whole email.
   static func emailRouteNote(providers: [MailProvider] = MailProvider.allCases) -> String {
     let names = providerList(providers)
     return String(
-      localized: "Works with \(names). Nomi keeps only the amount, merchant and date.",
+      localized: """
+        Works with \(names). Nomi reads only bank-like senders and keeps each transaction's amount, date and a short description of the alert, not the whole email.
+        """,
       bundle: .module)
+  }
+
+  /// The name the user sees for a provider. The generic case is worded the way
+  /// a user would say it, not as the enum's display name.
+  static func providerName(_ provider: MailProvider) -> String {
+    switch provider {
+    case .generic: return "other IMAP mail"
+    case .gmail, .icloud, .zoho: return provider.displayName
+    }
   }
 
   /// Joins provider names as an English list: "A, B and C".
   static func providerList(_ providers: [MailProvider] = MailProvider.allCases) -> String {
-    let names = providers.map(\.displayName)
+    let names = providers.map(providerName)
     guard let last = names.last else { return "" }
     guard names.count > 1 else { return last }
     return names.dropLast().joined(separator: ", ") + " and " + last

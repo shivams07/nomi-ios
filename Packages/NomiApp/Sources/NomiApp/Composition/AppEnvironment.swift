@@ -114,7 +114,7 @@ public final class AppEnvironment: ObservableObject {
 
     self.preferences = preferences
     // Asked only while the first-run flag is absent (see `FirstRunGate.init`).
-    self.firstRun = FirstRunGate(store: preferences, hasStoredData: { FirstRunGate.storeHoldsData(in: context) })
+    self.firstRun = FirstRunGate(store: preferences, hasStoredData: { try FirstRunGate.storeHoldsData(in: context) })
 
     let notificationSettings = NotificationSettingsStore(store: preferences, scheduler: scheduler)
     self.notificationSettings = notificationSettings
