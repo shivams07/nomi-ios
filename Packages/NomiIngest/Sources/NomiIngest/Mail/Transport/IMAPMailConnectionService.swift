@@ -86,7 +86,11 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
       try await fetcher.connect(credentials)
     } catch {
       if Self.meansThePasswordIsBad(error) {
-        try? self.credentials.delete()
+        do {
+          try self.credentials.delete()
+        } catch {
+          NomiLog.sync.error("rejected credential delete failed: \(NomiLog.describe(error), privacy: .public)")
+        }
       }
       setConnected(nil)
       stateContinuation.yield(.failed(mailError(from: error)))
@@ -100,7 +104,7 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
   /// Whether a password is saved on this device. A Keychain that cannot be read
   /// counts as nothing saved: there is nothing this can reconnect with.
   public var hasStoredCredential: Bool {
-    (try? credentials.load()) != nil
+    loadStoredCredential() != nil
   }
 
   /// Connects with the saved password, through `connect`, so the state stream and
@@ -110,8 +114,20 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
   /// yielded and before any socket is opened: the screen shows the form, and no
   /// spinner or failure banner belongs to a reconnect that never started.
   public func reconnectWithStoredCredential() async throws {
-    guard let stored = try? credentials.load() else { throw MailError.connectionFailed }
+    guard let stored = loadStoredCredential() else { throw MailError.connectionFailed }
     try await connect(stored)
+  }
+
+  /// The saved credential, or nil. A Keychain read that throws is logged here,
+  /// once, and then reads as nothing saved, as it always has: every caller treats
+  /// nil as "nothing to reconnect with".
+  private func loadStoredCredential() -> IMAPCredentials? {
+    do {
+      return try credentials.load()
+    } catch {
+      NomiLog.sync.error("stored credential read failed: \(NomiLog.describe(error), privacy: .public)")
+      return nil
+    }
   }
 
   /// Stops capture. **Deletes no transactions** — that is the acceptance
@@ -221,10 +237,9 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
     do {
       return try await work()
     } catch {
-      // `try?` flattens the store's `IMAPCredentials?` rather than nesting it,
-      // so this is one optional and not two. No stored credential means nothing
-      // to reconnect with, and the original error stands.
-      guard Self.meansTheSocketIsGone(error), let stored = try? credentials.load()
+      // The store's `IMAPCredentials?` is one optional. No stored credential
+      // means nothing to reconnect with, and the original error stands.
+      guard Self.meansTheSocketIsGone(error), let stored = loadStoredCredential()
       else { throw error }
 
       try await fetcher.connect(stored)

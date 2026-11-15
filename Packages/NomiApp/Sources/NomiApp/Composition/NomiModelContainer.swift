@@ -1,6 +1,5 @@
 import Foundation
 import NomiCore
-import OSLog
 import SQLite3
 import SwiftData
 
@@ -172,13 +171,14 @@ public enum NomiModelContainer {
         forceCloudKit: forceCloudKit, local: local)
       return (opened.container, opened.mode, true)
     } catch {
-      // Falls through to classification. The error itself is not logged: its
-      // text can carry a path, and the verdict below says what matters.
+      // Falls through to classification. Logged by `describe` only: the error's
+      // own text can carry a path, and the verdict below says what matters.
+      NomiLog.store.error("store open failed, classifying: \(NomiLog.describe(error), privacy: .public)")
     }
 
     let verdict = classifyUnopenableStore(
       at: storeURL, fileManager: fileManager, scratchDirectory: scratchDirectory)
-    logger.error("Store could not be opened: \(verdictName(verdict), privacy: .public)")
+    NomiLog.store.error("Store could not be opened: \(verdictName(verdict), privacy: .public)")
 
     // Anything other than positive evidence of corruption leaves the file alone.
     // Nothing is moved, written or created here, and no notice is saved.
@@ -192,14 +192,14 @@ public enum NomiModelContainer {
       moved = try moveStoreAside(at: storeURL, stamp: stamp, fileManager: fileManager)
     } catch {
       // The original stays where it is, byte for byte. Nothing is deleted.
-      logger.error(
-        "Store could not be moved aside (\(String(describing: type(of: error)), privacy: .public))")
+      NomiLog.store.error(
+        "Store could not be moved aside: \(NomiLog.describe(error), privacy: .public)")
       return inMemoryFallback()
     }
     if let moved {
       StoreRecoveryRecord.save(
         StoreRecoveryNotice(movedAt: stamp, fileName: moved), to: recoveryDefaults)
-      logger.notice("Moved a corrupt store aside to Recovered/")
+      NomiLog.store.notice("Moved a corrupt store aside to Recovered/")
     }
 
     do {
@@ -208,8 +208,8 @@ public enum NomiModelContainer {
         forceCloudKit: forceCloudKit, local: local)
       return (opened.container, opened.mode, true)
     } catch {
-      logger.error(
-        "Fresh store could not be opened (\(String(describing: type(of: error)), privacy: .public))")
+      NomiLog.store.error(
+        "Fresh store could not be opened: \(NomiLog.describe(error), privacy: .public)")
       return inMemoryFallback()
     }
   }
@@ -225,7 +225,7 @@ public enum NomiModelContainer {
     if let reason = simulatorLocalOnlyReason(
       isSimulatorDebugBuild: isSimulatorDebugBuild, forceCloudKit: forceCloudKit)
     {
-      logger.notice("Opening local storage without CloudKit: \(reason, privacy: .public)")
+      NomiLog.store.notice("Opening local storage without CloudKit: \(reason, privacy: .public)")
       return (try local(), .localOnly(reason: reason))
     }
     do {
@@ -235,8 +235,8 @@ public enum NomiModelContainer {
       // any sysdiagnose the user could send. This line is the first thing to
       // look for when "my other device does not see my transactions" is
       // reported, so it has to survive leaving the debugger.
-      logger.error(
-        "CloudKit container unavailable, falling back to local storage: \(error, privacy: .public)")
+      NomiLog.store.error(
+        "CloudKit container unavailable, falling back to local storage: \(NomiLog.describe(error), privacy: .public)")
       return (try local(), .localOnly(reason: String(describing: error)))
     }
   }
@@ -324,10 +324,17 @@ public enum NomiModelContainer {
     let header: [UInt8]
     do {
       let handle = try FileHandle(forReadingFrom: storeURL)
-      defer { try? handle.close() }
+      defer {
+        do {
+          try handle.close()
+        } catch {
+          NomiLog.store.error("store probe handle close failed: \(NomiLog.describe(error), privacy: .public)")
+        }
+      }
       let data = try handle.read(upToCount: 16) ?? Data()
       header = Array(data)
     } catch {
+      NomiLog.store.notice("store unreadable: \(NomiLog.describe(error), privacy: .public)")
       return .retryLater(.unreadable)
     }
 
@@ -352,7 +359,11 @@ public enum NomiModelContainer {
 
     // Every path after this point removes the probe directory.
     defer {
-      try? fileManager.removeItem(at: probe)
+      do {
+        try fileManager.removeItem(at: probe)
+      } catch {
+        NomiLog.store.error("store probe directory not removed: \(NomiLog.describe(error), privacy: .public)")
+      }
     }
 
     do {
@@ -362,6 +373,7 @@ public enum NomiModelContainer {
         try fileManager.copyItem(at: walURL, to: probe.appendingPathComponent(walName))
       }
     } catch {
+      NomiLog.store.error("store probe copy failed: \(NomiLog.describe(error), privacy: .public)")
       return .retryLater(.probeCopyFailed)
     }
     // 6 and 7 run on the copy, in `integrityProbe`.
@@ -531,6 +543,4 @@ public enum NomiModelContainer {
   public static var currentForceCloudKitRequested: Bool {
     forceCloudKitRequested(in: ProcessInfo.processInfo.environment)
   }
-
-  private static let logger = Logger(subsystem: "com.shivams07.nomi", category: "storage")
 }

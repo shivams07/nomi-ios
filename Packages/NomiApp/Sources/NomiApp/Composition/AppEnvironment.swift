@@ -265,6 +265,7 @@ public final class AppEnvironment: ObservableObject {
       // row reads "Uncategorized" — where a trap here would mean the app cannot
       // launch at all. The next launch retries, because both seeds are
       // idempotent by id.
+      NomiLog.store.error("default seed failed: \(NomiLog.describe(error), privacy: .public)")
       assertionFailure("Default seed failed: \(error)")
     }
 
@@ -280,6 +281,7 @@ public final class AppEnvironment: ObservableObject {
               transactions: transactionStore, accounts: accountStore, rules: ruleStore,
               budgets: budgetStore, insights: insightsStore, pipeline: pipeline))
         } catch {
+          NomiLog.store.error("demo data seed failed: \(NomiLog.describe(error), privacy: .public)")
           assertionFailure("Demo data seed failed: \(error)")
         }
       }
