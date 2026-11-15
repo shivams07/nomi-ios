@@ -70,16 +70,8 @@ import SwiftData
 /// mistakes were made here, and both reported a clean sweep that was not.
 public enum InMemoryModelContainer {
   public static let shared: ModelContainer = {
-    let schema = Schema([
-      Transaction.self,
-      Category.self,
-      Budget.self,
-      BudgetAlertLog.self,
-      Rule.self,
-      Account.self,
-      AccountBinding.self,
-      ColumnMappingRecord.self,
-    ])
+    // One model list for the app and for previews: NomiSchemaV1 (I-6).
+    let schema = Schema(NomiSchemaV1.models)
     let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
     return try! ModelContainer(for: schema, configurations: [configuration])
   }()
