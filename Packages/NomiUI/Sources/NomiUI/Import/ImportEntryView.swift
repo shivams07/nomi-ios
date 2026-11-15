@@ -3,33 +3,11 @@ import NomiPreview
 import SwiftData
 import SwiftUI
 
-/// The file the user picked, its preview, and the mapping a commit would use.
-/// Carried by every state that can still act on the file, so "Adjust mapping"
-/// and "Try again" have a preview to return to.
-struct ImportReview {
-  let url: URL
-  let preview: ImportPreview
-  let mapping: ColumnMapping
-}
-
-/// State machine for the CSV/XLSX import flow: pick a file, inspect it,
-/// review/adjust the detected column mapping, commit. Reached from Settings'
-/// "Import from file" row. One case per state the approved artboards draw
-/// (`ImportIdle`, `Import`, `ImportDone`, `ImportFailed`) plus the
-/// inspecting, importing and no-rows states of SIMP §3 item 20.
-enum ImportFlowState {
-  case idle
-  case inspecting
-  case preview(ImportReview)
-  case noRows(ImportReview)
-  case failed(ImportError, ImportReview?)
-  case importing(ImportReview)
-  case done(ImportSummary)
-}
-
-/// The file picker, preview, column-mapping sheet and result screens (U7; IM).
-/// H0 "Import from file" in the native large-title bar. The one primary action
-/// on each screen is pinned to the bottom edge. Light only.
+/// The file picker, the "Check before importing" screen (S11), the column-mapping
+/// sheet, the rows-not-read sheet and the result screen (U7; IM). H0 "Import from
+/// file" in the native large-title bar, "Check before importing" once a file is
+/// counted. The one primary action on each screen is pinned to the bottom edge.
+/// Light only.
 public struct ImportEntryView: View {
   public let fileImportService: FileImportService
 
@@ -38,27 +16,31 @@ public struct ImportEntryView: View {
   /// The "show the Ledger" action (FU-1). `nil` until RootView sets it, and the
   /// Done state's "View in Ledger" is hidden while it is nil.
   @Environment(\.nomiShowLedger) private var showLedger
-  @State private var flow: ImportFlowState = .idle
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  /// The file under check. Nil on the picker, before a file is chosen.
+  @State private var check: ImportCheckModel?
   @State private var isPickerPresented = false
   @State private var isMappingPresented = false
+  @State private var isAccountPresented = false
+  @State private var isUnreadablePresented = false
   @State private var selectedAccountID: UUID?
 
   public init(fileImportService: FileImportService) {
     self.fileImportService = fileImportService
   }
 
-  /// Preview/test-only entry point. Seeds `flow` directly so canvases can
-  /// render every state without a real file pick.
-  init(fileImportService: FileImportService, initialFlow: ImportFlowState) {
+  /// Preview-only entry point. Starts on a seeded check, so canvases can render
+  /// each state without a real file pick.
+  init(fileImportService: FileImportService, initialCheck: ImportCheckModel) {
     self.fileImportService = fileImportService
-    _flow = State(initialValue: initialFlow)
+    _check = State(initialValue: initialCheck)
   }
 
   public var body: some View {
     content
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(NomiColor.ground)
-      .navigationTitle("Import from file")
+      .navigationTitle(navigationTitle)
       #if os(iOS)
       .navigationBarTitleDisplayMode(.large)
       #endif
@@ -66,37 +48,51 @@ public struct ImportEntryView: View {
         isPresented: $isPickerPresented,
         allowedContentTypes: ImportFileTypes.allowed
       ) { result in
-        switch result {
-        case .success(let url):
-          inspect(url)
-        case .failure:
-          break
+        if case .success(let url) = result {
+          startCheck(url)
         }
       }
       .sheet(isPresented: $isMappingPresented) {
-        if let review = currentReview {
-          ColumnMappingEditor(headers: review.preview.headers, mapping: mappingBinding(review))
+        if let model = check, let preview = model.inspected, let current = model.mapping {
+          ColumnMappingEditor(headers: preview.headers, mapping: mappingBinding(model, current: current))
         }
+      }
+      .sheet(isPresented: $isAccountPresented) {
+        AccountPickerSheet(accountStore: nil, selection: selectedAccountID, onSelect: { selectedAccountID = $0 })
+      }
+      .sheet(isPresented: $isUnreadablePresented) {
+        UnreadableRowsSheet(rows: unreadableRows)
       }
   }
 
   @ViewBuilder
   private var content: some View {
-    switch flow {
-    case .idle:
+    if let model = check {
+      switch model.state {
+      case .loading:
+        inspectingView
+      case .needsColumns(let preview):
+        needsColumnsView(model, preview)
+      case .ready(let preview, let dry, _):
+        readyView(model, preview, dry)
+      case .importing:
+        importingView
+      case .failed(let message):
+        failedView(model, message)
+      case .done(let summary):
+        doneView(summary)
+      }
+    } else {
       idleView
-    case .inspecting:
-      inspectingView
-    case .preview(let review):
-      previewView(review, isBusy: false)
-    case .importing(let review):
-      previewView(review, isBusy: true)
-    case .noRows:
-      noRowsView
-    case .failed(let error, let review):
-      failedView(error, review: review)
-    case .done(let summary):
-      doneView(summary)
+    }
+  }
+
+  private var navigationTitle: String {
+    switch check?.state {
+    case .needsColumns?, .ready?, .importing?:
+      return String(localized: "Check before importing", bundle: .module)
+    default:
+      return String(localized: "Import from file", bundle: .module)
     }
   }
 
@@ -112,7 +108,7 @@ public struct ImportEntryView: View {
     .padding(.top, 96)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     .safeAreaInset(edge: .bottom) {
-      pinnedPrimary("Choose file") { isPickerPresented = true }
+      pinnedPrimary(String(localized: "Choose file", bundle: .module)) { isPickerPresented = true }
     }
   }
 
@@ -127,21 +123,72 @@ public struct ImportEntryView: View {
     .accessibilityElement(children: .combine)
   }
 
-  /// The preview (`Import` artboard). While importing it stays on screen with
-  /// the primary disabled and busy, and Adjust mapping is disabled.
-  private func previewView(_ review: ImportReview, isBusy: Bool) -> some View {
+  /// A format with no mapping, or a mapping that parses no rows. The column
+  /// mapping sheet opens first, and "Fix columns" reopens it.
+  private func needsColumnsView(_ model: ImportCheckModel, _ preview: ImportPreview) -> some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: NomiSpacing.md) {
+        stepCaption
+        fileCard(model, subtitle: ImportLogic.fileSubtitle(bankLabel: preview.detectedBankLabel, sample: []))
+        NomiStatusNote(
+          String(localized: "Nomi doesn’t recognize this format yet. Match the columns to continue.", bundle: .module),
+          tone: .warning,
+          systemImage: "questionmark.circle"
+        )
+        Text(String(localized: "Nomi remembers the column mapping after an import succeeds.", bundle: .module))
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .padding(.horizontal, NomiSpacing.xxs)
+      }
+      .padding(.horizontal, NomiSpacing.screenGutter)
+      .padding(.top, NomiSpacing.sm)
+      .padding(.bottom, NomiSpacing.sm)
+    }
+    .safeAreaInset(edge: .bottom) {
+      pinnedPrimary(String(localized: "Fix columns", bundle: .module)) { isMappingPresented = true }
+    }
+    .onAppear { isMappingPresented = true }
+  }
+
+  /// The check screen (`Import` artboard, "Check before importing"). The tiles, the
+  /// note and the primary describe the dry run's counts under the mapping shown,
+  /// and say what the commit does with each group.
+  private func readyView(_ model: ImportCheckModel, _ preview: ImportPreview, _ dry: ImportDryRun) -> some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 0) {
-        detectedCard(review.preview)
-        sectionLabel("Sample rows")
-        sampleRowsCard(review.preview)
-        if !accounts.isEmpty {
-          sectionLabel("Account")
-          accountCard
-        }
-        adjustMappingCard
-          .disabled(isBusy)
+        stepCaption
+        fileCard(model, subtitle: ImportLogic.fileSubtitle(bankLabel: preview.detectedBankLabel, sample: dry.sample))
+          .padding(.top, NomiSpacing.xs)
+        countTiles(dry)
           .padding(.top, NomiSpacing.md)
+        if dry.alreadyImportedCount > 0 {
+          Text(ImportLogic.alreadyInNomiNote)
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.inkSecondary)
+            .padding(.top, NomiSpacing.xs)
+            .padding(.horizontal, NomiSpacing.xxs)
+        }
+        accountRow
+          .padding(.top, NomiSpacing.md)
+        firstRowsHeader
+        if !dry.sample.isEmpty {
+          sampleRowsCard(dry.sample)
+        }
+        if !dry.unreadable.isEmpty {
+          NomiStatusNote(
+            ImportLogic.skippedNote(count: dry.unreadable.count),
+            tone: .warning,
+            systemImage: "exclamationmark.circle",
+            actionTitle: String(localized: "Show them", bundle: .module)
+          ) {
+            isUnreadablePresented = true
+          }
+          .padding(.top, NomiSpacing.md)
+        }
+        if let note = model.commitNote {
+          NomiStatusNote(note, tone: .error, systemImage: "exclamationmark.circle")
+            .padding(.top, NomiSpacing.md)
+        }
       }
       .padding(.horizontal, NomiSpacing.screenGutter)
       .padding(.top, NomiSpacing.sm)
@@ -149,54 +196,36 @@ public struct ImportEntryView: View {
     }
     .safeAreaInset(edge: .bottom) {
       pinnedPrimary(
-        "Import",
-        isEnabled: !isBusy && ColumnMappingFormGate.isValid(review.mapping, headerCount: review.preview.headers.count),
-        isBusy: isBusy
+        ImportLogic.importTitle(newCount: dry.newCount),
+        isEnabled: ImportLogic.canImport(newCount: dry.newCount) && !model.isCounting
       ) {
-        commit(review)
+        Task { await model.importNow(accountID: selectedAccountID) }
       }
     }
   }
 
-  /// Zero parseable rows. Adjust mapping is the way out; after Save the file
-  /// goes back to the preview, where Import can be tried again.
-  private var noRowsView: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 0) {
-        NomiEmptyState(
-          systemImage: "doc.text.magnifyingglass",
-          title: "No transactions found",
-          message: "This file didn’t contain any rows Nomi could read as transactions."
-        )
-        adjustMappingCard
-          .padding(.top, NomiSpacing.lg)
-      }
-      .padding(.horizontal, NomiSpacing.screenGutter)
-      .padding(.top, 96)
-      .padding(.bottom, NomiSpacing.sm)
+  /// Between the sheet's Save and a commit the screen only shows work in progress.
+  private var importingView: some View {
+    VStack(spacing: NomiSpacing.xs) {
+      ProgressView()
+      Text(String(localized: "Importing…", bundle: .module))
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.inkSecondary)
     }
-    .safeAreaInset(edge: .bottom) {
-      pinnedPrimary("Choose a different file") { isPickerPresented = true }
-    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .accessibilityElement(children: .combine)
   }
 
-  /// `ImportFailed` artboard. Adjust mapping appears only when a preview exists,
-  /// that is when the commit itself failed. A file that failed to inspect has
-  /// no columns to adjust, so only Try again is offered.
-  private func failedView(_ error: ImportError, review: ImportReview?) -> some View {
+  /// The count could not be made (a file that cannot be inspected, a dry run that throws,
+  /// or a lookup that fails). Try again repeats the step that failed.
+  private func failedView(_ model: ImportCheckModel, _ message: String) -> some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: NomiSpacing.md) {
-        errorCard(error)
-        if review != nil {
-          adjustMappingCard
-        }
+      NomiLoadFailedCard(message: message) {
+        Task { await model.retry() }
       }
       .padding(.horizontal, NomiSpacing.screenGutter)
       .padding(.top, NomiSpacing.sm)
       .padding(.bottom, NomiSpacing.sm)
-    }
-    .safeAreaInset(edge: .bottom) {
-      pinnedPrimary("Try again") { tryAgain(review) }
     }
   }
 
@@ -274,21 +303,14 @@ public struct ImportEntryView: View {
   // MARK: - Pieces
 
   /// The one primary action of a screen: a 52 pt black capsule pinned to the
-  /// bottom edge. While busy it carries a spinner and stays disabled.
+  /// bottom edge. Disabled, it drops to 40% (`NomiPrimaryButtonStyle`).
   private func pinnedPrimary(
     _ title: String,
     isEnabled: Bool = true,
-    isBusy: Bool = false,
     action: @escaping () -> Void
   ) -> some View {
     Button(action: action) {
-      HStack(spacing: NomiSpacing.xs) {
-        if isBusy {
-          ProgressView()
-            .tint(NomiColor.onPrimary)
-        }
-        Text(title)
-      }
+      Text(title)
     }
     .buttonStyle(NomiPrimaryButtonStyle(height: 52))
     .disabled(!isEnabled)
@@ -299,84 +321,106 @@ public struct ImportEntryView: View {
     .background(NomiColor.ground)
   }
 
-  private func sectionLabel(_ title: String) -> some View {
-    Text(title)
-      .nomiTextStyle(.label)
-      .foregroundStyle(NomiColor.inkDeep)
-      .accessibilityAddTraits(.isHeader)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.top, NomiSpacing.md)
-      .padding(.bottom, NomiSpacing.xs)
-      .padding(.horizontal, NomiSpacing.xxs)
-  }
-
-  private func detectedCard(_ preview: ImportPreview) -> some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-      Text(detectedTitle(preview))
-        .nomiTextStyle(.rowBody)
-        .foregroundStyle(NomiColor.ink)
-      Text(ImportPreviewSummary.rowCountText(preview))
-        .nomiTextStyle(.footnote)
+  private var stepCaption: some View {
+    HStack {
+      Spacer(minLength: NomiSpacing.xs)
+      Text(String(localized: "Step 2 of 2", bundle: .module))
+        .nomiTextStyle(.caption)
         .foregroundStyle(NomiColor.inkSecondary)
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .nomiCard(padding: EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16))
   }
 
-  private func detectedTitle(_ preview: ImportPreview) -> String {
-    if let bank = preview.detectedBankLabel {
-      return "Detected format: \(bank)"
-    }
-    return "Unrecognized format — mapped generically"
-  }
+  /// The file's icon, its name and the format and date range line, with the
+  /// "Change file" pill that goes back to the picker.
+  private func fileCard(_ model: ImportCheckModel, subtitle: String) -> some View {
+    HStack(alignment: .center, spacing: NomiSpacing.xs) {
+      Image(systemName: "doc.text")
+        .resizable()
+        .scaledToFit()
+        .frame(width: 18, height: 18)
+        .foregroundStyle(NomiColor.navy)
+        .frame(width: 40, height: 40)
+        .background(Circle().fill(NomiColor.iconTile))
+        .accessibilityHidden(true)
 
-  private func sampleRowsCard(_ preview: ImportPreview) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
-      ForEach(preview.sampleRows.indices, id: \.self) { rowIndex in
-        if rowIndex > 0 {
-          rowDivider
-        }
-        Text(preview.sampleRows[rowIndex].joined(separator: "  ·  "))
+      VStack(alignment: .leading, spacing: 2) {
+        Text(model.url.lastPathComponent)
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(NomiColor.ink)
+          .lineLimit(1)
+        Text(subtitle)
           .nomiTextStyle(.caption)
           .foregroundStyle(NomiColor.inkSecondary)
-          .fixedSize(horizontal: false, vertical: true)
-          .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget, alignment: .leading)
+          .lineLimit(2)
       }
+      .frame(maxWidth: .infinity, alignment: .leading)
+
+      Button {
+        isPickerPresented = true
+      } label: {
+        Text(String(localized: "Change file", bundle: .module))
+          .nomiTextStyle(.label)
+          .foregroundStyle(NomiColor.ink)
+          .padding(.horizontal, 14)
+          .frame(minHeight: NomiSpacing.minTarget)
+          .background(Capsule().fill(NomiColor.card))
+          .overlay(Capsule().strokeBorder(NomiColor.separator, lineWidth: 1))
+          .contentShape(Capsule())
+      }
+      .buttonStyle(.plain)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .nomiCard()
+    .nomiCard(padding: EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
   }
 
-  private var accountCard: some View {
-    HStack(spacing: NomiSpacing.xs) {
-      Text("Account")
-        .nomiTextStyle(.rowBody)
-        .foregroundStyle(NomiColor.ink)
-      Spacer(minLength: NomiSpacing.xs)
-      Picker("Account", selection: $selectedAccountID) {
-        Text("Unassigned").tag(UUID?.none)
-        ForEach(accounts) { account in
-          Text(account.displayName).tag(Optional(account.id))
-        }
-      }
-      .labelsHidden()
-      .pickerStyle(.menu)
-      .tint(NomiColor.inkSecondary)
+  /// "new", "already in Nomi", "could not read". The last one is amber while it
+  /// counts rows that will be skipped.
+  /// Three columns, stacked into rows at accessibility sizes: a 390 pt screen leaves
+  /// a column about 100 pt wide, too narrow for "already in Nomi" at AX3 without breaking words.
+  private func countTiles(_ dry: ImportDryRun) -> some View {
+    let layout = dynamicTypeSize.isAccessibilitySize
+      ? AnyLayout(VStackLayout(alignment: .leading, spacing: NomiSpacing.xs))
+      : AnyLayout(HStackLayout(alignment: .top, spacing: NomiSpacing.xs))
+    return layout {
+      countTile(dry.newCount, String(localized: "new", bundle: .module), tint: NomiColor.ink)
+      countTile(dry.alreadyImportedCount, String(localized: "already in Nomi", bundle: .module), tint: NomiColor.ink)
+      countTile(
+        dry.unreadable.count,
+        String(localized: "could not read", bundle: .module),
+        tint: dry.unreadable.isEmpty ? NomiColor.ink : NomiColor.warning
+      )
     }
-    .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight)
-    .nomiCard()
   }
 
-  /// A navy text row with a trailing chevron, on a card. Opens the mapping sheet
-  /// for whichever file is under review.
-  private var adjustMappingCard: some View {
+  private func countTile(_ value: Int, _ caption: String, tint: Color) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text("\(value)")
+        .nomiTextStyle(.amountLarge)
+        .foregroundStyle(tint)
+      Text(caption)
+        .nomiTextStyle(.footnote)
+        .foregroundStyle(NomiColor.inkSecondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .nomiCard(padding: EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
+    .accessibilityElement(children: .combine)
+  }
+
+  /// "Import into": a card row that opens the account picker. "Unassigned" when none is chosen.
+  private var accountRow: some View {
     Button {
-      isMappingPresented = true
+      isAccountPresented = true
     } label: {
       HStack(spacing: NomiSpacing.xs) {
-        Text("Adjust mapping")
-          .nomiTextStyle(.rowTitle)
-          .foregroundStyle(NomiColor.navy)
+        VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+          Text(String(localized: "Import into", bundle: .module))
+            .nomiTextStyle(.label)
+            .foregroundStyle(NomiColor.inkSecondary)
+          Text(selectedAccountLabel)
+            .nomiTextStyle(.rowTitle)
+            .foregroundStyle(NomiColor.ink)
+        }
         Spacer(minLength: NomiSpacing.xs)
         Image(systemName: "chevron.right")
           .resizable()
@@ -385,7 +429,7 @@ public struct ImportEntryView: View {
           .foregroundStyle(NomiColor.inkSecondary)
           .accessibilityHidden(true)
       }
-      .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight)
+      .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
@@ -393,31 +437,62 @@ public struct ImportEntryView: View {
     .nomiCard()
   }
 
-  private func errorCard(_ error: ImportError) -> some View {
-    HStack(alignment: .center, spacing: 12) {
-      Image(systemName: "exclamationmark.circle")
-        .resizable()
-        .scaledToFit()
-        .frame(width: 20, height: 20)
-        .foregroundStyle(NomiColor.error)
-        .frame(width: 40, height: 40)
-        .background(Circle().fill(NomiColor.errorTint))
-        .accessibilityHidden(true)
-
-      VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-        Text("Couldn’t import this file")
-          .nomiTextStyle(.headline)
-          .foregroundStyle(NomiColor.ink)
-        Text(ImportErrorMessage.text(for: error))
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.inkSecondary)
-          .fixedSize(horizontal: false, vertical: true)
+  /// The section label, with "Fix columns" on the same line. It stays reachable when every row is unreadable.
+  private var firstRowsHeader: some View {
+    HStack(alignment: .center) {
+      Text(String(localized: "First rows, as Nomi reads them", bundle: .module))
+        .nomiTextStyle(.label)
+        .foregroundStyle(NomiColor.inkDeep)
+        .accessibilityAddTraits(.isHeader)
+      Spacer(minLength: NomiSpacing.xs)
+      Button {
+        isMappingPresented = true
+      } label: {
+        Text(String(localized: "Fix columns", bundle: .module))
+          .nomiTextStyle(.label)
+          .foregroundStyle(NomiColor.navy)
+          .frame(minHeight: NomiSpacing.minTarget)
+          .contentShape(Rectangle())
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
+      .buttonStyle(.plain)
+    }
+    .padding(.top, NomiSpacing.md)
+    .padding(.bottom, NomiSpacing.xs)
+    .padding(.horizontal, NomiSpacing.xxs)
+  }
+
+  private func sampleRowsCard(_ rows: [ImportDryRunRow]) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+      ForEach(rows) { row in
+        if row.id != rows.first?.id {
+          rowDivider
+        }
+        sampleRow(row)
+      }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .nomiCard(padding: EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16))
-    .accessibilityElement(children: .combine)
+    .nomiCard()
+  }
+
+  /// One sample row: the narration as the title (merchant is not derived here), the
+  /// date and narration as the subtitle, then the signed amount.
+  private func sampleRow(_ row: ImportDryRunRow) -> some View {
+    HStack(alignment: .center, spacing: NomiSpacing.xs) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(ImportLogic.sampleTitle(row))
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(NomiColor.ink)
+          .lineLimit(1)
+        Text(ImportLogic.sampleSubtitle(row))
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .lineLimit(1)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      ImportSampleAmount(row: row)
+    }
+    .padding(.vertical, 10)
+    .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
   }
 
   private var rowDivider: some View {
@@ -429,93 +504,117 @@ public struct ImportEntryView: View {
 
   // MARK: - Derived state
 
-  /// The review carried by the current state, if any. The mapping sheet edits this.
-  private var currentReview: ImportReview? {
-    switch flow {
-    case .preview(let review), .noRows(let review), .importing(let review):
-      return review
-    case .failed(_, let review):
-      return review
-    case .idle, .inspecting, .done:
-      return nil
-    }
-  }
-
   private var selectedAccountName: String? {
     guard let selectedAccountID else { return nil }
     return accounts.first { $0.id == selectedAccountID }?.displayName
   }
 
-  /// Saving the sheet always lands on the preview with the new mapping, so the
-  /// user sees what Import will do before it runs. Cancel never reaches here.
-  private func mappingBinding(_ review: ImportReview) -> Binding<ColumnMapping> {
-    Binding(
-      get: { review.mapping },
-      set: { flow = .preview(ImportReview(url: review.url, preview: review.preview, mapping: $0)) }
-    )
-  }
-
-  private func tryAgain(_ review: ImportReview?) {
-    if let review {
-      flow = .preview(review)
-    } else {
-      flow = .idle
+  /// The account row's value: the display name and last four, or "Unassigned".
+  private var selectedAccountLabel: String {
+    guard let selectedAccountID, let account = accounts.first(where: { $0.id == selectedAccountID }) else {
+      return String(localized: "Unassigned", bundle: .module)
     }
+    return account.lastFour.isEmpty ? account.displayName : "\(account.displayName) ••\(account.lastFour)"
   }
 
-  private func fallbackMapping(for preview: ImportPreview) -> ColumnMapping {
-    ColumnMapping(
-      dateColumn: 0,
-      descriptionColumn: min(1, preview.headers.count - 1),
-      amountColumn: min(2, preview.headers.count - 1),
-      referenceColumn: nil,
-      directionStrategy: .signedAmount,
-      dateFormat: "dd/MM/yyyy"
-    )
+  /// The rows the dry run could not read, for "Show them". Empty unless a count is shown.
+  private var unreadableRows: [[String]] {
+    if case .ready(_, let dry, _)? = check?.state {
+      return dry.unreadable
+    }
+    return []
   }
 
   // MARK: - Work
 
-  private func inspect(_ url: URL) {
-    flow = .inspecting
-    let accessed = url.startAccessingSecurityScopedResource()
-    Task {
-      defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-      do {
-        let preview = try await fileImportService.inspect(url)
-        let mapping = preview.suggestedMapping ?? fallbackMapping(for: preview)
-        let review = ImportReview(url: url, preview: preview, mapping: mapping)
-        if ImportPreviewSummary.isEmpty(preview) {
-          flow = .noRows(review)
-        } else {
-          flow = .preview(review)
-        }
-      } catch let importError as ImportError {
-        flow = .failed(importError, nil)
-      } catch {
-        flow = .failed(.malformedStructure(reason: error.localizedDescription), nil)
-      }
-    }
+  /// A file was chosen: start the check. The model inspects it, then counts it or asks for columns.
+  private func startCheck(_ url: URL) {
+    let model = ImportCheckModel(service: fileImportService, url: url)
+    check = model
+    Task { await model.load() }
   }
 
-  /// A failed commit keeps its review, so Adjust mapping and Try again can
-  /// return to the preview.
-  private func commit(_ review: ImportReview) {
-    flow = .importing(review)
-    let key = SavedMappingKey.make(from: review.preview)
-    let accessed = review.url.startAccessingSecurityScopedResource()
-    Task {
-      defer { if accessed { review.url.stopAccessingSecurityScopedResource() } }
-      do {
-        try fileImportService.saveMapping(review.mapping, signature: key.signature, bankLabel: key.bankLabel)
-        let summary = try await fileImportService.commit(review.url, mapping: review.mapping, accountID: selectedAccountID)
-        flow = .done(summary)
-      } catch let importError as ImportError {
-        flow = .failed(importError, review)
-      } catch {
-        flow = .failed(.malformedStructure(reason: error.localizedDescription), review)
+  /// The sheet's Save writes through the model, which counts the file under the new
+  /// mapping and saves nothing. Cancel never reaches the setter.
+  private func mappingBinding(_ model: ImportCheckModel, current: ColumnMapping) -> Binding<ColumnMapping> {
+    Binding(
+      get: { model.mapping ?? current },
+      set: { newMapping in
+        Task { await model.applyMapping(newMapping) }
+      }
+    )
+  }
+}
+
+/// A sample row's amount, signed: "+" and navy for a credit, "−" for a debit. The
+/// decimals dim the way `NomiAmountText` dims them. VoiceOver reads the direction word.
+private struct ImportSampleAmount: View {
+  let row: ImportDryRunRow
+
+  var body: some View {
+    let isCredit = row.direction == .credit
+    let parts = NomiAmountFormat.parts(minor: isCredit ? row.amountMinor : -row.amountMinor, showPlus: true)
+    let color = isCredit ? NomiColor.navy : NomiColor.ink
+    let decimals = color.opacity(NomiAmountText.decimalsOpacity(for: .amountStrong))
+    let word = isCredit ? String(localized: "credit", bundle: .module) : String(localized: "debit", bundle: .module)
+    (Text(parts.sign + parts.integer).foregroundStyle(color)
+      + Text(parts.decimals).foregroundStyle(decimals))
+      .font(NomiTextStyle.amountStrong.font)
+      .lineLimit(1)
+      .minimumScaleFactor(0.5)
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel("\(word) \(NomiFormatters.amountString(minor: row.amountMinor))")
+  }
+}
+
+/// "Show them": the rows the dry run could not read, as their raw cells, so the user can see
+/// exactly what Nomi will skip.
+private struct UnreadableRowsSheet: View {
+  let rows: [[String]]
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    NavigationStack {
+      ScrollView {
+        VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+          Text(String(localized: "These rows are skipped. Nothing from them is imported.", bundle: .module))
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.inkSecondary)
+            .padding(.horizontal, NomiSpacing.xxs)
+          VStack(alignment: .leading, spacing: 0) {
+            ForEach(rows.indices, id: \.self) { index in
+              if index > 0 {
+                Rectangle()
+                  .fill(NomiColor.separator)
+                  .frame(height: 1)
+                  .accessibilityHidden(true)
+              }
+              Text(ImportSampleRow.text(rows[index]))
+                .nomiTextStyle(.caption)
+                .foregroundStyle(NomiColor.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget, alignment: .leading)
+                .padding(.horizontal, NomiSpacing.sm)
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .nomiCard()
+        }
+        .padding(.horizontal, NomiSpacing.screenGutter)
+        .padding(.vertical, NomiSpacing.sm)
+      }
+      .background(NomiColor.ground)
+      #if os(iOS)
+      .navigationBarTitleDisplayMode(.inline)
+      #endif
+      .navigationTitle(String(localized: "Rows that could not be read", bundle: .module))
+      .toolbar {
+        ToolbarItem(placement: .confirmationAction) {
+          Button(String(localized: "Done", bundle: .module)) { dismiss() }
+        }
       }
     }
+    .nomiSheet(detents: [.large])
   }
 }
 
@@ -526,17 +625,35 @@ public struct ImportEntryView: View {
   .modelContainer(ImportPreviewSupport.makeAccountContainer())
 }
 
-#Preview("Import — inspecting") {
+#Preview("Import — loading") {
   NavigationStack {
-    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .inspecting)
+    ImportEntryView(fileImportService: FakeFileImportService(), initialCheck: ImportPreviewSupport.check(.loading))
   }
   .modelContainer(ImportPreviewSupport.makeAccountContainer())
 }
 
-#Preview("Import — auto-detected") {
+#Preview("Import — check, ready") {
   NavigationStack {
-    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .preview(
-      ImportPreviewSupport.detectedReview
+    ImportEntryView(fileImportService: FakeFileImportService(), initialCheck: ImportPreviewSupport.check(
+      .ready(ImportPreviewSupport.detectedPreview, ImportPreviewSupport.readyCounts, ImportPreviewSupport.detectedMapping)
+    ))
+  }
+  .modelContainer(ImportPreviewSupport.makeAccountContainer())
+}
+
+#Preview("Import — check, every row unreadable") {
+  NavigationStack {
+    ImportEntryView(fileImportService: FakeFileImportService(), initialCheck: ImportPreviewSupport.check(
+      .ready(ImportPreviewSupport.unknownFormatPreview, ImportPreviewSupport.unreadableOnlyCounts, ImportPreviewSupport.detectedMapping)
+    ))
+  }
+  .modelContainer(ImportPreviewSupport.makeAccountContainer())
+}
+
+#Preview("Import — needs columns") {
+  NavigationStack {
+    ImportEntryView(fileImportService: FakeFileImportService(), initialCheck: ImportPreviewSupport.check(
+      .needsColumns(ImportPreviewSupport.unknownFormatPreview)
     ))
   }
   .modelContainer(ImportPreviewSupport.makeAccountContainer())
@@ -544,52 +661,24 @@ public struct ImportEntryView: View {
 
 #Preview("Import — importing") {
   NavigationStack {
-    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .importing(
-      ImportPreviewSupport.detectedReview
-    ))
+    ImportEntryView(fileImportService: FakeFileImportService(), initialCheck: ImportPreviewSupport.check(.importing))
   }
   .modelContainer(ImportPreviewSupport.makeAccountContainer())
 }
 
-#Preview("Import — unknown format") {
+#Preview("Import — could not count") {
   NavigationStack {
-    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .preview(
-      ImportPreviewSupport.unknownFormatReview
+    ImportEntryView(fileImportService: FakeFileImportService(), initialCheck: ImportPreviewSupport.check(
+      .failed(ImportLogic.countFailure)
     ))
-  }
-  .modelContainer(ImportPreviewSupport.makeAccountContainer())
-}
-
-#Preview("Import — no rows") {
-  NavigationStack {
-    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .noRows(
-      ImportPreviewSupport.noRowsReview
-    ))
-  }
-  .modelContainer(ImportPreviewSupport.makeAccountContainer())
-}
-
-#Preview("Import — failed after commit") {
-  NavigationStack {
-    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .failed(
-      .malformedStructure(reason: "column count changes after row 12"),
-      ImportPreviewSupport.detectedReview
-    ))
-  }
-  .modelContainer(ImportPreviewSupport.makeAccountContainer())
-}
-
-#Preview("Import — failed to inspect") {
-  NavigationStack {
-    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .failed(.unreadableEncoding, nil))
   }
   .modelContainer(ImportPreviewSupport.makeAccountContainer())
 }
 
 #Preview("Import — done") {
   NavigationStack {
-    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .done(
-      ImportSummary(created: 24, merged: 0, skipped: 2)
+    ImportEntryView(fileImportService: FakeFileImportService(), initialCheck: ImportPreviewSupport.check(
+      .done(ImportSummary(created: 24, merged: 0, skipped: 2))
     ))
   }
   .modelContainer(ImportPreviewSupport.makeAccountContainer())
@@ -597,8 +686,8 @@ public struct ImportEntryView: View {
 
 #Preview("Import — done, Ledger wired") {
   NavigationStack {
-    ImportEntryView(fileImportService: FakeFileImportService(), initialFlow: .done(
-      ImportSummary(created: 24, merged: 0, skipped: 2)
+    ImportEntryView(fileImportService: FakeFileImportService(), initialCheck: ImportPreviewSupport.check(
+      .done(ImportSummary(created: 24, merged: 0, skipped: 2))
     ))
   }
   .environment(\.nomiShowLedger, NomiShowLedgerAction {})

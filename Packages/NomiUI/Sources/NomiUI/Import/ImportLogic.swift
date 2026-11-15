@@ -91,22 +91,6 @@ enum ImportFileTypes {
   ]
 }
 
-/// Formats the import preview's row-count line, and is the single place that
-/// decides whether the screen is in the "no transactions found" state.
-enum ImportPreviewSummary {
-  static func isEmpty(_ preview: ImportPreview) -> Bool {
-    preview.parseableRowCount == 0
-  }
-
-  static func rowCountText(_ preview: ImportPreview) -> String {
-    switch preview.parseableRowCount {
-    case 0: return "No transactions found"
-    case 1: return "1 transaction found"
-    default: return "\(preview.parseableRowCount) transactions found"
-    }
-  }
-}
-
 /// Copy for the done state (`ImportDone` artboard). Every number is a count
 /// straight from `ImportSummary`; nothing here adds up money. Wording follows
 /// the "Import Done copy ruling" (2026-11-09) in the build plan, unit IM.
@@ -115,12 +99,13 @@ enum ImportDoneCopy {
   /// transactions. A zero clause is never shown, so "0 skipped" does not appear.
   static func title(_ summary: ImportSummary) -> String {
     let landed: String
-    switch summary.created {
-    case 0: landed = "No new transactions"
-    case 1: landed = "1 transaction imported"
-    default: landed = "\(summary.created) transactions imported"
+    if summary.created == 0 {
+      landed = String(localized: "No new transactions", bundle: .module)
+    } else {
+      landed = String(localized: "\(summary.created) transactions imported", bundle: .module)
     }
-    return summary.skipped > 0 ? "\(landed), \(summary.skipped) skipped" : landed
+    guard summary.skipped > 0 else { return landed }
+    return "\(landed), \(String(localized: "\(summary.skipped) skipped", bundle: .module))"
   }
 
   /// The account the rows went to, then how many rows matched existing
@@ -130,11 +115,110 @@ enum ImportDoneCopy {
     if let accountName, !accountName.isEmpty {
       parts.append(accountName)
     }
-    switch summary.merged {
-    case 0: break
-    case 1: parts.append("1 matched an existing transaction")
-    default: parts.append("\(summary.merged) matched existing transactions")
+    if summary.merged > 0 {
+      parts.append(String(localized: "\(summary.merged) matched existing transactions", bundle: .module))
     }
     return parts.isEmpty ? nil : parts.joined(separator: " · ")
+  }
+}
+
+/// The check screen's gate and copy (S11, I-12). Every count in copy is a catalog
+/// plural, so a translation can pick its own forms. Nothing here adds up money.
+enum ImportLogic {
+  /// Import is offered only when at least one row is new. Rows already in Nomi
+  /// are merged on commit, so they never make Import available on their own.
+  static func canImport(newCount: Int) -> Bool {
+    newCount > 0
+  }
+
+  /// The primary button: "Import 38 transactions", "Import 1 transaction".
+  static func importTitle(newCount: Int) -> String {
+    String(localized: "Import \(newCount) transactions", bundle: .module)
+  }
+
+  /// The warning under the tiles, naming the rows "Show them" lists.
+  static func skippedNote(count: Int) -> String {
+    String(localized: "\(count) rows could not be read and will be skipped.", bundle: .module)
+  }
+
+  /// The explanation under the tiles when some rows are already in Nomi.
+  static let alreadyInNomiNote = String(localized: "Rows already in Nomi are merged, not added again.", bundle: .module)
+
+  /// The file card's second line: "HDFC Bank format · 4 Nov to 12 Nov". The range runs from the
+  /// earliest to the latest date among the dry run's sample rows, and is left out when there is no sample.
+  static func fileSubtitle(bankLabel: String?, sample: [ImportDryRunRow]) -> String {
+    let format = bankLabel.map { String(localized: "\($0) format", bundle: .module) }
+      ?? String(localized: "Unrecognized format", bundle: .module)
+    guard let earliest = sample.map(\.date).min(), let latest = sample.map(\.date).max() else {
+      return format
+    }
+    let range = String(localized: "\(dayMonth(earliest)) to \(dayMonth(latest))", bundle: .module)
+    return "\(format) · \(range)"
+  }
+
+  /// A failed count (inspect of a known format, a dry run, or a lookup) never shows a zero.
+  static let countFailure = String(localized: "Couldn’t read this file. Nothing was imported.", bundle: .module)
+
+  /// A commit that throws after the counts were shown. Some batches may already be saved.
+  static let commitFailure = String(
+    localized: "The import didn’t finish, so some rows may already be saved. Your column mapping was not saved.",
+    bundle: .module
+  )
+
+  /// The message for an inspect failure: the named `ImportError` copy when there is one.
+  static func inspectFailure(_ error: Error) -> String {
+    if let importError = error as? ImportError {
+      return ImportErrorMessage.text(for: importError)
+    }
+    return countFailure
+  }
+
+  /// The mapping the sheet starts from when the format gave none: the three
+  /// columns in their default places.
+  static func fallbackMapping(for preview: ImportPreview) -> ColumnMapping {
+    ColumnMapping(
+      dateColumn: 0,
+      descriptionColumn: min(1, max(preview.headers.count - 1, 0)),
+      amountColumn: min(2, max(preview.headers.count - 1, 0)),
+      referenceColumn: nil,
+      directionStrategy: .signedAmount,
+      dateFormat: "dd/MM/yyyy"
+    )
+  }
+
+  /// The title of a sample row: the narration as read, trimmed. A blank narration reads
+  /// "No narration". `TransactionRow.title` would say "Manual entry" there, which is false for a file row.
+  static func sampleTitle(_ row: ImportDryRunRow) -> String {
+    let narration = row.descriptionText.trimmingCharacters(in: .whitespacesAndNewlines)
+    return narration.isEmpty ? String(localized: "No narration", bundle: .module) : narration
+  }
+
+  /// "12 Nov · UPI-BIGBASKET-631822904417": the line under a sample row's title.
+  static func sampleSubtitle(_ row: ImportDryRunRow) -> String {
+    "\(dayMonth(row.date)) · \(row.descriptionText)"
+  }
+
+  /// "2 Nov" in India time, the day the row's date falls on.
+  private static func dayMonth(_ date: Date) -> String {
+    dayMonthFormatter.string(from: date)
+  }
+
+  private static let dayMonthFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_IN")
+    formatter.timeZone = NomiCalendar.india.timeZone
+    formatter.dateFormat = "d MMM"
+    return formatter
+  }()
+}
+
+/// The raw cells of one row as one line: empty and whitespace-only cells are
+/// dropped, the rest joined with " · ". Used for "Show them", so an empty cell
+/// never reads as "· ·".
+enum ImportSampleRow {
+  static func text(_ cells: [String]) -> String {
+    cells
+      .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+      .joined(separator: " · ")
   }
 }

@@ -67,23 +67,6 @@ final class ImportLogicTests: XCTestCase {
     XCTAssertTrue(ColumnMappingFormGate.isValid(mapping(strategy: strategy), headerCount: headers.count))
   }
 
-  func testImportPreviewIsEmptyOnlyAtZeroParseableRows() {
-    let empty = ImportPreview(formatSignature: "s", detectedBankLabel: nil, suggestedMapping: nil, headers: [], sampleRows: [], parseableRowCount: 0)
-    let nonEmpty = ImportPreview(formatSignature: "s", detectedBankLabel: nil, suggestedMapping: nil, headers: [], sampleRows: [], parseableRowCount: 1)
-    XCTAssertTrue(ImportPreviewSummary.isEmpty(empty))
-    XCTAssertFalse(ImportPreviewSummary.isEmpty(nonEmpty))
-  }
-
-  func testRowCountTextPluralizesCorrectly() {
-    XCTAssertEqual(ImportPreviewSummary.rowCountText(preview(count: 0)), "No transactions found")
-    XCTAssertEqual(ImportPreviewSummary.rowCountText(preview(count: 1)), "1 transaction found")
-    XCTAssertEqual(ImportPreviewSummary.rowCountText(preview(count: 5)), "5 transactions found")
-  }
-
-  private func preview(count: Int) -> ImportPreview {
-    ImportPreview(formatSignature: "s", detectedBankLabel: nil, suggestedMapping: nil, headers: [], sampleRows: [], parseableRowCount: count)
-  }
-
   // finding 5: saveMapping was called with the imported file's
   // `url.lastPathComponent` instead of `preview.formatSignature`. A file
   // named "statement (1).csv" and a re-download named "statement (2).csv"
@@ -219,5 +202,85 @@ final class ImportLogicTests: XCTestCase {
   func testSaveWritesNothingBackForAnInvalidDraft() {
     let outOfBounds = mapping(date: 0, description: 1, amount: 9, reference: nil)
     XCTAssertNil(ColumnMappingSheetOutcome.writeBack(.save, draft: outOfBounds, headerCount: closeHeaders))
+  }
+
+  // MARK: - S11: the check screen's copy and gates
+
+  /// The primary button's count is a catalog plural: "Import 1 transaction", not "1 transactions".
+  func testImportTitleUsesCatalogPluralsForZeroOneAndTwo() {
+    XCTAssertEqual(ImportLogic.importTitle(newCount: 0), "Import 0 transactions")
+    XCTAssertEqual(ImportLogic.importTitle(newCount: 1), "Import 1 transaction")
+    XCTAssertEqual(ImportLogic.importTitle(newCount: 2), "Import 2 transactions")
+  }
+
+  func testSkippedNoteUsesCatalogPluralsForOneAndTwo() {
+    XCTAssertEqual(ImportLogic.skippedNote(count: 1), "1 row could not be read and will be skipped.")
+    XCTAssertEqual(ImportLogic.skippedNote(count: 2), "2 rows could not be read and will be skipped.")
+  }
+
+  /// I-12: a stated zero never offers Import, and nothing is counted as new when nothing is new.
+  func testImportIsOfferedOnlyWhenSomethingIsNew() {
+    XCTAssertFalse(ImportLogic.canImport(newCount: 0))
+    XCTAssertTrue(ImportLogic.canImport(newCount: 1))
+  }
+
+  func testFileSubtitleNamesTheFormatAndTheSampleRange() {
+    let rows = [
+      Self.dryRunRow(id: 0, day: 12),
+      Self.dryRunRow(id: 1, day: 5),
+      Self.dryRunRow(id: 2, day: 4),
+    ]
+    XCTAssertEqual(
+      ImportLogic.fileSubtitle(bankLabel: "HDFC Bank", sample: rows),
+      "HDFC Bank format · 4 Nov to 12 Nov"
+    )
+  }
+
+  func testFileSubtitleWithoutABankSaysUnrecognizedFormat() {
+    XCTAssertEqual(
+      ImportLogic.fileSubtitle(bankLabel: nil, sample: [Self.dryRunRow(id: 0, day: 3)]),
+      "Unrecognized format · 3 Nov to 3 Nov"
+    )
+  }
+
+  func testFileSubtitleOmitsTheRangeWhenThereIsNoSample() {
+    XCTAssertEqual(ImportLogic.fileSubtitle(bankLabel: "HDFC Bank", sample: []), "HDFC Bank format")
+  }
+
+  /// "Show them" lists each unreadable row's raw cells. Empty cells are dropped, not drawn as "· ·".
+  func testRawRowSkipsEmptyCells() {
+    XCTAssertEqual(
+      ImportSampleRow.text(["03/11/2026", "NEFT SALARY ACME", "", "50000.00", "60000.00"]),
+      "03/11/2026 · NEFT SALARY ACME · 50000.00 · 60000.00"
+    )
+  }
+
+  func testRawRowSkipsWhitespaceOnlyCells() {
+    XCTAssertEqual(ImportSampleRow.text(["05/11/2026", "   ", "320.00", ""]), "05/11/2026 · 320.00")
+  }
+
+  func testRawRowOfOnlyEmptyCellsIsEmpty() {
+    XCTAssertEqual(ImportSampleRow.text(["", " ", ""]), "")
+  }
+
+  func testRawRowKeepsEveryFilledCellInOrder() {
+    XCTAssertEqual(ImportSampleRow.text(["a", "b", "c"]), "a · b · c")
+  }
+
+  /// A file row with no narration has no title to show. "Manual entry", the row
+  /// fallback on the ledger, would say the user typed it, which is false for an import.
+  func testSampleTitleOfABlankNarrationIsNotManualEntry() {
+    XCTAssertEqual(ImportLogic.sampleTitle(Self.dryRunRow(id: 0, day: 3, text: "   ")), "No narration")
+    XCTAssertEqual(ImportLogic.sampleTitle(Self.dryRunRow(id: 0, day: 3, text: " SALARY ")), "SALARY")
+  }
+
+  private static func dryRunRow(id: Int, day: Int, text: String = "UPI-BIGBASKET-631822904417") -> ImportDryRunRow {
+    ImportDryRunRow(
+      id: id,
+      date: NomiCalendar.india.date(from: DateComponents(year: 2026, month: 11, day: day)) ?? .distantPast,
+      descriptionText: text,
+      amountMinor: 201_900,
+      direction: .debit
+    )
   }
 }
