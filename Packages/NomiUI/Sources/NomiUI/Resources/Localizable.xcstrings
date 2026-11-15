@@ -56,13 +56,13 @@
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld row matches"
+                  "value" : "%lld transaction matches"
                 }
               },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld rows match"
+                  "value" : "%lld transactions match"
                 }
               }
             }

@@ -5,14 +5,15 @@ import XCTest
 /// 0, 1 and 2 must each read correctly.
 final class RuleMatchSummaryTests: XCTestCase {
   func testZeroMatchesText() {
-    XCTAssertEqual(RuleMatchSummary.text(for: 0), "0 rows match")
+    XCTAssertEqual(RuleMatchSummary.text(for: 0), "0 transactions match")
   }
 
   func testSingularMatchText() {
-    XCTAssertEqual(RuleMatchSummary.text(for: 1), "1 row matches")
+    XCTAssertEqual(RuleMatchSummary.text(for: 1), "1 transaction matches")
   }
 
   func testPluralMatchText() {
-    XCTAssertEqual(RuleMatchSummary.text(for: 12), "12 rows match")
+    XCTAssertEqual(RuleMatchSummary.text(for: 2), "2 transactions match")
+    XCTAssertEqual(RuleMatchSummary.text(for: 12), "12 transactions match")
   }
 }
