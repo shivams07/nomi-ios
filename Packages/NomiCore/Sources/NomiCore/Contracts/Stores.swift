@@ -274,13 +274,23 @@ public protocol MailConnectionService: AnyObject, Sendable {
   func disconnect() async throws
   @discardableResult func syncNow() async throws -> SyncSummary
   @discardableResult func startBackfill(months: Int) async throws -> SyncSummary
+  /// A mail credential is saved on this device. Synchronous; read once by
+  /// ConnectMailScreen's init, like `history`.
+  var hasStoredCredential: Bool { get }
+  /// Connects with the saved credential. Yields `.connecting`, then `.connected`
+  /// or `.failed`, exactly as `connect(_:)` does. Throws `MailError.connectionFailed`
+  /// when nothing is saved.
+  func reconnectWithStoredCredential() async throws
 }
 
-/// The default for a conformer that keeps no history. Every conformer that
-/// predates `history` (the fakes, the UI test doubles) inherits it, so none of
-/// them had to be edited to add the requirement.
+/// The defaults for a conformer that keeps no history and holds no stored
+/// credential. Every conformer that predates `history` or the stored-credential
+/// reconnect (the fakes, the UI test doubles) inherits them, so none of them had
+/// to be edited to add the requirements.
 extension MailConnectionService {
   public var history: MailConnectionHistory { .never }
+  public var hasStoredCredential: Bool { false }
+  public func reconnectWithStoredCredential() async throws { throw MailError.connectionFailed }
 }
 
 public protocol FileImportService: AnyObject, Sendable {

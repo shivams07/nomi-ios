@@ -176,6 +176,17 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
     preferences.set(true, forKey: PreferenceKey.mailHasConnected)
   }
 
+  /// Forwarded as-is: the password is read from the store on each call, so a
+  /// screen sees what the Keychain holds now.
+  var hasStoredCredential: Bool { upstream.hasStoredCredential }
+
+  /// The same rule as `connect`: the flag is written only once the upstream
+  /// reconnect has returned, so a refused reconnect does not count as connected.
+  func reconnectWithStoredCredential() async throws {
+    try await upstream.reconnectWithStoredCredential()
+    preferences.set(true, forKey: PreferenceKey.mailHasConnected)
+  }
+
   /// Clears the unfinished-backfill marker, because there is no longer anything
   /// to resume: the user has turned collection off, and a background task that
   /// went on asking to finish a scan of a mailbox they disconnected would be

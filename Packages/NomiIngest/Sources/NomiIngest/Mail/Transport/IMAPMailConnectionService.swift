@@ -97,6 +97,23 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
     stateContinuation.yield(.connected(address: credentials.address, lastSync: currentLastSync()))
   }
 
+  /// Whether a password is saved on this device. A Keychain that cannot be read
+  /// counts as nothing saved: there is nothing this can reconnect with.
+  public var hasStoredCredential: Bool {
+    (try? credentials.load()) != nil
+  }
+
+  /// Connects with the saved password, through `connect`, so the state stream and
+  /// the rejected-password rule are the same as a connect the user typed.
+  ///
+  /// With nothing saved this throws `connectionFailed` before any state is
+  /// yielded and before any socket is opened: the screen shows the form, and no
+  /// spinner or failure banner belongs to a reconnect that never started.
+  public func reconnectWithStoredCredential() async throws {
+    guard let stored = try? credentials.load() else { throw MailError.connectionFailed }
+    try await connect(stored)
+  }
+
   /// Stops capture. **Deletes no transactions** — that is the acceptance
   /// criterion and it is the whole point: a user disconnecting a mailbox is
   /// turning off collection, not asking for their ledger to be erased.
@@ -281,9 +298,14 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
   }
 
   /// `MailConnectionState.failed` carries a `MailError`, which has three cases.
-  /// Anything unrecognised keeps its description rather than being flattened to
-  /// `.connectionFailed` — the Settings screen showing the real reason is worth
-  /// more than a tidy enum.
+  ///
+  /// **The user-facing error text contract (R5d).** `.unknown` is shown on
+  /// Settings and onboarding, so it never carries developer text: a
+  /// `String(describing:)` of a transport error or of an arbitrary error is a
+  /// type name and a server's raw words, and neither is a sentence for a user.
+  /// Those cases map to `.unknown("")`, which `MailErrorMessage` turns into the
+  /// generic copy. `.invalidCredentials` keeps its reason, because that reason
+  /// is written for the user.
   private func mailError(from error: Error) -> MailError {
     if let mailError = error as? MailError { return mailError }
     if let transportError = error as? IMAPTransportError {
@@ -293,13 +315,11 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
       case .notConnected, .connectionClosed, .serverClosedMidCommand:
         return .connectionFailed
       case .invalidCredentials(let reason):
-        // Surfaced as copy the user can act on, not a `describing:` dump - this
-        // is the one transport error that is always the user's own input.
         return .unknown(reason)
       case .commandFailed, .malformedResponse:
-        return .unknown(String(describing: transportError))
+        return .unknown("")
       }
     }
-    return .unknown(String(describing: error))
+    return .unknown("")
   }
 }

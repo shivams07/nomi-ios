@@ -139,8 +139,18 @@ public final class BroadcastingMailConnectionService: MailConnectionService, @un
   /// so there is no latest value to hand to a new subscriber.
   public var history: MailConnectionHistory { upstream.history }
 
+  /// Forwarded, not replayed, for the same reason as `history`: the value is
+  /// read from the store on each access.
+  public var hasStoredCredential: Bool { upstream.hasStoredCredential }
+
   public func connect(_ credentials: IMAPCredentials) async throws {
     try await upstream.connect(credentials)
+  }
+
+  /// Forwarded, so a reconnect from any screen takes the same path as a connect
+  /// and the states it yields reach the shared stream.
+  public func reconnectWithStoredCredential() async throws {
+    try await upstream.reconnectWithStoredCredential()
   }
 
   public func disconnect() async throws {
