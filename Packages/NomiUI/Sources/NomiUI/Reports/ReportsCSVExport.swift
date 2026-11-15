@@ -1,24 +1,20 @@
 import Foundation
 import NomiCore
 
-/// Writes `TransactionCSVExporter`'s output to a temporary file for
-/// `ShareLink` to present — `NomiUI` may not import `NomiIngest`, and this
+/// Writes `TransactionCSVExporter`'s output to a temporary file for the share
+/// sheet (`ReportsShareSheet`). `NomiUI` may not import `NomiIngest`, and this
 /// unit is the designated caller per design §2.7. The exporter itself (plain
 /// decimal amounts, no ₹, no grouping separator, header row always present)
-/// is fully owned and tested in `NomiCore/Support/TransactionCSVExporter.swift`;
-/// this type's only job is turning that `String` into a file `ShareLink` can
-/// hand to the share sheet, one write per export tap.
+/// is fully owned and tested in `NomiCore/Support/TransactionCSVExporter.swift`.
+/// This type turns that `String` into a file, one fresh file per export tap.
+/// The file is removed by `remove(_:)` when its share sheet closes (R12b, Y1).
 enum ReportsCSVExport {
   enum ExportError: Error {
     case writeFailed
   }
 
-  /// The file this type last wrote, so the next write can remove it (T5) —
-  /// each export tap otherwise leaves the previous CSV behind in `tmp`.
-  private static var lastWrittenURL: URL?
-
   static func write(_ transactions: [Transaction], names: CSVNameMaps, periodLabel: String) throws -> URL {
-    let csv = TransactionCSVExporter.export(transactions, names: names)
+    let csv = TransactionCSVExporter.export(transactions, names: names, timeZone: .current)
     let filename = "nomi-report-\(periodLabel)-\(UUID().uuidString).csv"
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
     do {
@@ -26,10 +22,12 @@ enum ReportsCSVExport {
     } catch {
       throw ExportError.writeFailed
     }
-    if let previous = lastWrittenURL {
-      try? FileManager.default.removeItem(at: previous)
-    }
-    lastWrittenURL = url
     return url
+  }
+
+  /// Removes a file `write` produced, once its share sheet has closed. A file
+  /// that is already gone is not an error.
+  static func remove(_ url: URL) {
+    try? FileManager.default.removeItem(at: url)
   }
 }

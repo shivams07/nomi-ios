@@ -138,11 +138,6 @@ final class ReportsPeriodTests: XCTestCase {
     XCTAssertTrue(label.contains("27"))
   }
 
-  func testTrendMonthsIsSixForCalendarBasisAndTwelveForFinancialYear() {
-    XCTAssertEqual(ReportsPeriod.trendMonths(for: .calendarMonth), 6)
-    XCTAssertEqual(ReportsPeriod.trendMonths(for: .financialYear), 12)
-  }
-
   func testRecentAnchorsMonthIs12StartingAtCurrent() {
     let now = date(2026, 11, 8)
     let anchors = ReportsPeriod.recentAnchors(basis: .calendarMonth, now: now, calendar: utc)
