@@ -26,6 +26,113 @@ enum TrackedBalanceCaption {
   }
 }
 
+/// The line over the Accounts total (S8 step 4): "Estimated balance", then the day
+/// tracking started, as "tracked since 1 Sep". Its own wording: the rename sheet's
+/// "Tracked since" line (`TrackedBalanceCaption`) keeps its year and its own prefix.
+enum AccountsHeader {
+  static func line(trackedSince date: Date?) -> String {
+    let label = String(localized: "Estimated balance", bundle: .module)
+    guard let date else { return label }
+    return label + " · tracked since " + NomiFormatters.dayMonth.string(from: date)
+  }
+}
+
+/// The text on a physical card (S8 step 2). The title is the institution, else the
+/// display name. The second line is the display name when it adds something to the
+/// title, else the kind's label.
+enum AccountCardText {
+  static func title(institution: String, displayName: String) -> String {
+    institution.isEmpty ? displayName : institution
+  }
+
+  static func subtitle(institution: String, displayName: String, kind: AccountKind) -> String {
+    if !institution.isEmpty && displayName != institution {
+      return displayName
+    }
+    return kindLabel(kind)
+  }
+
+  static func kindLabel(_ kind: AccountKind) -> String {
+    switch kind {
+    case .bank: return String(localized: "Bank account", bundle: .module)
+    case .card: return String(localized: "Credit card", bundle: .module)
+    case .wallet: return String(localized: "Cash", bundle: .module)
+    }
+  }
+
+  /// "•••• 4471", or nil when there is no last four (a wallet), so the line is left out.
+  static func lastFourLine(_ lastFour: String) -> String? {
+    lastFour.isEmpty ? nil : "•••• \(lastFour)"
+  }
+}
+
+/// The VoiceOver label of a card, as the artboard words it: name, account ending,
+/// estimated balance in rupees. An owed card says what it owes instead.
+enum AccountCardAccessibility {
+  static func label(displayName: String, lastFour: String, kind: AccountKind, trackedMinor: Int) -> String {
+    var parts = [displayName]
+    if !lastFour.isEmpty {
+      parts.append(String(localized: "account ending \(lastFour)", bundle: .module))
+    }
+    let line = AccountBalanceDisplay.line(kind: kind, trackedMinor: trackedMinor)
+    if line.caption != nil {
+      parts.append(String(localized: "\(spokenRupees(minor: line.minor)) rupees owed", bundle: .module))
+    } else {
+      parts.append(String(localized: "estimated balance \(spokenRupees(minor: trackedMinor)) rupees", bundle: .module))
+    }
+    return parts.joined(separator: ", ")
+  }
+
+  /// "1,15,271", or "1,234.50" when there are paise, with no symbol and no ".00".
+  static func spokenRupees(minor: Int) -> String {
+    var digits = NomiFormatters.amountString(minor: minor).replacingOccurrences(of: "₹", with: "")
+    if digits.hasSuffix(".00") {
+      digits.removeLast(3)
+    }
+    return (minor < 0 ? "minus " : "") + digits
+  }
+}
+
+/// The note under the cards (S8 step 4). A catalog plural: one payment, or several.
+enum UnassignedNote {
+  static func text(count: Int) -> String? {
+    guard count > 0 else { return nil }
+    return String(localized: "\(count) payment has no account. Assign it so balances stay right.", bundle: .module)
+  }
+}
+
+/// The accounts the picker offers (S8 step 7): the active ones, plus the selected
+/// one even when it is archived, so an existing row's account still shows.
+enum AccountPickerFilter {
+  static func visible<Row: AccountArchivable>(_ rows: [Row], selection: UUID?) -> [Row] {
+    rows.filter { !$0.isArchived || $0.id == selection }
+  }
+}
+
+/// The create path (S8 step 6): trims the text fields, reads the opening balance as
+/// typed, and makes the account in one `create`, so the balance is written with it.
+@MainActor
+enum AccountCreateAction {
+  @discardableResult
+  static func perform(
+    store: AccountStore,
+    displayName: String,
+    institution: String,
+    lastFour: String,
+    kindRaw: String,
+    openingBalanceText: String,
+    locale: Locale = .current
+  ) throws -> Account {
+    try store.create(
+      displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines),
+      institution: institution.trimmingCharacters(in: .whitespacesAndNewlines),
+      lastFour: lastFour,
+      kindRaw: kindRaw,
+      openingBalanceMinor: AccountOpeningBalanceField.minorUnits(from: openingBalanceText, locale: locale)
+    )
+  }
+}
+
 /// Splits summaries into the always-visible list and the collapsed archived
 /// section — pulled out so "archived accounts move to a collapsed section,
 /// not out of existence" is a policy the tests can check directly.

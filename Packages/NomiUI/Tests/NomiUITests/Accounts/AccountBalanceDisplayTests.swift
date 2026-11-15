@@ -122,7 +122,7 @@ struct AccountBalanceDisplayTests {
 
   @Test func archiveMessageCarriesTheTotalDisclosure() {
     #expect(AccountBalanceDisplay.archiveMessage.contains(
-      "Archived accounts are left out of your Tracked balance. Their transactions stay in your history and totals."
+      "Archived accounts are left out of your Estimated balance. Their transactions stay in your history and totals."
     ))
   }
 

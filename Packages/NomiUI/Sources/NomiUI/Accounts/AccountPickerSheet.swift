@@ -28,16 +28,22 @@ struct AccountPickerSheet: View {
   @Environment(\.dismiss) private var dismiss
   @State private var isCreating = false
 
+  /// S8 step 7. Archived accounts are not offered, except the selected one, so an
+  /// existing row's account still shows.
+  private var visibleAccounts: [NomiCore.Account] {
+    AccountPickerFilter.visible(accounts, selection: selection)
+  }
+
   var body: some View {
     NavigationStack {
       ScrollView {
         VStack(alignment: .leading, spacing: NomiSpacing.cardGap) {
           VStack(spacing: 0) {
             unassignedRow
-            ForEach(accounts) { account in
+            ForEach(visibleAccounts) { account in
               row(for: account)
             }
-            if accounts.isEmpty {
+            if visibleAccounts.isEmpty {
               emptyStateRow
             }
           }
@@ -87,7 +93,7 @@ struct AccountPickerSheet: View {
       title: account.displayName,
       subtitle: subtitle(for: account),
       isSelected: selection == account.id,
-      showsDivider: account.id != accounts.last?.id
+      showsDivider: account.id != visibleAccounts.last?.id
     ) {
       onSelect(account.id)
       dismiss()

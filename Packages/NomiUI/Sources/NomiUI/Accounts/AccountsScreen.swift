@@ -2,37 +2,39 @@ import NomiCore
 import NomiPreview
 import SwiftUI
 
-/// The Accounts page (U11, AC). Reads exclusively through `InsightsStore` (for
-/// the read-only `AccountSummary` rollups) and `AccountStore` (for edit,
-/// archive, and delete), same split as `DashboardView`/`AccountsCard`. This
-/// screen has no opinion on how those summaries are computed.
+/// The Accounts page (S8, from the Accounts artboard). Pushed from Settings › Organize.
+/// The system navigation bar is kept, so its back control is always there, at every
+/// text size (S8 must-fix). It carries the large title "Accounts" and the "Add account"
+/// pill. The body is the "Estimated balance" header over the total, one physical card
+/// per active account, the unassigned note, and the Archived disclosure.
 ///
-/// Shape, from the approved `Cards` artboard: a nav row with the title only,
-/// the hero with "Tracked balance" and the total, then the sheet. The sheet
-/// holds "All accounts" and one card of 72 pt rows (tap edits, long-press
-/// keeps its menu), the "Add account" footer row, and a collapsed "Archived"
-/// disclosure. The sheet and hero come from `NomiHeroScaffold`.
+/// The reads go through `AccountsModel`, which reads `InsightsStore` for the summaries
+/// and the unassigned count. Writes go through `AccountStore`, the same split as before.
 public struct AccountsScreen: View {
   public let accountStore: AccountStore
   public let insightsStore: InsightsStore
 
-  /// G4. The composition root's `InsightsCache` generation. Stored and never
-  /// read: a new value from the parent re-renders this screen, which re-reads
-  /// the summaries. Same contract as `DashboardView.refreshToken`. This screen's
-  /// own writes bump `writeToken` instead.
+  /// G4. The composition root's `InsightsCache` generation. A new value from the parent
+  /// reloads the summaries, the same contract as `DashboardView.refreshToken`. This
+  /// screen's own writes bump `writeToken` instead.
   public let refreshToken: Int
 
+  /// S8 step 5. Opens the unassigned note's "Assign it". `nil` shows the note without
+  /// its action. RootView passes it through S9a (or X1).
+  public let transactionStore: TransactionStore?
+
+  @State private var model: AccountsModel
   @State private var editingAccount: AccountSummary?
   @State private var archivingAccount: AccountSummary?
   @State private var deletingAccount: AccountSummary?
-  /// Set by the edit sheet's Archive or Delete. Presented once the sheet has
-  /// gone (`presentPendingEditAction`), so no alert appears over a sheet that
-  /// is still dismissing.
+  /// Set by the edit sheet's Archive or Delete. Presented once the sheet has gone
+  /// (`presentPendingEditAction`), so no alert appears over a sheet that is still dismissing.
   @State private var pendingEditAction: PendingEditAction?
   @State private var isArchivedExpanded = false
   @State private var isCreatingAccount = false
-  /// Bumped by this screen's own writes, so the summaries re-read after a
-  /// rename, archive, delete or create.
+  @State private var isShowingUnassigned = false
+  /// Bumped by this screen's own writes, so the summaries re-read after a rename,
+  /// archive, delete or create.
   @State private var writeToken = 0
   @State private var writeError = false
 
@@ -41,42 +43,57 @@ public struct AccountsScreen: View {
     case delete(AccountSummary)
   }
 
-  public init(accountStore: AccountStore, insightsStore: InsightsStore, refreshToken: Int = 0) {
+  /// What the read depends on. Either input changing reloads the screen.
+  private struct LoadKey: Equatable {
+    let refresh: Int
+    let writes: Int
+  }
+
+  public init(
+    accountStore: AccountStore,
+    insightsStore: InsightsStore,
+    refreshToken: Int = 0,
+    transactionStore: TransactionStore? = nil
+  ) {
     self.accountStore = accountStore
     self.insightsStore = insightsStore
     self.refreshToken = refreshToken
-  }
-
-  /// `nil` means the fetch threw, distinct from a legitimate empty account
-  /// list, which is `[]` and renders the "No accounts yet" empty state.
-  private var summaries: [AccountSummary]? {
-    _ = writeToken
-    do {
-      return try insightsStore.accountSummaries(includeArchived: true)
-    } catch {
-      return nil
-    }
-  }
-
-  /// The hero total of a loaded read, or nil when the read failed. A failed
-  /// read shows no number rather than ₹0.00, because a wrong total must not
-  /// look right.
-  private static func total(of loaded: [AccountSummary]?) -> Int? {
-    guard let loaded else { return nil }
-    return AccountBalanceDisplay.total(
-      loaded.map { (isArchived: $0.isArchived, trackedMinor: $0.trackedBalanceMinor) }
-    )
+    self.transactionStore = transactionStore
+    _model = State(initialValue: AccountsModel(insightsStore: insightsStore))
   }
 
   public var body: some View {
-    // One read per render: the hero and the sheet both draw from this snapshot.
-    let loaded = summaries
-    return NomiHeroScaffold(heroBottomSpacing: 40) {
-      navRow
-    } hero: {
-      heroBlock(loaded)
-    } sheet: {
-      sheetBlock(loaded)
+    ScrollView {
+      content
+        .padding(.horizontal, NomiSpacing.screenGutter)
+        .padding(.vertical, NomiSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .background(NomiColor.ground.ignoresSafeArea())
+    .navigationTitle(String(localized: "Accounts", bundle: .module))
+    #if os(iOS)
+    .navigationBarTitleDisplayMode(.large)
+    #endif
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        addAccountButton
+      }
+    }
+    .task(id: LoadKey(refresh: refreshToken, writes: writeToken)) {
+      model.load()
+    }
+    .onChange(of: isShowingUnassigned) { _, showing in
+      // Coming back from the assign screen: the unassigned count may have changed.
+      if !showing { model.load() }
+    }
+    .navigationDestination(isPresented: $isShowingUnassigned) {
+      if let transactionStore {
+        UnassignedPaymentsScreen(
+          insightsStore: insightsStore,
+          transactionStore: transactionStore,
+          accountStore: accountStore
+        )
+      }
     }
     .sheet(item: $editingAccount, onDismiss: { presentPendingEditAction() }) { account in
       AccountRenameSheet(
@@ -128,78 +145,108 @@ public struct AccountsScreen: View {
     }
   }
 
-  // MARK: - Hero
+  // MARK: - Body
 
-  private var navRow: some View {
-    Text("Accounts")
-      .nomiTextStyle(.heroTitle)
-      .foregroundStyle(NomiColor.heroText)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .accessibilityAddTraits(.isHeader)
+  /// The page follows the read's state: a skeleton while loading, a load-failed card
+  /// when the read threw, the empty state when there are no accounts, and otherwise
+  /// the header, the cards, the note and the archived section.
+  @ViewBuilder
+  private var content: some View {
+    switch model.state {
+    case .loading:
+      NomiSkeleton(lines: [0.4, 0.62, 1])
+    case .failed:
+      NomiLoadFailedCard(message: "Accounts and balances aren’t available right now.") {
+        model.load()
+      }
+    case .loaded:
+      if model.active.isEmpty && model.archived.isEmpty {
+        NomiEmptyState(
+          systemImage: "creditcard",
+          title: "No accounts yet",
+          message: "Add the accounts your alerts mention, so each payment lands in the right place.",
+          actionTitle: "Add account"
+        ) {
+          isCreatingAccount = true
+        }
+      } else {
+        VStack(alignment: .leading, spacing: NomiSpacing.cardGap) {
+          if !model.active.isEmpty {
+            header
+            cards
+          }
+          unassignedNote
+          if !model.archived.isEmpty {
+            archivedSection
+          }
+        }
+      }
+    }
   }
 
-  /// No chip: the approved artboard draws none (SIMP Q7 = B).
-  private func heroBlock(_ loaded: [AccountSummary]?) -> some View {
+  /// The label over the total, then the total at 38 pt. Hidden when only archived
+  /// accounts remain, since the total then covers nothing.
+  private var header: some View {
     VStack(alignment: .leading, spacing: 2) {
-      Text("Tracked balance")
+      Text(AccountsHeader.line(trackedSince: model.trackingSince))
         .nomiTextStyle(.subhead)
-        .foregroundStyle(NomiColor.heroTextSecondary)
-      if let total = Self.total(of: loaded) {
-        NomiAmountText(minor: total, context: .hero, style: .heroAmount)
-      }
+        .foregroundStyle(NomiColor.inkSecondary)
+        .accessibilityAddTraits(.isHeader)
+      AccountAmountLabel(minor: model.totalMinor, size: 38, color: NomiColor.ink)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
   }
 
-  // MARK: - Sheet
-
-  @ViewBuilder
-  private func sheetBlock(_ loaded: [AccountSummary]?) -> some View {
-    let active = AccountSectioning.active(loaded ?? [])
-    let archived = AccountSectioning.archived(loaded ?? [])
-    if loaded == nil {
-      NomiLoadFailedCard(message: "Accounts and balances aren’t available right now.") {
-        writeToken += 1
-      }
-      addAccountRow
-    } else if active.isEmpty && archived.isEmpty {
-      NomiEmptyState(
-        systemImage: "creditcard",
-        title: "No accounts yet",
-        message: "Add an account to see a tracked balance.",
-        actionTitle: "Add account"
-      ) {
-        isCreatingAccount = true
-      }
-    } else {
-      VStack(alignment: .leading, spacing: NomiSpacing.cardGap) {
-        Text("All accounts")
-          .nomiTextStyle(.headline)
-          .foregroundStyle(NomiColor.ink)
-          .accessibilityAddTraits(.isHeader)
-        if !active.isEmpty {
-          accountList(active, deemphasized: false)
+  private var cards: some View {
+    VStack(spacing: NomiSpacing.cardGap) {
+      ForEach(model.active) { account in
+        AccountCard(account: account) {
+          editingAccount = account
         }
-        addAccountRow
-        if !archived.isEmpty {
-          archivedSection(archived)
-        }
+        .contextMenu { accountMenu(for: account) }
       }
     }
   }
 
-  private func accountList(_ accounts: [AccountSummary], deemphasized: Bool) -> some View {
+  /// "1 payment has no account" with its action when the screen can offer one.
+  @ViewBuilder
+  private var unassignedNote: some View {
+    if let note = UnassignedNote.text(count: model.unassignedCount) {
+      if transactionStore != nil {
+        NomiStatusNote(
+          note,
+          tone: .warning,
+          systemImage: "exclamationmark.circle",
+          actionTitle: String(localized: "Assign it", bundle: .module)
+        ) {
+          isShowingUnassigned = true
+        }
+      } else {
+        NomiStatusNote(note, tone: .warning, systemImage: "exclamationmark.circle")
+      }
+    }
+  }
+
+  private var archivedSection: some View {
+    DisclosureGroup(isExpanded: $isArchivedExpanded) {
+      accountList(model.archived)
+    } label: {
+      Text("Archived")
+    }
+    .disclosureGroupStyle(TrailingChevronDisclosureStyle())
+  }
+
+  /// Archived accounts as plain rows, de-emphasised. They are not in the total.
+  private func accountList(_ accounts: [AccountSummary]) -> some View {
     VStack(spacing: 0) {
       ForEach(accounts) { account in
-        accountRow(account, showsDivider: account.id != accounts.last?.id, deemphasized: deemphasized)
+        archivedRow(account, showsDivider: account.id != accounts.last?.id)
       }
     }
     .nomiCard(padding: EdgeInsets())
   }
 
-  /// One 72 pt row. Tapping opens the edit sheet, where Archive and Delete
-  /// now live. The long-press menu keeps its own actions.
-  private func accountRow(_ account: AccountSummary, showsDivider: Bool, deemphasized: Bool) -> some View {
+  private func archivedRow(_ account: AccountSummary, showsDivider: Bool) -> some View {
     let kind = AccountKindOptions.kind(raw: account.kindRaw)
     let amount = AccountBalanceDisplay.line(kind: kind, trackedMinor: account.trackedBalanceMinor)
     let caption = AccountBalanceDisplay.rowCaption(
@@ -216,7 +263,6 @@ public struct AccountsScreen: View {
           Text(account.displayName)
             .nomiTextStyle(.rowTitle)
             .foregroundStyle(NomiColor.ink)
-            .lineLimit(1)
           Text(AccountRowText.subtitle(
             institution: account.institution,
             lastFour: account.lastFour,
@@ -224,7 +270,6 @@ public struct AccountsScreen: View {
           ))
             .nomiTextStyle(.footnote)
             .foregroundStyle(NomiColor.inkSecondary)
-            .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         VStack(alignment: .trailing, spacing: 2) {
@@ -249,53 +294,39 @@ public struct AccountsScreen: View {
       }
     }
     .buttonStyle(.plain)
-    .opacity(deemphasized ? 0.6 : 1)
-    .contextMenu {
-      Button("Edit") { editingAccount = account }
-      if account.isArchived {
-        Button("Unarchive") { unarchiveAccount(account) }
-      } else {
-        Button("Archive") { archivingAccount = account }
-      }
-      Button("Delete", role: .destructive) { deletingAccount = account }
-    }
+    .opacity(0.6)
+    .contextMenu { accountMenu(for: account) }
   }
 
-  /// The footer row that replaces the hero "+" (SIMP §3 item 4).
-  private var addAccountRow: some View {
+  /// The long-press menu on a card or an archived row. Archive and Delete ask first.
+  @ViewBuilder
+  private func accountMenu(for account: AccountSummary) -> some View {
+    Button("Edit") { editingAccount = account }
+    if account.isArchived {
+      Button("Unarchive") { unarchiveAccount(account) }
+    } else {
+      Button("Archive") { archivingAccount = account }
+    }
+    Button("Delete", role: .destructive) { deletingAccount = account }
+  }
+
+  /// The toolbar's small primary pill.
+  private var addAccountButton: some View {
     Button {
       isCreatingAccount = true
     } label: {
-      HStack(spacing: NomiSpacing.xs) {
-        Image(systemName: "plus")
-          .resizable()
-          .scaledToFit()
-          .frame(width: 20, height: 20)
-        Text("Add account")
-          .nomiTextStyle(.body)
-        Spacer(minLength: 0)
-      }
-      .foregroundStyle(NomiColor.navy)
-      .padding(.horizontal, NomiSpacing.sm)
-      .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
-      .nomiCard(padding: EdgeInsets())
+      Label(String(localized: "Add account", bundle: .module), systemImage: "plus")
     }
-    .buttonStyle(.plain)
-  }
-
-  private func archivedSection(_ archived: [AccountSummary]) -> some View {
-    DisclosureGroup(isExpanded: $isArchivedExpanded) {
-      accountList(archived, deemphasized: true)
-    } label: {
-      Text("Archived")
-    }
-    .disclosureGroupStyle(TrailingChevronDisclosureStyle())
+    .buttonStyle(.borderedProminent)
+    .buttonBorderShape(.capsule)
+    .controlSize(.small)
+    .tint(NomiColor.navy)
   }
 
   // MARK: - Actions
 
-  /// Runs the Archive or Delete the edit sheet asked for, now that the sheet
-  /// has gone, so the existing confirmation presents on a clear screen.
+  /// Runs the Archive or Delete the edit sheet asked for, now that the sheet has gone,
+  /// so the existing confirmation presents on a clear screen.
   private func presentPendingEditAction() {
     guard let action = pendingEditAction else { return }
     pendingEditAction = nil
@@ -307,9 +338,9 @@ public struct AccountsScreen: View {
     }
   }
 
-  /// Carries out a delete-dialog choice. "Archive instead" hands the account to
-  /// the archive alert and does not archive here, so the DEC-06 sentence is
-  /// always shown before the Tracked balance moves.
+  /// Carries out a delete-dialog choice. "Archive instead" hands the account to the
+  /// archive alert and does not archive here, so the DEC-06 sentence is always shown
+  /// before the Estimated balance moves.
   private func routeDeleteChoice(_ choice: AccountDeleteChoice, for account: AccountSummary) {
     switch AccountDeleteRouting.outcome(for: choice) {
     case .presentArchiveAlert:
@@ -348,20 +379,21 @@ public struct AccountsScreen: View {
   }
 }
 
-/// Manual conformance, as on `DashboardView`: the stores are `AnyObject`
-/// protocols, so identity stands in for equality, and `refreshToken` is compared
-/// so a test can assert that a new generation makes a different view value.
+/// Manual conformance, as on `DashboardView`: the stores are `AnyObject` protocols, so
+/// identity stands in for equality, and `refreshToken` is compared so a test can assert
+/// that a new generation makes a different view value.
 extension AccountsScreen: Equatable {
   public static func == (lhs: AccountsScreen, rhs: AccountsScreen) -> Bool {
     lhs.accountStore === rhs.accountStore
       && lhs.insightsStore === rhs.insightsStore
+      && lhs.transactionStore === rhs.transactionStore
       && lhs.refreshToken == rhs.refreshToken
   }
 }
 
-/// The 40 pt icon tile at the start of an account row: an `iconGlyph` symbol
-/// on an `iconTile` circle, the neutral badge from the approved artboards.
-private struct AccountTile: View {
+/// The 40 pt icon tile on an archived row and on a wallet card: an `iconGlyph` symbol on
+/// an `iconTile` circle, the neutral badge from the approved artboards.
+struct AccountTile: View {
   let symbolName: String
 
   var body: some View {
@@ -376,9 +408,9 @@ private struct AccountTile: View {
   }
 }
 
-/// A disclosure with its chevron on the trailing edge and the header in ink,
-/// collapsed by default (the Accounts artboard). The header is a button, and
-/// its value says whether it is expanded.
+/// A disclosure with its chevron on the trailing edge and the header in ink, collapsed
+/// by default (the Accounts artboard). The header is a button, and its value says whether
+/// it is expanded.
 private struct TrailingChevronDisclosureStyle: DisclosureGroupStyle {
   func makeBody(configuration: Configuration) -> some View {
     VStack(alignment: .leading, spacing: NomiSpacing.cardGap) {
@@ -411,9 +443,8 @@ private struct TrailingChevronDisclosureStyle: DisclosureGroupStyle {
   }
 }
 
-/// Explicit fixtures for the cases the done-when requires a preview for:
-/// a positive bank balance with an opening balance, a card owed, zero
-/// transactions, and archived.
+/// Explicit fixtures for the cases the done-when requires a preview for: a positive bank
+/// balance with an opening balance, a card owed, zero transactions, and archived.
 private enum AccountsScreenFixtures {
   static let positive = Account(id: UUID(), displayName: "HDFC Savings", institution: "HDFC Bank", lastFour: "4471", kindRaw: "bank", isArchived: false, openingBalanceMinor: 1_20_000_00)
   static let owed = Account(id: UUID(), displayName: "ICICI Credit Card", institution: "ICICI Bank", lastFour: "9012", kindRaw: "card", isArchived: false)
@@ -451,8 +482,8 @@ private enum AccountsScreenFixtures {
 
 private struct AccountsScreenLoadFailure: Error {}
 
-/// Only `accountSummaries` throws. This screen never calls the other
-/// `InsightsStore` methods, so they can return empty rather than also throw.
+/// Only `accountSummaries` throws. This screen never calls the other `InsightsStore`
+/// methods, so they can return empty rather than also throw.
 @MainActor
 private final class FailingAccountSummariesStore: InsightsStore {
   func insights(for period: InsightPeriod) throws -> PeriodInsights { throw AccountsScreenLoadFailure() }
@@ -483,10 +514,9 @@ private final class FailingAccountSummariesStore: InsightsStore {
   .preferredColorScheme(.light)
 }
 
-/// Isolated confirmationDialog preview, `CategoriesScreen`'s `.constant(true)`
-/// pattern. It names a transaction count so the message
-/// (`AccountDeleteConfirmation`) is checkable without navigating the full
-/// screen and tapping through a context menu.
+/// Isolated confirmationDialog preview, `CategoriesScreen`'s `.constant(true)` pattern. It
+/// names a transaction count so the message (`AccountDeleteConfirmation`) is checkable
+/// without navigating the full screen and tapping through a context menu.
 #Preview("Accounts — delete confirmation, light") {
   Text("ICICI Credit Card")
     .nomiTextStyle(.body)
