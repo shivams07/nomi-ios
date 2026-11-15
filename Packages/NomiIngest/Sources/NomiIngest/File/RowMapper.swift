@@ -119,9 +119,14 @@ enum RowMapper {
       guard let debit = separateCell(row, debitIndex, column: .debit),
         let credit = separateCell(row, creditIndex, column: .credit)
       else { return nil }
-      if debit > 0 { return (debit, .debit) }
-      if credit > 0 { return (credit, .credit) }
-      return nil
+      // B7 ruling 1: exactly one column carries a non-zero amount. Both non-zero is
+      // ambiguous and refused, and so is neither (no amount). Negatives were refused
+      // in `separateCell`, so both values here are zero or positive.
+      switch (debit, credit) {
+      case (let amount, 0) where amount > 0: return (amount, .debit)
+      case (0, let amount) where amount > 0: return (amount, .credit)
+      default: return nil
+      }
 
     case .flagColumn(let index, let debitValues):
       guard let raw = field(row, mapping.amountColumn), let cell = readCell(raw) else { return nil }
@@ -138,12 +143,15 @@ enum RowMapper {
   /// B7 ruling: only a blank cell, "-", "–" or "—" reads as 0. Any other cell that
   /// is not a number refuses the whole row, so the other column is never read in
   /// its place. A Dr or Cr on the cell must agree with its column, and a sign must
-  /// agree with a suffix. A number the rule refuses is nil for the same reason.
+  /// agree with a suffix. A negative number, including "-0.00", is refused: a
+  /// separate-column amount is never negative (ruling 1). A number the rule refuses
+  /// is nil for the same reason.
   private static func separateCell(_ row: [String], _ index: Int, column: Direction) -> Int? {
     guard let raw = field(row, index) else { return 0 }
     if placeholders.contains(raw.trimmingCharacters(in: .whitespacesAndNewlines)) { return 0 }
     guard let cell = readCell(raw), signedDirection(cell) != nil else { return nil }
     guard cell.suffix == nil || cell.suffix == column else { return nil }
+    guard cell.sign != .debit else { return nil }
     return cell.minor
   }
 
@@ -160,10 +168,9 @@ enum RowMapper {
     let suffix: Direction?
   }
 
-  /// The Dr and Cr spellings file import accepts. Other cases, such as "dr", are refused.
-  private static let suffixes: [(text: String, direction: Direction)] = [
-    ("Cr.", .credit), ("CR", .credit), ("Cr", .credit),
-    ("Dr.", .debit), ("DR", .debit), ("Dr", .debit),
+  /// The Dr and Cr spellings file import accepts, matched case-insensitively (ruling 4).
+  private static let suffixes: [(spelling: String, direction: Direction)] = [
+    ("cr.", .credit), ("cr", .credit), ("dr.", .debit), ("dr", .debit),
   ]
 
   /// Reads one amount cell. The Dr or Cr suffix is stripped and the sign removed, and
@@ -174,8 +181,12 @@ enum RowMapper {
   private static func readCell(_ raw: String) -> Cell? {
     var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     var suffix: Direction?
-    if let match = suffixes.first(where: { text.hasSuffix($0.text) }) {
-      text = String(text.dropLast(match.text.count)).trimmingCharacters(in: .whitespaces)
+    // Compared per spelling length on the original characters, so a non-ASCII tail
+    // cannot change the length the suffix is cut by.
+    if let match = suffixes.first(where: { entry in
+      text.count >= entry.spelling.count && text.suffix(entry.spelling.count).lowercased() == entry.spelling
+    }) {
+      text = String(text.dropLast(match.spelling.count)).trimmingCharacters(in: .whitespaces)
       suffix = match.direction
     }
     var sign: Direction?

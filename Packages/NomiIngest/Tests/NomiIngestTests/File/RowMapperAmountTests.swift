@@ -156,7 +156,7 @@ final class RowMapperAmountTests: XCTestCase {
     assertSeparate("450.00 Cr", "", nil)
     assertSeparate("", "100.00 Cr", (10_000, .credit))
     assertSeparate("", "100.00 Dr", nil)
-    assertSeparate("450.00 dr", "", nil, "lowercase is not on the ruled list")
+    assertSeparate("450.00 dr", "", (45_000, .debit), "suffixes are case-insensitive (ruling 4)")
     assertSeparate("Dr", "100.00", nil, "a suffix with no number")
   }
 
@@ -181,9 +181,26 @@ final class RowMapperAmountTests: XCTestCase {
   }
 
   func testSuffixOutsideTheRuledListIsRefused() {
-    XCTAssertNil(signed("450.00 dr"))
     XCTAssertNil(signed("450.00 Cheque"))
+    XCTAssertNil(signed("450.00 D"))
     XCTAssertNil(signed("Dr"))
+  }
+
+  /// Ruling 4: Dr and Cr match case-insensitively, with or without a trailing ".".
+  func testSuffixIsCaseInsensitive() {
+    for spelling in ["dr", "Dr", "DR", "dR"] {
+      XCTAssertEqual(signed("450.00 \(spelling)")?.direction, .debit, spelling)
+    }
+    for spelling in ["cr", "Cr", "CR", "cR"] {
+      XCTAssertEqual(signed("450.00 \(spelling)")?.direction, .credit, spelling)
+    }
+    for spelling in ["dr.", "Dr.", "DR.", "dR."] {
+      XCTAssertEqual(signed("450.00 \(spelling)")?.direction, .debit, spelling)
+    }
+    for spelling in ["cr.", "Cr.", "CR."] {
+      XCTAssertEqual(signed("450.00 \(spelling)")?.direction, .credit, spelling)
+    }
+    XCTAssertEqual(signed("450.00dr")?.direction, .debit)
   }
 
   /// Ruling 2, flag column: the suffix must agree with the direction the flag gives.
@@ -214,7 +231,7 @@ final class RowMapperAmountTests: XCTestCase {
 
   /// Probe rows from Lim's FAIL, separate columns, where the rulings define the outcome.
   func testLimSeparateColumnProbeRows() {
-    assertSeparate("450 Dr", "100.00", (45_000, .debit), "Lim: head read the credit; Dr agrees with the debit column")
+    assertSeparate("450 Dr", "100.00", nil, "both columns non-zero: ambiguous, refused (ruling 1)")
     assertSeparate("450.00 Dr", "", (45_000, .debit), "Lim: correct on main, must stay")
     assertSeparate("", "100.00 Cr", (10_000, .credit))
     assertSeparate("450", "-", (45_000, .debit))
@@ -224,7 +241,34 @@ final class RowMapperAmountTests: XCTestCase {
     assertSeparate("2000000000.00", "500.00", nil)
     assertSeparate("-", "-", nil)
     assertSeparate("", "", nil)
-    assertSeparate("450.00 Dr", "100.00 Cr", (45_000, .debit))
+    assertSeparate("450.00 Dr", "100.00 Cr", nil, "both columns non-zero (ruling 1)")
+  }
+
+  /// Ruling 1: exactly one column carries a non-zero amount, and it is not negative. A
+  /// negative number in either column refuses the row, and so does a non-zero amount in
+  /// both (never pick one). Both zero is no amount.
+  func testExactlyOneNonZeroNonNegativeAmountPerRow() {
+    assertSeparate("450.00", "100.00", nil, "both non-zero")
+    assertSeparate("-450.00", "100.00", nil, "negative debit, credit present: refused, not the credit")
+    assertSeparate("450.00", "-100.00", nil, "negative credit")
+    assertSeparate("-450.00", "", nil, "negative debit alone")
+    assertSeparate("", "-100.00", nil, "negative credit alone")
+    assertSeparate("-0.00", "", nil, "a negative zero is still negative")
+    assertSeparate("", "-0.00", nil, "a negative zero credit")
+    assertSeparate("-450.00 Dr", "", nil, "a sign that agrees with the suffix is still negative")
+    assertSeparate("0.00", "100.00", (10_000, .credit), "a zero debit is not an amount, so the credit is the one")
+    assertSeparate("450.00", "0.00", (45_000, .debit))
+    assertSeparate("450.00", "", (45_000, .debit))
+    assertSeparate("-", "100.00", (10_000, .credit), "a dash is a placeholder, not a negative")
+    assertSeparate("0.00", "0.00", nil, "both zero")
+    assertSeparate("0.00", "", nil)
+    assertSeparate("", "", nil)
+  }
+
+  /// Behaviour change vs main, for review: main read `450.00` beside `100.00` as the debit
+  /// (debit wins), and `-450.00` beside `100.00` as the credit. Both now refuse the row.
+  func testBothColumnsNonZeroIsNoLongerReadAsTheDebit() {
+    XCTAssertNil(map(["02/11/2026", "SWIGGY", "450.00", "100.00"], separateMapping))
   }
 
   // MARK: - The cap, on separate debit and credit columns
