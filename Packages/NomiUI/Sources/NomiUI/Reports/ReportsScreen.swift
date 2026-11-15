@@ -37,7 +37,7 @@ public struct ReportsScreen: View {
   /// The CSV the export menu just wrote. Presented once, then removed when the
   /// share sheet closes.
   @State private var shareItem: ReportsShareItem?
-  @State private var lastShared: URL?
+  @State private var shareCleanup = ReportsShareCleanup()
   @State private var exportError = false
   /// Bumped by a load-failed card's Retry, so the body reads the store again.
   @State private var retryToken = 0
@@ -77,7 +77,7 @@ public struct ReportsScreen: View {
     _ = retryToken
     guard basis == .financialYear else { return nil }
     do {
-      return .loaded(try insightsStore.monthlyTrend(for: period))
+      return .loaded(try ReportsMonthlyBars.buckets(for: period, store: insightsStore))
     } catch {
       return .failed
     }
@@ -99,18 +99,19 @@ public struct ReportsScreen: View {
   public var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: NomiSpacing.xs) {
-        if let viewModel {
-          if viewModel.transactionCount == 0 {
-            emptyState
-          } else {
+        switch ReportsBodyPlan.make(basis: basis, transactionCount: viewModel?.transactionCount) {
+        case .loadFailed:
+          NomiLoadFailedCard(message: "Insights didn’t load.") {
+            retryToken += 1
+          }
+        case .empty:
+          emptyState
+        case .content:
+          if let viewModel {
             summaryCard(viewModel)
             barsCard(viewModel)
             ReportsCategoryBreakdownCard(slices: viewModel.categories)
             TopMerchantsCard(merchants: viewModel.topMerchants)
-          }
-        } else {
-          NomiLoadFailedCard(message: "Insights didn’t load.") {
-            retryToken += 1
           }
         }
         // Independent of `viewModel`/`period` on purpose — a one-off,
@@ -136,7 +137,7 @@ public struct ReportsScreen: View {
     .alert("Could not export CSV", isPresented: $exportError) {
       Button("OK", role: .cancel) {}
     }
-    .sheet(item: $shareItem, onDismiss: { removeLastShared() }) { item in
+    .sheet(item: $shareItem, onDismiss: { shareCleanup.dismiss() }) { item in
       ReportsShareSheet(url: item.url)
     }
     .onChange(of: refreshToken) { _, _ in
@@ -289,19 +290,21 @@ public struct ReportsScreen: View {
     let names = CSVNameMaps(categories: categoryNames, accounts: accountNames)
     do {
       let url = try ReportsCSVExport.write(transactions, names: names, periodLabel: ReportsPeriod.label(for: exportPeriod))
-      lastShared = url
+      shareCleanup.show(url)
       shareItem = ReportsShareItem(url: url)
     } catch {
       exportError = true
     }
   }
+}
 
-  /// Runs when the share sheet closes. The file was written for that sheet
-  /// alone, so it goes now.
-  private func removeLastShared() {
-    guard let lastShared else { return }
-    ReportsCSVExport.remove(lastShared)
-    self.lastShared = nil
+/// The FY bars' source: `monthlyTrend(for:)` for the selected period, one bucket
+/// per month, zero-filled. Its own function so a test can pin that the bars read
+/// it, and not `trend(months:)` (R12b, Y2).
+@MainActor
+enum ReportsMonthlyBars {
+  static func buckets(for period: InsightPeriod, store: InsightsStore) throws -> [MonthBucket] {
+    try store.monthlyTrend(for: period)
   }
 }
 

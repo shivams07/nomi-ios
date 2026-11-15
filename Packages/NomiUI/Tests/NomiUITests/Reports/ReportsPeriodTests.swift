@@ -197,4 +197,71 @@ final class ReportsPeriodTests: XCTestCase {
     XCTAssertTrue(spoken.hasPrefix("Highest on day 2, "))
     XCTAssertEqual(ReportsSpendSeries.peakDescription(values: [0, 0]) { "on day \($0 + 1)" }, "No spend")
   }
+
+  /// R12b Y2 (mutant V1): the FY bars must be the store's `monthlyTrend(for:)`
+  /// for the selected year, in order and zero-filled. `trend(months:)` returns
+  /// something else, so reading it instead fails here.
+  @MainActor
+  func testFinancialYearBarsReadMonthlyTrendForTheSelectedYear() throws {
+    let debits = [0, 1_200_00, 0, 0, 500_00, 0, 0, 0, 90_00, 0, 0, 0]
+    let months = financialYearBuckets(startingYear: 2025, debits: debits)
+    let store = MonthlyBarsStore(monthly: months, trendMonths: [MonthBucket(id: date(2025, 4, 1), debitMinor: 9_999_00, creditMinor: 0)])
+
+    let bars = try ReportsMonthlyBars.buckets(for: .financialYear(startingYear: 2025), store: store)
+
+    XCTAssertEqual(bars.map(\.id), months.map(\.id))
+    XCTAssertEqual(bars.map(\.debitMinor), debits)
+    XCTAssertEqual(store.requestedPeriods, [.financialYear(startingYear: 2025)])
+  }
+
+  /// R12b ruling: a completed financial year with no transactions keeps the
+  /// empty state. It shows no bars, the same as any period with no transactions.
+  func testCompletedFinancialYearWithNoTransactionsKeepsTheEmptyState() {
+    let now = date(2026, 11, 15)
+    let completed = InsightPeriod.financialYear(startingYear: 2025)
+    XCTAssertLessThanOrEqual(dateRange(for: completed, calendar: utc, now: now).upperBound, now)
+
+    XCTAssertEqual(ReportsBodyPlan.make(basis: .financialYear, transactionCount: 0), .empty)
+  }
+
+  func testPopulatedPeriodShowsContentAndAFailedReadShowsLoadFailed() {
+    XCTAssertEqual(ReportsBodyPlan.make(basis: .financialYear, transactionCount: 3), .content(basis: .financialYear))
+    XCTAssertEqual(ReportsBodyPlan.make(basis: .calendarMonth, transactionCount: 1), .content(basis: .calendarMonth))
+    XCTAssertEqual(ReportsBodyPlan.make(basis: .financialYear, transactionCount: nil), .loadFailed)
+  }
+
+  /// Twelve buckets from April of `startingYear` to March of the next year.
+  private func financialYearBuckets(startingYear: Int, debits: [Int]) -> [MonthBucket] {
+    (0..<12).map { offset in
+      let month = (3 + offset) % 12 + 1
+      let year = startingYear + (3 + offset) / 12
+      return MonthBucket(id: date(year, month, 1), debitMinor: debits[offset], creditMinor: 0)
+    }
+  }
+}
+
+/// A store that answers `monthlyTrend(for:)` and `trend(months:)` with different
+/// buckets, and records which periods were asked for.
+@MainActor
+private final class MonthlyBarsStore: InsightsStore {
+  private struct Unused: Error {}
+  let monthly: [MonthBucket]
+  let trendMonths: [MonthBucket]
+  private(set) var requestedPeriods: [InsightPeriod] = []
+
+  init(monthly: [MonthBucket], trendMonths: [MonthBucket]) {
+    self.monthly = monthly
+    self.trendMonths = trendMonths
+  }
+
+  func monthlyTrend(for period: InsightPeriod) throws -> [MonthBucket] {
+    requestedPeriods.append(period)
+    return monthly
+  }
+
+  func trend(months: Int) throws -> [MonthBucket] { trendMonths }
+  func insights(for period: InsightPeriod) throws -> PeriodInsights { throw Unused() }
+  func accountSummaries(includeArchived: Bool) throws -> [AccountSummary] { throw Unused() }
+  func budgetProgress(year: Int, month: Int) throws -> [BudgetProgress] { throw Unused() }
+  func transactions(in period: InsightPeriod) throws -> [NomiCore.Transaction] { throw Unused() }
 }

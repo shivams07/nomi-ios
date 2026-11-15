@@ -123,6 +123,22 @@ enum ReportsPeriod {
   }
 }
 
+/// Which body the Insights screen shows. Decided here, not in the view, so the
+/// empty rule is testable. `transactionCount` is `nil` when the period read
+/// failed. A completed financial year with no transactions is `.empty`: the
+/// empty state and no bars, the same as any other period with no transactions.
+enum ReportsBodyPlan: Equatable {
+  case loadFailed
+  case empty
+  case content(basis: PeriodBasis)
+
+  static func make(basis: PeriodBasis, transactionCount: Int?) -> ReportsBodyPlan {
+    guard let transactionCount else { return .loadFailed }
+    guard transactionCount > 0 else { return .empty }
+    return .content(basis: basis)
+  }
+}
+
 /// The bar chart's series, pure so the day arithmetic is testable. A calendar
 /// month shows one bar per day; a financial year shows one bar per month of
 /// that year (`InsightsStore.monthlyTrend(for:)`, R12b Y2), because 365 bars

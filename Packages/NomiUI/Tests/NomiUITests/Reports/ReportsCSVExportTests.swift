@@ -55,4 +55,27 @@ final class ReportsCSVExportTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: first.path))
     XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
   }
+
+  /// R12b Y1 (mutant V2): dismissing the sheet removes the file it showed.
+  /// Without the `remove` call in `dismiss`, the file stays in `tmp`.
+  func testShareCleanupRemovesTheShownFileOnDismiss() throws {
+    var cleanup = ReportsShareCleanup()
+    let url = try ReportsCSVExport.write([], names: names, periodLabel: "cleanup-test")
+    cleanup.show(url)
+
+    cleanup.dismiss()
+
+    XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    XCTAssertNil(cleanup.shown)
+  }
+
+  func testShareCleanupDismissWithNothingShownLeavesOtherFilesAlone() throws {
+    let other = try ReportsCSVExport.write([], names: names, periodLabel: "cleanup-other")
+    defer { ReportsCSVExport.remove(other) }
+    var cleanup = ReportsShareCleanup()
+
+    cleanup.dismiss()
+
+    XCTAssertTrue(FileManager.default.fileExists(atPath: other.path))
+  }
 }
