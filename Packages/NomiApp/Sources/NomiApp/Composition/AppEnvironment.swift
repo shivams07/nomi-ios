@@ -113,7 +113,8 @@ public final class AppEnvironment: ObservableObject {
     self.transactionSearch = SwiftDataTransactionSearch(context: context)
 
     self.preferences = preferences
-    self.firstRun = FirstRunGate(store: preferences)
+    // Asked only while the first-run flag is absent (see `FirstRunGate.init`).
+    self.firstRun = FirstRunGate(store: preferences, hasStoredData: { try FirstRunGate.storeHoldsData(in: context) })
 
     let notificationSettings = NotificationSettingsStore(store: preferences, scheduler: scheduler)
     self.notificationSettings = notificationSettings

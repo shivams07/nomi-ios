@@ -1,5 +1,7 @@
 import Combine
 import Foundation
+import NomiCore
+import SwiftData
 
 /// Where the app opens. The whole of §2.18(2)'s "nothing decides
 /// onboarding-vs-main".
@@ -8,9 +10,14 @@ public enum AppRoute: Sendable, Equatable {
   case main
 }
 
-/// The two screens U7 built and nothing ever sequenced.
+/// The screens of first run, in the order a user passes them. Two routes leave
+/// Bring in your data: `connectMail` then `backfill` (mail), or
+/// `importStatement` alone (a file).
 public enum OnboardingStep: Sendable, Equatable {
+  case welcome
+  case bringData
   case connectMail
+  case importStatement
   case backfill
 }
 
@@ -34,9 +41,45 @@ public final class FirstRunGate: ObservableObject {
   /// persisted flag is the source of truth; this mirrors it.
   @Published public private(set) var route: AppRoute
 
-  public init(store: any KeyValueStoring) {
+  /// `hasStoredData` is consulted only while the flag is absent. It answers
+  /// whether the database already holds rows (see `storeHoldsData(in:)`), so an
+  /// install whose data came back without the flag, such as an iCloud restore,
+  /// is not sent through onboarding.
+  public init(store: any KeyValueStoring, hasStoredData: @MainActor () throws -> Bool = { false }) {
     self.store = store
-    self.route = Self.initialRoute(hasCompletedFirstRun: store.bool(forKey: PreferenceKey.hasCompletedFirstRun))
+    let flagged = store.bool(forKey: PreferenceKey.hasCompletedFirstRun)
+    var completed = flagged
+    var checkFailed = false
+    if !flagged {
+      do {
+        completed = try hasStoredData()
+      } catch {
+        // A check that cannot be read never sends the user to Welcome. They get the
+        // app for this launch, and nothing is written, so the next launch asks again.
+        completed = true
+        checkFailed = true
+      }
+    }
+    if completed && !flagged && !checkFailed {
+      // Written once, so later launches read the flag and never check the store.
+      // The write goes to the store this gate was given: in a non-persistent
+      // launch that is the in-memory store.
+      store.set(true, forKey: PreferenceKey.hasCompletedFirstRun)
+    }
+    self.route = Self.initialRoute(hasCompletedFirstRun: completed)
+  }
+
+  /// Whether the store already holds a transaction or an account. A cheap
+  /// existence check: each fetch asks for one row. A fetch that fails throws, and
+  /// the gate turns that into the app for this launch (see `init`).
+  public static func storeHoldsData(in context: ModelContext) throws -> Bool {
+    try hasRow(NomiCore.Transaction.self, in: context) || hasRow(NomiCore.Account.self, in: context)
+  }
+
+  private static func hasRow<Model: PersistentModel>(_ model: Model.Type, in context: ModelContext) throws -> Bool {
+    var descriptor = FetchDescriptor<Model>()
+    descriptor.fetchLimit = 1
+    return try context.fetchCount(descriptor) > 0
   }
 
   /// Pure, and the reason this is a static rather than an instance method: it
@@ -44,7 +87,43 @@ public final class FirstRunGate: ObservableObject {
   /// onboarding and a subsequent run does not") and a test can call it without
   /// constructing anything.
   public static func initialRoute(hasCompletedFirstRun: Bool) -> AppRoute {
-    hasCompletedFirstRun ? .main : .onboarding(.connectMail)
+    hasCompletedFirstRun ? .main : .onboarding(.welcome)
+  }
+
+  /// Welcome's "Get started". Only from Welcome.
+  public func start() {
+    guard case .onboarding(.welcome) = route else { return }
+    route = .onboarding(.bringData)
+  }
+
+  /// Bring in your data: "Continue with email". Only from Bring in your data.
+  public func chooseMail() {
+    guard case .onboarding(.bringData) = route else { return }
+    route = .onboarding(.connectMail)
+  }
+
+  /// Bring in your data: "Import a bank statement". Only from Bring in your data.
+  public func chooseImport() {
+    guard case .onboarding(.bringData) = route else { return }
+    route = .onboarding(.importStatement)
+  }
+
+  /// Bring in your data: "Add by hand". Leaves first run, as Skip does.
+  public func chooseManual() {
+    completeFirstRun()
+  }
+
+  /// The back control on connect mail, on import, and on Bring in your data.
+  /// Welcome has no back, and backfill has no way back into setup.
+  public func back() {
+    switch route {
+    case .onboarding(.connectMail), .onboarding(.importStatement):
+      route = .onboarding(.bringData)
+    case .onboarding(.bringData):
+      route = .onboarding(.welcome)
+    case .onboarding(.welcome), .onboarding(.backfill), .main:
+      return
+    }
   }
 
   /// Mail connected during onboarding — advance to the backfill screen.
@@ -71,6 +150,6 @@ public final class FirstRunGate: ObservableObject {
   /// raw `store.set` scattered through a view.
   public func resetForTesting() {
     store.set(false, forKey: PreferenceKey.hasCompletedFirstRun)
-    route = .onboarding(.connectMail)
+    route = .onboarding(.welcome)
   }
 }
