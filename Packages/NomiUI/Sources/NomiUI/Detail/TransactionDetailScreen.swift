@@ -191,8 +191,8 @@ public struct TransactionDetailScreen: View {
       .navigationTitle(isEditing ? "Edit transaction" : "")
     }
     .nomiSheet(detents: sheetDetents, selection: $detent)
-    .confirmationDialog(
-      "Delete this transaction?", isPresented: $isConfirmingDelete, titleVisibility: .visible
+    .alert(
+      "Delete this transaction?", isPresented: $isConfirmingDelete
     ) {
       Button("Delete", role: .destructive) { performDelete() }
       Button("Cancel", role: .cancel) {}

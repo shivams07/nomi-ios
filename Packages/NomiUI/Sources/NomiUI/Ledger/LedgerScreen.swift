@@ -697,10 +697,9 @@ private struct LedgerTransactionList: View {
     // uses. There is still no undo here — `delete` is a hard delete and
     // CloudKit has already propagated it by the time this dialog could ever
     // reappear; undo needs a soft-delete schema column, a separate ask.
-    .confirmationDialog(
+    .alert(
       "Delete this transaction?",
-      isPresented: Binding(get: { pendingDeleteID != nil }, set: { if !$0 { pendingDeleteID = nil } }),
-      titleVisibility: .visible
+      isPresented: Binding(get: { pendingDeleteID != nil }, set: { if !$0 { pendingDeleteID = nil } })
     ) {
       Button("Delete", role: .destructive) { performDelete() }
       Button("Cancel", role: .cancel) {}
@@ -935,7 +934,7 @@ private struct LedgerTransactionList: View {
     .foregroundStyle(NomiColor.ink)
     .padding()
     .background(NomiColor.card)
-    .confirmationDialog("Delete this transaction?", isPresented: .constant(true), titleVisibility: .visible) {
+    .alert("Delete this transaction?", isPresented: .constant(true)) {
       Button("Delete", role: .destructive) {}
       Button("Cancel", role: .cancel) {}
     }

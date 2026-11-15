@@ -101,7 +101,7 @@ struct BudgetEditorSheet: View {
           .opacity(model.canSave ? 1 : 0.4)
         }
       }
-      .confirmationDialog("Remove this budget?", isPresented: $model.isConfirmingRemove, titleVisibility: .visible) {
+      .alert("Remove this budget?", isPresented: $model.isConfirmingRemove) {
         Button("Remove", role: .destructive) {
           if model.confirmRemove() {
             onSaved?()
