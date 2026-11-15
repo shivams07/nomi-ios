@@ -50,9 +50,8 @@ public final class FileImportServiceImpl: FileImportService, @unchecked Sendable
     )
 
     // A row is unreadable when RowMapper cannot map it, or when its amount is
-    // outside AmountRules (RowMapper has no upper bound, wave-1 Risk 10). The
-    // second case is counted here so the screen never shows an amount it would
-    // not accept; commit still imports such a row (see ImportDryRunTests).
+    // outside AmountRules. Commit applies the same rule (see `commit`), so the
+    // rows it skips are exactly these (B7).
     var parsed: [(index: Int, row: ParsedRow)] = []
     var unreadable: [[String]] = []
     for (index, entry) in mapped.enumerated() {
@@ -137,7 +136,12 @@ public final class FileImportServiceImpl: FileImportService, @unchecked Sendable
     let mapped = RowMapper.mapAll(
       rows: file.dataRows, mapping: mapping, formatSignature: signature, calendar: calendar
     )
-    let parsed = mapped.compactMap { $0 }
+    // B7. A row is skipped when RowMapper cannot map it, or when its amount is
+    // outside AmountRules: the rule manual entry uses, and the one `dryRun` counts
+    // as unreadable. Skipped rows are counted in `skipped` and never reach the
+    // pipeline. `ImportSummary` carries no reason field, so the reason is the rule
+    // itself (see the PR).
+    let parsed = mapped.compactMap { $0 }.filter { AmountRules.isValidTransactionAmount($0.amountMinor) }
     let skipped = mapped.count - parsed.count
 
     guard !parsed.isEmpty else {

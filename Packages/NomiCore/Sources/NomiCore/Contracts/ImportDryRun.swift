@@ -36,13 +36,12 @@ public struct ImportDryRunRow: Sendable, Equatable, Identifiable {
 ///   an earlier row of the same file (same narration, amount and date under a
 ///   different reference). The Done screen's `created` and `merged` say which.
 /// - `unreadable`: raw cells of rows that cannot be read, including rows whose
-///   amount is outside `AmountRules` (RowMapper has no upper bound).
+///   amount is outside `AmountRules`.
 ///
 /// Invariants, asserted in `ImportDryRunTests`:
 /// `newCount + alreadyImportedCount == created + merged` and
-/// `unreadable.count == skipped`. The second holds for every amount inside
-/// `AmountRules`. An over-cap row is unreadable here but commit still imports it;
-/// that is a commit fix for a later unit.
+/// `unreadable.count == skipped`. Commit skips the same over-cap rows dry run
+/// counts as unreadable (B7), so the second holds for every amount.
 ///
 /// S11 copy: "new" here is not "will be added as a new row". The screen must not
 /// say a row marked new is added as a new row, and must not say an already-known

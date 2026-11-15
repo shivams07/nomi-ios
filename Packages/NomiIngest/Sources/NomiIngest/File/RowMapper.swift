@@ -16,8 +16,9 @@ struct ParsedRow {
 
 enum RowMapper {
   /// Every data row of one file, in file order. An element is `nil` when its
-  /// row could not be mapped (bad date, bad amount, or a row shorter than the
-  /// mapping requires) and counts as `skipped`.
+  /// row could not be mapped (bad date, bad amount, an amount outside
+  /// `AmountRules` (B7), or a row shorter than the mapping requires) and counts
+  /// as `skipped` in commit and as unreadable in dry run.
   ///
   /// This is the only way in, and it takes the whole file rather than a row,
   /// because a row's id depends on the rows before it (W1-11): `k` is how many
@@ -109,41 +110,112 @@ enum RowMapper {
   private static func resolveAmount(row: [String], mapping: ColumnMapping) -> (Int, Direction)? {
     switch mapping.directionStrategy {
     case .signedAmount:
-      guard let raw = field(row, mapping.amountColumn), let minor = parseAmountMinor(raw) else {
-        return nil
-      }
-      return (abs(minor), minor < 0 ? .debit : .credit)
+      guard let raw = field(row, mapping.amountColumn), let cell = readCell(raw),
+        let direction = signedDirection(cell)
+      else { return nil }
+      return (abs(cell.minor), direction)
 
     case .separateColumns(let debitIndex, let creditIndex):
-      let debit = field(row, debitIndex).flatMap(parseAmountMinor) ?? 0
-      let credit = field(row, creditIndex).flatMap(parseAmountMinor) ?? 0
-      if debit > 0 { return (debit, .debit) }
-      if credit > 0 { return (credit, .credit) }
-      return nil
+      guard let debit = separateCell(row, debitIndex, column: .debit),
+        let credit = separateCell(row, creditIndex, column: .credit)
+      else { return nil }
+      // B7 ruling 1: exactly one column carries a non-zero amount. Both non-zero is
+      // ambiguous and refused, and so is neither (no amount). Negatives were refused
+      // in `separateCell`, so both values here are zero or positive.
+      switch (debit, credit) {
+      case (let amount, 0) where amount > 0: return (amount, .debit)
+      case (0, let amount) where amount > 0: return (amount, .credit)
+      default: return nil
+      }
 
     case .flagColumn(let index, let debitValues):
-      guard let raw = field(row, mapping.amountColumn), let minor = parseAmountMinor(raw) else {
-        return nil
-      }
+      guard let raw = field(row, mapping.amountColumn), let cell = readCell(raw) else { return nil }
       let flag = field(row, index)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
       let direction: Direction = debitValues.contains(flag) ? .debit : .credit
-      return (abs(minor), direction)
+      // A Dr or Cr on the amount must agree with the flag it is read with.
+      guard cell.suffix == nil || cell.suffix == direction else { return nil }
+      return (abs(cell.minor), direction)
     }
   }
 
-  /// Parses a plain decimal amount string (optionally with `,` grouping
-  /// separators) into paise, via `Decimal` — never `Double` (R9).
-  private static func parseAmountMinor(_ raw: String) -> Int? {
-    let cleaned = raw
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-      .replacingOccurrences(of: ",", with: "")
-    guard !cleaned.isEmpty, let decimal = Decimal(string: cleaned) else { return nil }
-    let minor = decimal * 100
-    var rounded = Decimal()
-    var mutableMinor = minor
-    NSDecimalRound(&rounded, &mutableMinor, 0, .plain)
-    return NSDecimalNumber(decimal: rounded).intValue
+  /// One debit or credit cell of a separate-column row, as signed paise.
+  ///
+  /// B7 ruling: only a blank cell, "-", "–" or "—" reads as 0. Any other cell that
+  /// is not a number refuses the whole row, so the other column is never read in
+  /// its place. A Dr or Cr on the cell must agree with its column, and a sign must
+  /// agree with a suffix. A negative number, including "-0.00", is refused: a
+  /// separate-column amount is never negative (ruling 1). A number the rule refuses
+  /// is nil for the same reason.
+  private static func separateCell(_ row: [String], _ index: Int, column: Direction) -> Int? {
+    guard let raw = field(row, index) else { return 0 }
+    if placeholders.contains(raw.trimmingCharacters(in: .whitespacesAndNewlines)) { return 0 }
+    guard let cell = readCell(raw), signedDirection(cell) != nil else { return nil }
+    guard cell.suffix == nil || cell.suffix == column else { return nil }
+    guard cell.sign != .debit else { return nil }
+    return cell.minor
   }
+
+  /// A cell that stands for no amount: blank, a hyphen-minus, an en dash or an em dash.
+  private static let placeholders: Set<String> = ["", "-", "\u{2013}", "\u{2014}"]
+
+  /// One amount cell as the rules read it.
+  private struct Cell {
+    /// The magnitude, negative when the text has a leading "-".
+    let minor: Int
+    /// "-" is a debit, "+" a credit, and nil when the text has no sign.
+    let sign: Direction?
+    /// "Dr" or "Cr" at the end of the text, after optional whitespace.
+    let suffix: Direction?
+  }
+
+  /// The Dr and Cr spellings file import accepts, matched case-insensitively (ruling 4).
+  private static let suffixes: [(spelling: String, direction: Direction)] = [
+    ("cr.", .credit), ("cr", .credit), ("dr.", .debit), ("dr", .debit),
+  ]
+
+  /// Reads one amount cell. The Dr or Cr suffix is stripped and the sign removed, and
+  /// what is left goes to `AmountText.parse`, the rule manual entry uses. `AmountText`
+  /// is not changed. Refused (nil) when the rest is not an amount, when a second sign
+  /// follows the first, when a space sits between the sign and the number, or when the
+  /// magnitude is beyond the cap.
+  private static func readCell(_ raw: String) -> Cell? {
+    var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    var suffix: Direction?
+    // Compared per spelling length on the original characters, so a non-ASCII tail
+    // cannot change the length the suffix is cut by.
+    if let match = suffixes.first(where: { entry in
+      text.count >= entry.spelling.count && text.suffix(entry.spelling.count).lowercased() == entry.spelling
+    }) {
+      text = String(text.dropLast(match.spelling.count)).trimmingCharacters(in: .whitespaces)
+      suffix = match.direction
+    }
+    var sign: Direction?
+    if let first = text.first, first == "+" || first == "-" {
+      sign = first == "-" ? .debit : .credit
+      text.removeFirst()
+      // The sign is adjacent to the number: a second sign or a space here is refused.
+      if let next = text.first, next == "+" || next == "-" || next.isWhitespace { return nil }
+    }
+    guard case .success(let magnitude) = AmountText.parse(text, locale: amountLocale, allowNegative: false)
+    else { return nil }
+    return Cell(minor: sign == .debit ? -magnitude : magnitude, sign: sign, suffix: suffix)
+  }
+
+  /// The direction a signed-column cell gives. No sign and no suffix is a credit, as it
+  /// always was. Otherwise the sign or the suffix sets it. A sign and a suffix that
+  /// disagree give nil, and the row is refused.
+  private static func signedDirection(_ cell: Cell) -> Direction? {
+    switch (cell.sign, cell.suffix) {
+    case (nil, nil): return .credit
+    case (let sign?, nil): return sign
+    case (nil, let suffix?): return suffix
+    case (let sign?, let suffix?): return sign == suffix ? sign : nil
+    }
+  }
+
+  /// Pinned to en_US_POSIX so a file reads the same on every device: "." is the
+  /// decimal separator and "," is grouping, as bank exports write them.
+  private static let amountLocale = Locale(identifier: "en_US_POSIX")
 
   /// What `XLSXParser` writes for a real date cell.
   static let isoDateFormat = "yyyy-MM-dd"

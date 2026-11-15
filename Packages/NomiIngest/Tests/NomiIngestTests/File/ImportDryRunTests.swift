@@ -536,10 +536,9 @@ final class ImportDryRunTests: XCTestCase {
     XCTAssertEqual(after, before, "a dry run must not change any stored field of any row")
   }
 
-  /// RowMapper has no upper bound on amounts (wave-1 Risk 10), so a row can map to
-  /// an amount beyond `AmountRules.maximumMinor`. The dry run counts that row
-  /// unreadable. Commit still imports it: B4 does not change commit or RowMapper,
-  /// so the commit side is pinned as a strict known failure, not a fix.
+  /// An amount beyond `AmountRules.maximumMinor` is refused by RowMapper (B7, wave-1
+  /// Risk 10). The dry run counts that row unreadable, and commit skips it and counts
+  /// it in `skipped`, so the two agree.
   func testAmountBeyondTheCapIsUnreadableInTheDryRun() async throws {
     let container = try makeContainer()
     let store = SwiftDataPipelineStore(modelContainer: container)
@@ -558,12 +557,7 @@ final class ImportDryRunTests: XCTestCase {
     XCTAssertEqual(dry.sample.map(\.id), [0])
 
     let summary = try await service.commit(url, mapping: withReference, accountID: nil)
-    XCTAssertEqual(summary.created + summary.merged, 2, "commit imports the over-cap row as well")
-    XCTExpectFailure(
-      "commit does not skip over-cap amounts (RowMapper has no upper bound, wave-1 Risk 10); not B4's to change",
-      strict: true
-    ) {
-      XCTAssertEqual(summary.skipped, dry.unreadable.count, "rows commit skips must equal dry-run unreadable")
-    }
+    XCTAssertEqual(summary.created + summary.merged, 1, "commit skips the over-cap row")
+    XCTAssertEqual(summary.skipped, dry.unreadable.count, "rows commit skips must equal dry-run unreadable")
   }
 }
