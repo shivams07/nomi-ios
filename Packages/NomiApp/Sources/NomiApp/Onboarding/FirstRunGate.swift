@@ -145,11 +145,19 @@ public final class FirstRunGate: ObservableObject {
     route = .main
   }
 
+  /// Erase's last step (I-13 G10). The flag goes first and the route second,
+  /// the same order `completeFirstRun` uses in reverse: a crash between the two
+  /// leaves the next launch back on Welcome, which is the right answer after an
+  /// erase.
+  public func restartAfterErase() {
+    store.set(false, forKey: PreferenceKey.hasCompletedFirstRun)
+    route = .onboarding(.welcome)
+  }
+
   /// Debug/first-launch-after-reinstall affordance. Not wired to any UI; it
   /// exists so the flag has exactly one writer per direction and neither is a
   /// raw `store.set` scattered through a view.
   public func resetForTesting() {
-    store.set(false, forKey: PreferenceKey.hasCompletedFirstRun)
-    route = .onboarding(.welcome)
+    restartAfterErase()
   }
 }

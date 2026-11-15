@@ -149,6 +149,35 @@ final class FirstRunGateTests: XCTestCase {
     XCTAssertEqual(relaunch.route, .onboarding(.welcome))
   }
 
+  // MARK: - Erase (B5a step 5, G10)
+
+  /// An erase sends the app back to Welcome and clears the flag, so the next
+  /// launch reads it as a first run again.
+  func testRestartAfterEraseReturnsToWelcomeAndClearsTheFlag() {
+    let store = InMemoryKeyValueStore()
+    let gate = FirstRunGate(store: store)
+    gate.completeFirstRun()
+    XCTAssertEqual(gate.route, .main)
+
+    gate.restartAfterErase()
+
+    XCTAssertEqual(gate.route, .onboarding(.welcome))
+    XCTAssertFalse(store.bool(forKey: PreferenceKey.hasCompletedFirstRun))
+    XCTAssertEqual(FirstRunGate(store: store).route, .onboarding(.welcome))
+  }
+
+  /// `resetForTesting` delegates to the same reset, so it still returns to Welcome.
+  func testResetForTestingStillReturnsToWelcome() {
+    let store = InMemoryKeyValueStore()
+    let gate = FirstRunGate(store: store)
+    gate.completeFirstRun()
+
+    gate.resetForTesting()
+
+    XCTAssertEqual(gate.route, .onboarding(.welcome))
+    XCTAssertFalse(store.bool(forKey: PreferenceKey.hasCompletedFirstRun))
+  }
+
   // MARK: - The Welcome and Bring in your data steps
 
   func testGetStartedOpensBringData() {

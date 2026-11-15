@@ -1,4 +1,5 @@
 import Foundation
+import NomiCore
 
 /// The app's small-state seam: the first-run flag, `NotificationSettings`, and
 /// the mail sync cursor.
@@ -72,9 +73,18 @@ public final class InMemoryKeyValueStore: KeyValueStoring, @unchecked Sendable {
   }
 }
 
+/// How a preference is stored, so erase knows which removal to use.
+public enum ErasableKind: Sendable, Equatable {
+  case bool
+  case data
+}
+
 /// Every key this app writes to the key-value store, in one place, so a
 /// collision is visible rather than discovered.
 public enum PreferenceKey {
+  /// B6's key. `SwiftDataRecurringStore` keeps its own literal of the same string.
+  public static let dismissedRecurringSeries = "nomi.dismissedRecurringSeries"
+
   public static let hasCompletedFirstRun = "nomi.hasCompletedFirstRun"
   public static let notificationSettings = "nomi.notificationSettings"
   public static let mailSyncCursor = "nomi.mailSyncCursor"
@@ -93,4 +103,25 @@ public enum PreferenceKey {
   /// only on success, and left alone by `disconnect`. Read back as
   /// `MailConnectionHistory.lastSync`. See `CursorPersistingMailConnectionService`.
   public static let mailLastSyncAt = "nomi.mailLastSyncAt"
+
+  /// Everything erase clears from `AppEnvironment.preferences`, with how each one
+  /// is stored, so erase removes it with the right call. `PreferenceKeyErasableTests`
+  /// scans this file: a key added to the enum above and not listed here fails.
+  public static let erasable: [(key: String, kind: ErasableKind)] = [
+    (PreferenceKey.hasCompletedFirstRun, .bool),
+    (PreferenceKey.notificationSettings, .data),
+    (PreferenceKey.mailSyncCursor, .data),
+    (PreferenceKey.mailBackfillUnfinished, .bool),
+    (PreferenceKey.mailHasConnected, .bool),
+    (PreferenceKey.mailLastSyncAt, .data)
+  ]
+
+  /// Not in `erasable`. Both are stored in `UserDefaults.standard` (the recovery
+  /// record through `StoreRecoveryRecord`, the dismissals through the launch's
+  /// preference store, which in a persistent launch is `UserDefaults.standard`),
+  /// and erase removes them there by name.
+  public static let standardDefaultsErasable: [String] = [
+    StoreRecoveryRecord.defaultsKey,
+    PreferenceKey.dismissedRecurringSeries
+  ]
 }

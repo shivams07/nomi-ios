@@ -19,12 +19,18 @@ public protocol BudgetNotificationScheduling: Sendable {
   func isAuthorized() async -> Bool
   /// Presents one alert. Suppressed alerts must never reach here.
   func schedule(_ alert: BudgetAlert) async throws
+  /// Removes every alert this app has pending or already delivered (B5a, I-13 G3).
+  /// Budget alerts are the only notifications Nomi posts.
+  func removeAllAlerts() async
 }
 
 extension BudgetNotificationScheduling {
   /// Conformers that never model permission (test fakes that predate this) count
   /// as authorised, so only the real scheduler and fakes that opt in change.
   public func isAuthorized() async -> Bool { true }
+
+  /// A conformer with no notifications to remove. Test doubles keep this default.
+  public func removeAllAlerts() async {}
 }
 
 public enum BudgetNotificationError: Error, Sendable, Equatable {
@@ -55,6 +61,14 @@ public struct BudgetNotificationScheduler: BudgetNotificationScheduling {
         .requestAuthorization(options: [.alert, .sound, .badge])
     #else
       throw BudgetNotificationError.unavailableOnThisPlatform
+    #endif
+  }
+
+  public func removeAllAlerts() async {
+    #if canImport(UserNotifications)
+      let center = UNUserNotificationCenter.current()
+      center.removeAllPendingNotificationRequests()
+      center.removeAllDeliveredNotifications()
     #endif
   }
 

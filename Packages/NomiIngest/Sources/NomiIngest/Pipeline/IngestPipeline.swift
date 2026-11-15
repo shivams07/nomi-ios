@@ -32,6 +32,10 @@ public actor IngestPipeline {
   private var observer: (any PostCommitObserver)?
   private var isBusy = false
   private var waiters: [CheckedContinuation<Void, Never>] = []
+  /// Bumped by `runExclusiveForErase`. A batch records it on entry; if it has
+  /// moved by the time the batch gets the lock, the batch was fetched before an
+  /// erase and must not write after it.
+  private var epoch = 0
 
   public init(
     store: any PipelineStore,
@@ -62,7 +66,12 @@ public actor IngestPipeline {
   @discardableResult
   public func ingest(_ drafts: [TransactionDraft]) async throws -> IngestBatchResult {
     guard !drafts.isEmpty else { return .empty }
+    let entered = epoch
     await acquire()
+    guard epoch == entered else {
+      release()
+      throw CancellationError()
+    }
     defer { release() }
     return try await performIngest(drafts)
   }
@@ -229,7 +238,12 @@ public actor IngestPipeline {
   /// not defensive (R5).
   @discardableResult
   public func reconcile() async throws -> ReconcileResult {
+    let entered = epoch
     await acquire()
+    guard epoch == entered else {
+      release()
+      throw CancellationError()
+    }
     defer { release() }
     return try await performReconcile()
   }
@@ -267,6 +281,23 @@ public actor IngestPipeline {
     guard !plan.isEmpty else { return }
     try await store.apply(plan)
     await observer?.didCommit(affectedCategoryIDs: plan.affectedCategoryIDs)
+  }
+
+  // MARK: - Erase (B5a)
+
+  /// Erase's turn at the pipeline. Takes the same lock as every batch, bumps the
+  /// epoch so that a batch already queued behind it throws `CancellationError`
+  /// instead of writing, and runs `body` before releasing.
+  ///
+  /// `body` must not call back into this pipeline. The lock is not re-entrant,
+  /// and the call would wait on itself.
+  public func runExclusiveForErase<T: Sendable>(
+    _ body: @Sendable () async throws -> T
+  ) async rethrows -> T {
+    await acquire()
+    epoch += 1
+    defer { release() }
+    return try await body()
   }
 
   // MARK: - Exclusive access
