@@ -171,7 +171,11 @@ public struct RulesScreen: View {
     let shown = isSearching
       ? matching(builtInRules)
       : RuleBuiltInPreview.visible(builtInRules, showAll: showsAllBuiltIn)
-    let offersShowAll = !isSearching && !showsAllBuiltIn && builtInRules.count > RuleBuiltInPreview.rowLimit
+    let offersShowAll = RuleBuiltInPreview.offersShowAll(
+      total: builtInRules.count,
+      showAll: showsAllBuiltIn,
+      searching: isSearching
+    )
     return Section {
       ForEach(shown) { rule in
         builtInRow(rule)
@@ -239,9 +243,6 @@ public struct RulesScreen: View {
             .nomiTextStyle(.rowTitle)
             .foregroundStyle(NomiColor.ink)
           Spacer(minLength: NomiSpacing.xs)
-          Image(systemName: "chevron.right")
-            .foregroundStyle(NomiColor.inkSecondary)
-            .accessibilityHidden(true)
         }
         .frame(minHeight: NomiSpacing.rowMinHeight)
       }

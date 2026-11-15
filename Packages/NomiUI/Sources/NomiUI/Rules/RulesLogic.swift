@@ -85,6 +85,10 @@ enum RuleScopeSummary {
 
 /// Formats `RuleStore.preview(pattern:)`'s live match count through the catalog's
 /// plural variations (F6b, S10), so 0, 1 and 2 each read correctly.
+///
+/// The count is the transactions the pattern matches, which is what preview
+/// reports. It is not the number of transactions a save will change: rows
+/// already in the target category, or set by hand, are still counted.
 enum RuleMatchSummary {
   static func text(for count: Int) -> String {
     String(localized: "\(count) rows match", bundle: .module)
@@ -97,6 +101,12 @@ enum RuleBuiltInPreview {
 
   static func visible<Row>(_ rows: [Row], showAll: Bool) -> [Row] {
     showAll ? rows : Array(rows.prefix(rowLimit))
+  }
+
+  /// Whether the built-in section shows "Show all": only when collapsing hides
+  /// rows and no search is running (a search lists every match already).
+  static func offersShowAll(total: Int, showAll: Bool, searching: Bool) -> Bool {
+    !searching && !showAll && total > rowLimit
   }
 }
 

@@ -34,6 +34,23 @@ final class RuleBuiltInPreviewTests: XCTestCase {
   func testExactlyTheLimitShowsEveryRowCollapsed() {
     XCTAssertEqual(RuleBuiltInPreview.visible([0, 1, 2], showAll: false), [0, 1, 2])
   }
+
+  // "Show all" is offered only when collapsing hides something and no search is running.
+  func testFourRowsCollapsedOffersShowAll() {
+    XCTAssertTrue(RuleBuiltInPreview.offersShowAll(total: 4, showAll: false, searching: false))
+  }
+
+  func testThreeRowsCollapsedOffersNothing() {
+    XCTAssertFalse(RuleBuiltInPreview.offersShowAll(total: 3, showAll: false, searching: false))
+  }
+
+  func testShowAllTappedOffersNothing() {
+    XCTAssertFalse(RuleBuiltInPreview.offersShowAll(total: 47, showAll: true, searching: false))
+  }
+
+  func testSearchingOffersNothing() {
+    XCTAssertFalse(RuleBuiltInPreview.offersShowAll(total: 47, showAll: false, searching: true))
+  }
 }
 
 final class RuleRowSubtitleTests: XCTestCase {
