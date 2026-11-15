@@ -36,7 +36,7 @@ public protocol RecurringInsightsStore: AnyObject {
   /// stored and harmless.
   func dismiss(seriesID: String) throws
 
-  /// Ids dismissed on this device. For an "Undo" toast and tests.
+  /// Ids dismissed on this device.
   func dismissedSeriesIDs() -> Set<String>
 }
 

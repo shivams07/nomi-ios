@@ -48,7 +48,9 @@ struct RootView: View {
   /// Shared by the Home Upcoming card and its `SubscriptionsScreen` destination
   /// below, so both agree on the same cache-backed construction.
   private var recurringStore: SwiftDataRecurringStore {
-    SwiftDataRecurringStore(context: environment.container.mainContext, cache: environment.cache)
+    SwiftDataRecurringStore(
+      context: environment.container.mainContext, cache: environment.cache,
+      dismissals: environment.preferences)
   }
 
   /// `LedgerScreen`'s own row-tap sheet and the Home recent-row sheet below

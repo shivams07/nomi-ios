@@ -1,5 +1,6 @@
 import Foundation
 import NomiCore
+import NomiPreview
 import SwiftData
 import XCTest
 
@@ -7,12 +8,14 @@ import XCTest
 
 /// B6 (I-14), recurring-series dismissal. A dismissed series is hidden from
 /// `recurringSeries()` on this device, immediately and after a new store
-/// instance. The dismissed ids are kept in `UserDefaults`, not in the store, so
-/// there is no schema change.
+/// instance. The dismissed ids live in the launch's preference store (the same
+/// seam as the first-run flag), not in the SwiftData store, so there is no
+/// schema change.
 ///
-/// Each test gets its own `UserDefaults` suite, removed in `tearDownWithError`,
-/// so nothing reaches the app's standard defaults or another test. XCTest, not
-/// swift-testing, for the container-lifetime reason in `RecurringStoreTests`.
+/// Most tests use `InMemoryKeyValueStore`, so nothing reaches `UserDefaults`.
+/// The one test that does reach a `UserDefaults` suite removes it in
+/// `tearDownWithError`. XCTest, not swift-testing, for the container-lifetime
+/// reason in `RecurringStoreTests`.
 @MainActor
 final class RecurringDismissTests: XCTestCase {
 
@@ -53,29 +56,59 @@ final class RecurringDismissTests: XCTestCase {
       into: fixture.context)
     try fixture.store.dismiss(seriesID: "NETFLIX")
 
-    // A new store with a new cache, on the same context and the same defaults:
-    // what a relaunch looks like, as far as this feature is concerned.
+    // A new store with a new cache, on the same context and the same preference
+    // store: what a relaunch looks like, as far as this feature is concerned.
     let reopened = makeStore(
-      context: fixture.context, cache: InsightsCache(), defaults: fixture.defaults)
+      context: fixture.context, cache: InsightsCache(), preferences: fixture.preferences)
 
     XCTAssertTrue(try reopened.recurringSeries().isEmpty)
     XCTAssertEqual(reopened.dismissedSeriesIDs(), ["NETFLIX"])
   }
 
+  /// I-6 Amendment 2: nothing a non-persistent launch writes outlives it. The
+  /// launch's preference store is a read-through overlay over what the user last
+  /// saved, so a dismissal here stays out of `UserDefaults` and the next launch
+  /// does not see it. The production `UserDefaults.standard` default was the
+  /// leak this guards against (PR #195 review).
+  func testADismissalInAMemoryLaunchDoesNotOutliveIt() throws {
+    let key = SwiftDataRecurringStore.dismissedKey
+    let suiteName = "RecurringDismissTests.\(UUID().uuidString)"
+    suiteNames.append(suiteName)
+    let saved = UserDefaultsKeyValueStore(defaults: UserDefaults(suiteName: suiteName)!)
+    let standardBefore = UserDefaults.standard.data(forKey: key)
+
+    let fixture = try makeFixture(preferences: ReadThroughKeyValueStore(reading: saved))
+    insertRun(
+      descriptionText: "NETFLIX SUBSCRIPTION", normalized: "NETFLIX", daysAgo: [60, 30, 0],
+      into: fixture.context)
+    try fixture.store.dismiss(seriesID: "NETFLIX")
+
+    XCTAssertTrue(try fixture.store.recurringSeries().isEmpty, "hidden in this launch")
+    XCTAssertEqual(
+      UserDefaults.standard.data(forKey: key), standardBefore,
+      "a dismissal does not reach UserDefaults.standard")
+    XCTAssertNil(saved.data(forKey: key), "nor the saved preference the next launch reads")
+
+    let nextLaunch = makeStore(
+      context: fixture.context, cache: InsightsCache(),
+      preferences: ReadThroughKeyValueStore(reading: saved))
+    XCTAssertEqual(nextLaunch.dismissedSeriesIDs(), [], "the next launch sees nothing dismissed")
+  }
+
   /// A value that does not decode reads as nothing dismissed, and a dismissal
-  /// written over it works. Nothing is hidden because of garbage in defaults.
+  /// written over it works. Nothing is hidden because of garbage in storage.
   func testCorruptValueReadsAsNone() throws {
     let fixture = try makeFixture()
     insertRun(
       descriptionText: "NETFLIX SUBSCRIPTION", normalized: "NETFLIX", daysAgo: [60, 30, 0],
       into: fixture.context)
 
-    fixture.defaults.set(Data("not json {".utf8), forKey: SwiftDataRecurringStore.dismissedKey)
+    fixture.preferences.set(Data("not json {".utf8), forKey: SwiftDataRecurringStore.dismissedKey)
     XCTAssertEqual(fixture.store.dismissedSeriesIDs(), [], "garbage is no dismissals")
     XCTAssertEqual(
       try fixture.store.recurringSeries().map(\.id), ["NETFLIX"], "and nothing is hidden")
 
-    fixture.defaults.set(
+    fixture.preferences.set(
       Data(#"{"NETFLIX":true}"#.utf8), forKey: SwiftDataRecurringStore.dismissedKey)
     XCTAssertEqual(
       fixture.store.dismissedSeriesIDs(), [], "well-formed JSON of the wrong shape too")
@@ -131,10 +164,24 @@ final class RecurringDismissTests: XCTestCase {
 
     XCTAssertEqual(
       fixture.store.dismissedSeriesIDs(), ["NETFLIX", "NOT A SERIES", "SPOTIFY INDIA"])
-    let raw = try XCTUnwrap(fixture.defaults.data(forKey: SwiftDataRecurringStore.dismissedKey))
+    let raw = try XCTUnwrap(fixture.preferences.data(forKey: SwiftDataRecurringStore.dismissedKey))
     XCTAssertEqual(
       try JSONDecoder().decode([String].self, from: raw),
       ["NETFLIX", "NOT A SERIES", "SPOTIFY INDIA"])
+  }
+
+  /// The preview store has its own in-memory set. A dismissal hides the series
+  /// and is reported back, as the real store does, so a screen built on the
+  /// fake behaves the same in previews and tests.
+  func testTheFakeStoreHidesADismissedSeries() throws {
+    let fake = FakeRecurringStore(series: FakeRecurringStore.sampleSeries)
+    XCTAssertEqual(
+      try fake.recurringSeries().map(\.id), ["NETFLIX", "SPOTIFY INDIA", "CULT FIT MEMBERSHIP"])
+
+    try fake.dismiss(seriesID: "NETFLIX")
+
+    XCTAssertEqual(try fake.recurringSeries().map(\.id), ["SPOTIFY INDIA", "CULT FIT MEMBERSHIP"])
+    XCTAssertEqual(fake.dismissedSeriesIDs(), ["NETFLIX"])
   }
 
   // MARK: -
@@ -172,20 +219,22 @@ final class RecurringDismissTests: XCTestCase {
     let store: SwiftDataRecurringStore
     let context: ModelContext
     let cache: InsightsCache
-    let defaults: UserDefaults
+    let preferences: any KeyValueStoring
   }
 
-  private func makeFixture() throws -> Fixture {
+  private func makeFixture(
+    preferences: any KeyValueStoring = InMemoryKeyValueStore()
+  ) throws -> Fixture {
     let stack = try InMemoryStack()
     stacks.append(stack)
     let cache = InsightsCache()
-    let defaults = makeDefaults()
-    let store = makeStore(context: stack.context, cache: cache, defaults: defaults)
-    return Fixture(store: store, context: stack.context, cache: cache, defaults: defaults)
+    let store = makeStore(context: stack.context, cache: cache, preferences: preferences)
+    return Fixture(
+      store: store, context: stack.context, cache: cache, preferences: preferences)
   }
 
   private func makeStore(
-    context: ModelContext, cache: InsightsCache, defaults: UserDefaults
+    context: ModelContext, cache: InsightsCache, preferences: any KeyValueStoring
   ) -> SwiftDataRecurringStore {
     // Copied out rather than captured through `self`, as in `RecurringStoreTests`.
     let moment = reference
@@ -194,12 +243,6 @@ final class RecurringDismissTests: XCTestCase {
       cache: cache,
       calendar: calendar,
       now: { moment },
-      dismissals: defaults)
-  }
-
-  private func makeDefaults() -> UserDefaults {
-    let name = "RecurringDismissTests.\(UUID().uuidString)"
-    suiteNames.append(name)
-    return UserDefaults(suiteName: name)!
+      dismissals: preferences)
   }
 }

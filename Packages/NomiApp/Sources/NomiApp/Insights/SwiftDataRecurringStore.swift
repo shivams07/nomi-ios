@@ -29,29 +29,32 @@ public final class SwiftDataRecurringStore: RecurringInsightsStore {
   /// months) is the only history there is.
   public static let windowMonths = 6
 
-  /// `UserDefaults` key for the dismissed series ids, a JSON array. Per device
-  /// (I-14); not in the store, so no migration.
+  /// Key for the dismissed series ids, a JSON array, in the launch's preference
+  /// store (I-14). Per device; not in the SwiftData store, so no migration.
   static let dismissedKey = "nomi.dismissedRecurringSeries"
 
   private let context: ModelContext
   private let cache: InsightsCache
   private let calendar: Calendar
   private let now: () -> Date
-  private let dismissals: UserDefaults
+  private let dismissals: any KeyValueStoring
 
   /// `calendar` defaults to `.current` deliberately, matching
   /// `SwiftDataInsightsStore`. This is a display aggregate, not a key: a user
   /// abroad should see their own day boundaries, and `NomiCalendar.india` is
   /// for values that must be identical on two devices (see its doc comment).
   ///
-  /// `dismissals` is where dismissed series are remembered. The default is the
-  /// app's standard defaults; a test passes its own suite.
+  /// `dismissals` is the launch's preference store (`AppEnvironment.preferences`).
+  /// For a non-persistent launch that is a read-through overlay, so a dismissal
+  /// made in that launch never reaches `UserDefaults` (I-6 Amendment 2). The
+  /// default is an in-memory store, which keeps nothing past this instance and
+  /// never touches `UserDefaults`. The app always passes its own.
   public init(
     context: ModelContext,
     cache: InsightsCache,
     calendar: Calendar = .current,
     now: @escaping () -> Date = { Date() },
-    dismissals: UserDefaults = .standard
+    dismissals: any KeyValueStoring = InMemoryKeyValueStore()
   ) {
     self.context = context
     self.cache = cache
