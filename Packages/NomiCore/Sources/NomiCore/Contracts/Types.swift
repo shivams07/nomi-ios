@@ -32,6 +32,9 @@ public struct ManualTransactionDraft: Sendable {
   public var direction: Direction
   public var categoryID: UUID?
   public var accountID: UUID?
+  /// What the user wrote about the row (I-11). Trimmed and stored as
+  /// `Transaction.note`; empty after trimming means no note.
+  public var note: String?
 
   public init(
     date: Date = Date(),
@@ -39,7 +42,8 @@ public struct ManualTransactionDraft: Sendable {
     descriptionText: String,
     direction: Direction = .debit,
     categoryID: UUID? = nil,
-    accountID: UUID? = nil
+    accountID: UUID? = nil,
+    note: String? = nil
   ) {
     self.date = date
     self.amountMinor = amountMinor
@@ -47,6 +51,7 @@ public struct ManualTransactionDraft: Sendable {
     self.direction = direction
     self.categoryID = categoryID
     self.accountID = accountID
+    self.note = note
   }
 }
 

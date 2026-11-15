@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import NomiCore
 
@@ -54,6 +55,20 @@ public final class FakeTransactionEditor: TransactionEditing {
     row.updatedAt = timestamp
   }
 
+  /// I-11 Amendment 1, as `SwiftDataTransactionEditor.editedDedupeKey`: a manual row keeps the natural
+  /// key, and any other source is salted with its id.
+  private func editedDedupeKey(for row: Transaction) -> String {
+    let natural = makeDedupeKey(
+      date: row.date,
+      amountMinor: row.amountMinor,
+      directionRaw: row.directionRaw,
+      normalizedDescription: row.normalizedDescription
+    )
+    guard row.sourceRaw != IngestSource.manual.rawValue else { return natural }
+    let salted = natural + "|edited|" + row.id.uuidString.lowercased()
+    return SHA256.hash(data: Data(salted.utf8)).map { String(format: "%02x", $0) }.joined()
+  }
+
   private func manualPartner(for row: Transaction) -> Transaction? {
     guard row.currencyCode == "INR", row.accountID != nil else { return nil }
     let candidates = transactions.filter { $0.id != row.id && $0.amountMinor == row.amountMinor }
@@ -67,6 +82,15 @@ public final class FakeTransactionEditor: TransactionEditing {
     return candidates.first { $0.id == partnerID }
   }
 
+  /// Mirrors `SwiftDataTransactionEditor.setDirection` over the in-memory row.
+  public func setDirection(_ id: UUID, to direction: Direction) throws {
+    guard let transaction = transactions.first(where: { $0.id == id }) else { return }
+    guard !transaction.isTransfer else { throw TransactionEditError.transferLeg }
+    transaction.directionRaw = direction.rawValue
+    transaction.dedupeKey = editedDedupeKey(for: transaction)
+    transaction.updatedAt = Date()
+  }
+
   public func update(_ id: UUID, amountMinor: Int, date: Date, descriptionText: String, note: String?) throws {
     guard let transaction = transactions.first(where: { $0.id == id }) else { return }
     let normalized = normalizeDescription(descriptionText)
@@ -74,12 +98,7 @@ public final class FakeTransactionEditor: TransactionEditing {
     transaction.date = date
     transaction.descriptionText = descriptionText
     transaction.normalizedDescription = normalized
-    transaction.dedupeKey = makeDedupeKey(
-      date: date,
-      amountMinor: amountMinor,
-      directionRaw: transaction.directionRaw,
-      normalizedDescription: normalized
-    )
+    transaction.dedupeKey = editedDedupeKey(for: transaction)
     transaction.note = note
     transaction.updatedAt = Date()
   }

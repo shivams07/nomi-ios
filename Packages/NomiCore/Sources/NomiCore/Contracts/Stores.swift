@@ -1,5 +1,12 @@
 import Foundation
 
+public enum TransactionStoreError: Error, Sendable, Equatable {
+  /// The store does not implement the operation. Thrown by the protocol's stub default.
+  case unsupported
+  /// A transfer needs two different accounts.
+  case sameAccount
+}
+
 @MainActor
 public protocol TransactionStore: AnyObject {
   func add(_ draft: ManualTransactionDraft) throws -> Transaction
@@ -9,6 +16,28 @@ public protocol TransactionStore: AnyObject {
   func reviewQueue() throws -> [Transaction]
   func dismissReview(_ id: UUID) throws
   func lastUsedCategoryID() -> UUID?
+
+  /// Two legs in one save: a debit on `fromAccountID` and a credit on `toAccountID`, same amount and date,
+  /// one new transferGroupID, transferSource .manual, categoryID nil, needsReview false, source .manual.
+  /// Amount validated by AmountRules (R8) before anything is written. Returns (debit, credit).
+  func addTransfer(amountMinor: Int, date: Date, fromAccountID: UUID, toAccountID: UUID, note: String?) throws -> (Transaction, Transaction)
+  /// accountID of the most recently created manual row that has one; nil when none.
+  func lastUsedAccountID() -> UUID?
+  /// Category ids of past non-transfer rows whose normalizedDescription contains normalizeDescription(text),
+  /// most frequent first, ties by most recent; at most `limit`; [] when text normalises to fewer than 2 characters.
+  func suggestedCategories(forDescription text: String, limit: Int) throws -> [UUID]
+}
+
+/// Stub defaults for a conformer that does not implement the three transfer and entry-hint requirements.
+/// `FakeTransactionStore` and `SwiftDataTransactionStore` override all three.
+extension TransactionStore {
+  public func addTransfer(amountMinor: Int, date: Date, fromAccountID: UUID, toAccountID: UUID, note: String?) throws -> (Transaction, Transaction) {
+    throw TransactionStoreError.unsupported
+  }
+
+  public func lastUsedAccountID() -> UUID? { nil }
+
+  public func suggestedCategories(forDescription text: String, limit: Int) throws -> [UUID] { [] }
 }
 
 @MainActor
@@ -212,6 +241,17 @@ public protocol AccountStore: AnyObject {
     kindRaw: String
   ) throws -> Account
 
+  /// The four-argument `create` with an opening balance (I-11). Validated exactly as `update` validates
+  /// one: `AmountRules.isValidOpeningBalance`, else `AmountValidationError.outOfRange`, before anything is written.
+  @discardableResult
+  func create(
+    displayName: String,
+    institution: String,
+    lastFour: String,
+    kindRaw: String,
+    openingBalanceMinor: Int?
+  ) throws -> Account
+
   func rename(_ id: UUID, to displayName: String) throws
   func setArchived(_ id: UUID, _ archived: Bool) throws
 
@@ -248,6 +288,32 @@ public protocol AccountStore: AnyObject {
   ///
   /// Budgets are untouched: they are keyed by category, not by account.
   func delete(_ id: UUID) throws
+}
+
+/// Stub default for conformers that predate the opening balance. Two writes, not atomic: a conformer
+/// that holds an opening balance overrides this with one save (`SwiftDataAccountStore` does).
+extension AccountStore {
+  @discardableResult
+  public func create(
+    displayName: String,
+    institution: String,
+    lastFour: String,
+    kindRaw: String,
+    openingBalanceMinor: Int?
+  ) throws -> Account {
+    let account = try create(displayName: displayName, institution: institution, lastFour: lastFour, kindRaw: kindRaw)
+    if let openingBalanceMinor {
+      try update(
+        account.id,
+        displayName: displayName,
+        institution: institution,
+        lastFour: lastFour,
+        kindRaw: kindRaw,
+        openingBalanceMinor: openingBalanceMinor
+      )
+    }
+    return account
+  }
 }
 
 /// The pipeline's post-commit hook. U4 calls it, U10 implements it, U8 wires it.
