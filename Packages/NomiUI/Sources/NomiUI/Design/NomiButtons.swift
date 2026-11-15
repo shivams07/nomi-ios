@@ -95,7 +95,7 @@ public struct NomiHeroIcon: View {
   }
 }
 
-/// A destructive row: `error` text, leading, at least 52 pt high, no fill.
+/// A destructive row (D21): `error` text centred in a 52 pt white card row.
 public struct NomiDestructiveRow: View {
   public let title: String
   public let action: () -> Void
@@ -110,10 +110,11 @@ public struct NomiDestructiveRow: View {
       Text(title)
         .nomiTextStyle(.rowTitle)
         .foregroundStyle(NomiColor.error)
-        .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .center)
         .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
+    .nomiCard()
   }
 }
 

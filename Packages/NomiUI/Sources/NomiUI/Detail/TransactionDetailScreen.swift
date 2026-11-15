@@ -680,7 +680,6 @@ public struct TransactionDetailScreen: View {
         isConfirmingDelete = true
       }
       .padding(.horizontal, NomiSpacing.sm)
-      .nomiCard(padding: EdgeInsets())
       .padding(.top, NomiSpacing.md)
     }
     .frame(maxWidth: .infinity, alignment: .leading)

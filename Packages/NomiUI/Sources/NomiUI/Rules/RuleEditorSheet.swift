@@ -105,7 +105,6 @@ struct RuleEditorSheet: View {
               isConfirmingDelete = true
             }
             .padding(.horizontal, NomiSpacing.sm)
-            .nomiCard(padding: EdgeInsets())
             .padding(.top, NomiSpacing.md)
           }
         }

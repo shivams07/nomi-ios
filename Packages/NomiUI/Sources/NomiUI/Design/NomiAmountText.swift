@@ -45,10 +45,10 @@ public enum NomiAmountFormat {
   }
 }
 
-/// An amount in one line. The decimals are dimmed (SIMP §1 rule 4):
-/// `decimalOpacityGround` on the ground, `decimalOpacityHero` on the hero.
-/// The text shrinks to half size before it wraps, and the whole amount is one
-/// accessibility element.
+/// An amount in one line. The decimals are dimmed (SIMP §1 rule 4) by
+/// `decimalsOpacity(for:)`: 50% at 24 pt and above, 65% below, on the ground
+/// and on the hero alike. The text shrinks to half size before it wraps, and
+/// the whole amount is one accessibility element.
 public struct NomiAmountText: View {
   public enum Context: Sendable {
     case ground
@@ -86,12 +86,19 @@ public struct NomiAmountText: View {
     context == .hero ? NomiColor.heroText : NomiColor.ink
   }
 
+  /// The decimals' opacity for a style: 0.5 at a point size of 24 or more,
+  /// 0.65 below (wave-1 Correction 4). The same rule on the ground and the hero.
+  public static func decimalsOpacity(for style: NomiTextStyle) -> Double {
+    style.pointSize >= 24 ? 0.5 : 0.65
+  }
+
   private var decimalColor: Color {
+    let opacity = Self.decimalsOpacity(for: style)
     switch context {
     case .ground:
-      return NomiColor.ink.opacity(NomiColor.decimalOpacityGround)
+      return NomiColor.ink.opacity(opacity)
     case .hero:
-      return NomiColor.heroText.opacity(NomiColor.decimalOpacityHero)
+      return NomiColor.heroText.opacity(opacity)
     }
   }
 

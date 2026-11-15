@@ -59,15 +59,19 @@ public enum NomiFont {
 public enum NomiTextStyle {
   /// Large title (H0 nav bar, via the appearance proxy): SemiBold 34, tracking -0.4.
   case largeTitle
-  /// Hero amount: Regular 48, tracking -1.4.
+  /// Hero amount: SemiBold 46, tracking -1.4 (F2a: amounts are SemiBold).
   case heroAmount
   /// Accounts hero title: SemiBold 24.
   case heroTitle
-  /// Gauge centre, sheet amount. Regular 28, tracking -0.6. Remapped.
+  /// Gauge centre, sheet amount. SemiBold 28, tracking -0.6.
   case displayValue
-  /// Insights headline totals (Spent, Received): Regular 24, tracking -0.4.
+  /// Insights headline totals (Spent, Received): SemiBold 24, tracking -0.4.
   /// Added by IN (decisions Amendment 2 R2). `displayValue` is unchanged.
   case summaryValue
+  /// Page title (NomiPageHeader, canvas `.h1`): SemiBold 30, tracking -0.8.
+  case pageTitle
+  /// Tile amounts (canvas `.pcard .bal` family): SemiBold 20, monospaced digits.
+  case amountLarge
   /// Section and card titles. SemiBold 20. Remapped.
   case title
   /// Card titles and sheet titles: SemiBold 17.
@@ -78,7 +82,7 @@ public enum NomiTextStyle {
   case rowTitle
   /// Settings rows: Regular 15.
   case rowBody
-  /// Row amounts: Medium 16, monospaced digits.
+  /// Row amounts: SemiBold 16, monospaced digits (F2a: was Medium).
   case amount
   /// Credit amounts: SemiBold 16, monospaced digits.
   case amountStrong
@@ -110,16 +114,18 @@ public enum NomiTextStyle {
   public var font: Font {
     switch self {
     case .largeTitle: return .custom(NomiFont.interSemiBold, size: 34, relativeTo: .largeTitle)
-    case .heroAmount: return .custom(NomiFont.interRegular, size: 48, relativeTo: .largeTitle)
+    case .heroAmount: return .custom(NomiFont.interSemiBold, size: 46, relativeTo: .largeTitle)
     case .heroTitle: return .custom(NomiFont.interSemiBold, size: 24, relativeTo: .title)
-    case .displayValue: return .custom(NomiFont.interRegular, size: 28, relativeTo: .title)
-    case .summaryValue: return .custom(NomiFont.interRegular, size: 24, relativeTo: .title2)
+    case .displayValue: return .custom(NomiFont.interSemiBold, size: 28, relativeTo: .title)
+    case .summaryValue: return .custom(NomiFont.interSemiBold, size: 24, relativeTo: .title2)
+    case .pageTitle: return .custom(NomiFont.interSemiBold, size: 30, relativeTo: .largeTitle)
+    case .amountLarge: return .custom(NomiFont.interSemiBold, size: 20, relativeTo: .title3).monospacedDigit()
     case .title: return .custom(NomiFont.interSemiBold, size: 20, relativeTo: .title3)
     case .headline: return .custom(NomiFont.interSemiBold, size: 17, relativeTo: .headline)
     case .body: return .custom(NomiFont.interMedium, size: 16, relativeTo: .body)
     case .rowTitle: return .custom(NomiFont.interMedium, size: 15, relativeTo: .body)
     case .rowBody: return .custom(NomiFont.interRegular, size: 15, relativeTo: .body)
-    case .amount: return .custom(NomiFont.interMedium, size: 16, relativeTo: .body).monospacedDigit()
+    case .amount: return .custom(NomiFont.interSemiBold, size: 16, relativeTo: .body).monospacedDigit()
     case .amountStrong: return .custom(NomiFont.interSemiBold, size: 16, relativeTo: .body).monospacedDigit()
     case .button: return .custom(NomiFont.interSemiBold, size: 16, relativeTo: .body)
     case .navAction: return .custom(NomiFont.interMedium, size: 17, relativeTo: .body)
@@ -142,7 +148,42 @@ public enum NomiTextStyle {
     case .heroAmount: return -1.4
     case .displayValue: return -0.6
     case .summaryValue: return -0.4
+    case .pageTitle: return -0.8
     default: return 0
+    }
+  }
+
+  /// The point size the role is set at, before Dynamic Type scaling. The
+  /// decimals rule in `NomiAmountText` reads it: at 24 and above the decimals
+  /// dim to 50%, below that to 65%.
+  public var pointSize: CGFloat {
+    switch self {
+    case .largeTitle: return 34
+    case .heroAmount: return 46
+    case .heroTitle: return 24
+    case .displayValue: return 28
+    case .summaryValue: return 24
+    case .pageTitle: return 30
+    case .title: return 20
+    case .headline: return 17
+    case .body: return 16
+    case .rowTitle: return 15
+    case .rowBody: return 15
+    case .amount: return 16
+    case .amountLarge: return 20
+    case .amountStrong: return 16
+    case .button: return 16
+    case .navAction: return 17
+    case .navActionStrong: return 17
+    case .chip: return 14
+    case .chipSelected: return 14
+    case .subhead: return 13
+    case .heroChip: return 12
+    case .label: return 13
+    case .caption: return 13
+    case .footnote: return 12
+    case .micro: return 11
+    case .tabLabel: return 10.5
     }
   }
 }

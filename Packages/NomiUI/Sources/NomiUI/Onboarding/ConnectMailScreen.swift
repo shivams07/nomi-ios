@@ -250,17 +250,17 @@ public struct ConnectMailScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .nomiCard(padding: EdgeInsets())
 
-        VStack(spacing: 0) {
-          Button("Sync now") { model.syncNow() }
-            .buttonStyle(NomiSecondaryButtonStyle())
-            .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
-            .padding(.horizontal, NomiSpacing.sm)
-          cardDivider
-          NomiDestructiveRow(title: "Disconnect") { model.requestDisconnect() }
-            .padding(.horizontal, NomiSpacing.sm)
-        }
-        .nomiCard(padding: EdgeInsets())
-        .padding(.top, NomiSpacing.sm)
+        // Sync keeps its own card. Disconnect draws its own (NomiDestructiveRow),
+        // so it sits outside this card rather than inside it.
+        Button("Sync now") { model.syncNow() }
+          .buttonStyle(NomiSecondaryButtonStyle())
+          .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+          .padding(.horizontal, NomiSpacing.sm)
+          .nomiCard(padding: EdgeInsets())
+          .padding(.top, NomiSpacing.sm)
+
+        NomiDestructiveRow(title: "Disconnect") { model.requestDisconnect() }
+          .padding(.top, NomiSpacing.sm)
 
         // Disconnecting never touches transactions already synced.
         Text("Disconnecting stops new mail scans. Your transactions stay in Nomi.")

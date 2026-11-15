@@ -2,9 +2,10 @@ import SwiftUI
 
 // clt-harness: include
 
-/// An empty state (F3, I-4): a 56 pt `iconTile` circle with an `iconGlyph`
-/// symbol, a `headline` title, a centred `caption` message in `inkSecondary`,
-/// and an optional full-width primary button (52 pt).
+/// An empty state (F3, I-4; F2a): a centred block with a 56 pt `iconTile`
+/// circle and `iconGlyph` symbol, a SemiBold 17 title, and a caption message
+/// in `inkSecondary` at most 260 pt wide. The optional action is a small
+/// primary pill (44 pt high, `primary` fill), the one next step.
 ///
 /// The button shows only when both `actionTitle` and `action` are set. Callers
 /// that need an "Add transaction" action hide it when
@@ -51,16 +52,41 @@ public struct NomiEmptyState: View {
         .nomiTextStyle(.caption)
         .foregroundStyle(NomiColor.inkSecondary)
         .multilineTextAlignment(.center)
-        .frame(maxWidth: 290)
+        .frame(maxWidth: 260)
         .padding(.top, NomiSpacing.xxs)
 
       if let actionTitle, let action {
         Button(actionTitle, action: action)
-          .buttonStyle(NomiPrimaryButtonStyle(height: 52))
-          .padding(.top, NomiSpacing.md)
+          .buttonStyle(NomiSmallPillButtonStyle())
+          .padding(.top, NomiSpacing.sm)
       }
     }
     .frame(maxWidth: .infinity)
+  }
+}
+
+/// The small primary pill: 44 pt high, `primary` capsule, white SemiBold 14
+/// label, fills its label's width. Dims at 40% when disabled.
+private struct NomiSmallPillButtonStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    NomiSmallPillBody(configuration: configuration)
+  }
+}
+
+private struct NomiSmallPillBody: View {
+  let configuration: ButtonStyleConfiguration
+
+  @Environment(\.isEnabled) private var isEnabled
+
+  var body: some View {
+    configuration.label
+      .font(.custom(NomiFont.interSemiBold, size: 14, relativeTo: .subheadline))
+      .foregroundStyle(NomiColor.onPrimary)
+      .padding(.horizontal, 18)
+      .frame(minHeight: NomiSpacing.minTarget)
+      .background(Capsule().fill(NomiColor.primary))
+      .contentShape(Capsule())
+      .opacity(isEnabled ? 1 : 0.4)
   }
 }
 
