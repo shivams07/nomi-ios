@@ -26,7 +26,7 @@ public enum NomiModelContainer {
   /// Shown when the store could not be opened this launch and was **not**
   /// moved. The next launch tries the real store again (I-6 Amendment 1).
   public static let retryLaterReason =
-    "Nomi could not open your saved data this time, so nothing you add will be kept after you close the app. Close Nomi and open it again."
+    "Nomi couldn’t open your saved data this time. Nothing has been changed or deleted. Close Nomi and open it again; anything you add before then won’t be kept."
 
   /// Shown when even a fresh or in-memory store could not be used after a
   /// recovery attempt. The original file is either moved aside or left in place.
@@ -115,6 +115,8 @@ public enum NomiModelContainer {
   /// store. `false` means nothing this launch writes will survive it, so the
   /// caller must not run background or foreground sync, and must not write
   /// preferences to `UserDefaults` (see `AppServices`).
+  ///
+  /// `persistent` is false exactly when `mode` is `.inMemory`.
   ///
   /// ⚠️ **A missing iCloud entitlement is not one of the failures this
   /// catches, and B11 originally assumed it was.** CI proved otherwise: on a
@@ -245,7 +247,7 @@ public enum NomiModelContainer {
     reason: String = storageUnavailableReason
   ) -> (container: ModelContainer, mode: StorageMode, persistent: Bool) {
     do {
-      return (try makeInMemory(), .localOnly(reason: reason), false)
+      return (try makeInMemory(), .inMemory(reason: reason), false)
     } catch {
       fatalError(
         "Nomi could not open any store, not even in memory (\(String(describing: type(of: error))))"

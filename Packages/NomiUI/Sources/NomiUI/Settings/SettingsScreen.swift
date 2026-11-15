@@ -634,6 +634,24 @@ private struct SettingsDisclosureStyle: DisclosureGroupStyle {
   .preferredColorScheme(.light)
 }
 
+#Preview("Settings — not being saved") {
+  // R7c: the store would not open at all, so nothing this launch adds is kept.
+  // The caption is the reason alone, with no "safe" sentence.
+  NavigationStack {
+    SettingsScreen(
+      mailConnectionService: FakeMailConnectionService(),
+      fileImportService: FakeFileImportService(),
+      categoryStore: FakeCategoryStore(),
+      ruleStore: FakeRuleStore(),
+      notificationSettings: .constant(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9)),
+      storageMode: .inMemory(
+        reason: "Nomi couldn’t open your saved data this time. Nothing has been changed or deleted. Close Nomi and open it again; anything you add before then won’t be kept.")
+    )
+  }
+  .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
+  .preferredColorScheme(.light)
+}
+
 #Preview("Settings — iCloud signed out, light") {
   // U9b's state, and the one a user is most likely to be in: the container
   // constructed fine, so B11's preview above cannot show it. Sync is paused,

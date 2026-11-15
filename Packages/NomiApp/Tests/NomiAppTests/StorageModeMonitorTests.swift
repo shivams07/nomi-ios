@@ -106,6 +106,35 @@ final class StorageModeMonitorTests: XCTestCase {
     XCTAssertFalse(monitor.mode.isSyncing, "a paused container is not syncing")
   }
 
+  // MARK: - R7c: an in-memory launch is not on CloudKit either
+
+  /// `.inMemory` is no store at all, so no account answer may make it read as
+  /// syncing or paused. It stays what the launch constructed.
+  func testAnInMemoryLaunchStaysInMemoryWhateverTheAccountSays() {
+    let constructed = StorageMode.inMemory(reason: "boom")
+
+    XCTAssertEqual(
+      StorageModeResolver.resolve(constructed: constructed, account: nil), constructed)
+    XCTAssertEqual(
+      StorageModeResolver.resolve(constructed: constructed, account: .noAccount), constructed)
+    XCTAssertEqual(
+      StorageModeResolver.resolve(constructed: constructed, account: .restricted), constructed)
+  }
+
+  /// The SIM1 guard, for the in-memory case: an in-memory process must not reach
+  /// CloudKit, so two refreshes leave the probe untouched and the mode unchanged.
+  @MainActor
+  func testAnInMemoryMonitorNeverAsksTheProbe() async {
+    let probe = FakeProbe(reason: .noAccount)
+    let monitor = StorageModeMonitor(constructed: .inMemory(reason: "boom"), probe: probe)
+
+    await monitor.refresh()
+    await monitor.refresh()
+
+    XCTAssertEqual(probe.probeCount, 0, "an in-memory process must not reach CloudKit")
+    XCTAssertEqual(monitor.mode, .inMemory(reason: "boom"))
+  }
+
   // MARK: - SIM1: a local-only launch never asks the probe
 
   /// `CKAccountProbe.pauseReason()` builds a `CKContainer`, which traps an
