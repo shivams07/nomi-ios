@@ -216,7 +216,144 @@ final class RuleEditReevaluateTests: XCTestCase {
     XCTAssertEqual(result.recategorized, 2)
   }
 
+  // MARK: - Post-commit and rewrites
+
+  /// Records each affected set the coordinator hands its observer.
+  final class SpyCommit: PostCommitObserver, @unchecked Sendable {
+    private(set) var calls: [Set<UUID>] = []
+    func didCommit(affectedCategoryIDs: Set<UUID>) async { calls.append(affectedCategoryIDs) }
+  }
+
+  /// Scenario A. The released row was Food, so the commit must name Food, and
+  /// the whole call is one commit. Without the released categories in the
+  /// seed, no commit fires at all and the Insights cache and budget alerts
+  /// keep the pre-edit total.
+  func testScenarioAReportsTheReleasedCategoryInOneCommit() async throws {
+    let context = try makeContext()
+    let (store, coordinator) = makeStore(in: context)
+    try row("UPI AMAZON PAY", key: "r1", amount: 120_000, context: context)
+    try row("UPI ACT FIBRE", key: "r2", amount: 99_900, context: context)
+    try row("AXIS ATM", key: "r3", amount: 200_000, categoryID: food, source: .manual, context: context)
+    try context.save()
+    try store.create(pattern: "*A*", categoryID: food, scope: .any)
+    let ruleID = try XCTUnwrap(try ruleNamed("*A*", in: context)).id
+    XCTAssertEqual(totals(context)["Food"], 419_900, "before Food 4,199.00")
+
+    let spy = SpyCommit()
+    coordinator.setObserver(spy)
+    let result = try store.update(ruleID, pattern: "*AMAZON*", categoryID: food, scope: .any)
+    try await settle()
+
+    let after = totals(context)
+    XCTAssertEqual(after["Food"], 320_000, "after Food 3,200.00")
+    XCTAssertEqual(after["Uncategorised"], 99_900, "after Uncategorised 999.00")
+    XCTAssertEqual(after.values.reduce(0, +), 419_900, "total unchanged")
+    XCTAssertEqual(result.matched, 1)
+    XCTAssertEqual(result.recategorized, 1)
+    XCTAssertEqual(spy.calls.count, 1, "exactly one didWrite")
+    XCTAssertEqual(spy.calls.first, [food], "released Food must be in the affected set")
+  }
+
+  /// Scenario B. The released row is re-categorised to Bills in the same call,
+  /// and the one commit names both categories.
+  func testScenarioBReportsBothCategoriesInOneCommit() async throws {
+    let context = try makeContext()
+    let (store, coordinator) = makeStore(in: context)
+    try row("UPI AMAZON PAY", key: "r1", amount: 120_000, context: context)
+    try row("AXIS ATM", key: "r3", amount: 200_000, categoryID: food, source: .manual, context: context)
+    try row("UPI ACT FIBRE", key: "r4", amount: 49_900, context: context)
+    try context.save()
+    try store.create(pattern: "*ACT*", categoryID: bills, scope: .any)
+    try store.create(pattern: "*A*", categoryID: food, scope: .any)
+    let ruleA = try XCTUnwrap(try ruleNamed("*A*", in: context)).id
+    XCTAssertEqual(totals(context)["Food"], 369_900, "before Food 3,699.00")
+    XCTAssertNil(totals(context)["Bills"], "no Bills before the edit")
+
+    let spy = SpyCommit()
+    coordinator.setObserver(spy)
+    let result = try store.update(ruleA, pattern: "*AMAZON*", categoryID: food, scope: .any)
+    try await settle()
+
+    let after = totals(context)
+    XCTAssertEqual(after["Food"], 320_000, "after Food 3,200.00")
+    XCTAssertEqual(after["Bills"], 49_900, "after Bills 499.00")
+    XCTAssertEqual(after.values.reduce(0, +), 369_900, "total unchanged")
+    XCTAssertEqual(try fetchRow("r4", in: context).categoryID, bills)
+    XCTAssertEqual(result.matched, 2)
+    XCTAssertEqual(result.recategorized, 1)
+    XCTAssertEqual(spy.calls.count, 1, "one didWrite for the whole call")
+    XCTAssertEqual(spy.calls.first, [food, bills])
+  }
+
+  /// A row the edit still matches, with its category unchanged, must not be
+  /// rewritten: `updatedAt` stays where the seeding pass put it. Only this
+  /// assertion sees a release-everything implementation, since the category
+  /// totals come out the same either way.
+  func testAStillMatchedRowIsNotRewritten() async throws {
+    let context = try makeContext()
+    let (seedStore, _) = makeStore(in: context)
+    try row("UPI AMAZON PAY", key: "r1", amount: 120_000, context: context)
+    try row("UPI ACT FIBRE", key: "r2", amount: 99_900, context: context)
+    try context.save()
+    try seedStore.create(pattern: "*A*", categoryID: food, scope: .any)
+    let ruleID = try XCTUnwrap(try ruleNamed("*A*", in: context)).id
+    let seededAt = try fetchRow("r1", in: context).updatedAt
+
+    let later = Date(timeIntervalSince1970: 2_000_000_000)
+    let (editStore, coordinator) = makeStore(in: context, now: { later })
+    let spy = SpyCommit()
+    coordinator.setObserver(spy)
+    try editStore.update(ruleID, pattern: "*AMAZON*", categoryID: food, scope: .any)
+    try await settle()
+
+    let kept = try fetchRow("r1", in: context)
+    XCTAssertEqual(kept.updatedAt, seededAt, "a still-matched row must not be rewritten")
+    XCTAssertEqual(kept.categoryID, food)
+    XCTAssertEqual(spy.calls.first, [food], "the released ACT row's Food is in the affected set")
+  }
+
+  /// The observer is reached through a detached task, so give it a turn.
+  private func settle() async throws {
+    try await Task.sleep(nanoseconds: 100_000_000)
+  }
+
   // MARK: - Helpers
+
+  private func makeContext() throws -> ModelContext {
+    let stack = try InMemoryStack()
+    stacks.append(stack)
+    return stack.context
+  }
+
+  /// A store over an existing context, so two stores can share one ledger, with
+  /// the clock injected for the rewrite test.
+  private func makeStore(
+    in context: ModelContext,
+    now: @escaping () -> Date = { Date() }
+  ) -> (SwiftDataRuleStore, WriteCoordinator) {
+    let coordinator = WriteCoordinator(cache: InsightsCache())
+    return (SwiftDataRuleStore(context: context, coordinator: coordinator, now: now), coordinator)
+  }
+
+  /// Category totals in minor units, keyed by category, read from the rows.
+  private func totals(_ context: ModelContext) -> [String: Int] {
+    var out: [String: Int] = [:]
+    let rows = (try? context.fetch(FetchDescriptor<Transaction>())) ?? []
+    for transaction in rows {
+      let key: String
+      if transaction.categoryID == nil {
+        key = "Uncategorised"
+      } else if transaction.categoryID == food {
+        key = "Food"
+      } else if transaction.categoryID == bills {
+        key = "Bills"
+      } else {
+        key = "other"
+      }
+      out[key, default: 0] += transaction.amountMinor
+    }
+    return out
+  }
 
   /// A store on its own in-memory container, the way `RulePriorityTests` builds
   /// one, so no row or rule from one test reaches the next.
