@@ -41,25 +41,55 @@ public enum MailCredentialError: Error, Sendable, Equatable {
 public struct KeychainCredentialStore: MailCredentialStoring {
   private let service: String
   private let account: String
+  #if canImport(Security)
+    private let calls: KeychainItemCalls
+  #endif
 
   public init(service: String = "ai.nomi.mail", account: String = "imap") {
     self.service = service
     self.account = account
+    #if canImport(Security)
+      self.calls = .security
+    #endif
   }
 
+  #if canImport(Security)
+    /// Test seam: the same store over scripted SecItem calls. Nothing outside
+    /// this file and its tests reaches it.
+    init(service: String, account: String, calls: KeychainItemCalls) {
+      self.service = service
+      self.account = account
+      self.calls = calls
+    }
+  #endif
+
+  /// Writes in place. Never deletes first, so a failed write leaves the saved
+  /// password as it was.
   public func save(_ credentials: IMAPCredentials) throws {
     #if canImport(Security)
       let payload = StoredCredentials(credentials)
       let data = try JSONEncoder().encode(payload)
 
-      try delete()
+      let attributes: [String: Any] = [
+        kSecValueData as String: data,
+        kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+      ]
+
+      let updated = calls.update(baseQuery(), attributes)
+      if updated == errSecSuccess { return }
+      guard updated == errSecItemNotFound else { throw MailCredentialError.keychain(updated) }
 
       var query = baseQuery()
-      query[kSecValueData as String] = data
-      query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-
-      let status = SecItemAdd(query as CFDictionary, nil)
-      guard status == errSecSuccess else { throw MailCredentialError.keychain(status) }
+      query.merge(attributes) { _, new in new }
+      let added = calls.add(query)
+      if added == errSecSuccess { return }
+      if added == errSecDuplicateItem {
+        // Another writer added the item between our update and our add. Update it.
+        let retried = calls.update(baseQuery(), attributes)
+        guard retried == errSecSuccess else { throw MailCredentialError.keychain(retried) }
+        return
+      }
+      throw MailCredentialError.keychain(added)
     #else
       throw MailCredentialError.unavailableOnThisPlatform
     #endif
@@ -91,7 +121,7 @@ public struct KeychainCredentialStore: MailCredentialStoring {
 
   public func delete() throws {
     #if canImport(Security)
-      let status = SecItemDelete(baseQuery() as CFDictionary)
+      let status = calls.delete(baseQuery())
       guard status == errSecSuccess || status == errSecItemNotFound else {
         throw MailCredentialError.keychain(status)
       }
@@ -133,3 +163,18 @@ public struct KeychainCredentialStore: MailCredentialStoring {
     }
   }
 }
+
+#if canImport(Security)
+  /// The three SecItem calls `KeychainCredentialStore` makes, as values, so a test
+  /// can script them. `.security` is the real framework; nothing else builds one.
+  struct KeychainItemCalls: Sendable {
+    var update: @Sendable (_ query: [String: Any], _ attributes: [String: Any]) -> OSStatus
+    var add: @Sendable (_ attributes: [String: Any]) -> OSStatus
+    var delete: @Sendable (_ query: [String: Any]) -> OSStatus
+
+    static let security = KeychainItemCalls(
+      update: { SecItemUpdate($0 as CFDictionary, $1 as CFDictionary) },
+      add: { SecItemAdd($0 as CFDictionary, nil) },
+      delete: { SecItemDelete($0 as CFDictionary) })
+  }
+#endif
