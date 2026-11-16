@@ -26,9 +26,9 @@ public struct PresentedTransaction: Identifiable, Hashable, Sendable {
 /// artboard). The read state shows the header (badge, merchant, amount, day and
 /// account), the category card with its "Always use this" rule switch, the
 /// transfer and note card, the bank alert quote, the account and date rows,
-/// source details and UPI, and Delete at the foot. Edit swaps the bar to Cancel /
-/// Save and shows the amount, description and note fields, with Delete at the
-/// bottom (the edit form moves to its own sheet in S3b).
+/// source details and UPI, and Delete at the foot. Edit opens
+/// `TransactionEditSheet` (S3b), which holds the amount, date, description, note
+/// and direction, and writes them on Save.
 ///
 /// Presented as a `.sheet(item:)` from `LedgerScreen`, which applies its own
 /// `.modelContainer`, so the `@Query`s below are safe. The detents belong to
@@ -68,19 +68,13 @@ public struct TransactionDetailScreen: View {
   /// Nil hides the rule row.
   @Environment(\.nomiRuleStore) private var ruleStore
 
-  /// Whether the rule switch is on, read from the store after each write.
-  @State private var ruleIsOn = false
-  /// Bumped when a rule write fails, so the switch redraws in its prior state.
-  @State private var ruleSwitchRevision = 0
-  @State private var isEditing = false
+  /// The "Always use this" switch: its state and its writes (S3b). Its rules are
+  /// read fresh at each call, through `storedRules`.
+  @State private var ruleSwitch = TransactionRuleSwitchModel()
   /// The note as the read state's row shows it. Written on submit.
   @State private var readNote = ""
-  /// How many past rows the pattern matches (`RuleStore.preview`). Nil when it
-  /// cannot be read, and the caption is then left out.
-  @State private var matchCount: Int?
-  /// Set for two seconds after the switch turns a rule on, to show what it
-  /// recategorised in place of the match caption.
-  @State private var appliedCount: Int?
+  /// The edit sheet's model. Edit sets it, and the sheet is shown while it is set.
+  @State private var editModel: TransactionEditModel?
 
   @State private var isCategoryPickerPresented = false
   @State private var isAccountPickerPresented = false
@@ -95,10 +89,6 @@ public struct TransactionDetailScreen: View {
   /// for this sheet only, so it does not survive a reopen; the sentence that
   /// stays is the one that reads `isTransfer`.
   @State private var transferNote: String?
-
-  @State private var amountText = ""
-  @State private var editedDescription = ""
-  @State private var editedNote = ""
 
   public init(
     transactionID: UUID,
@@ -118,39 +108,6 @@ public struct TransactionDetailScreen: View {
   }
 
   private var transaction: NomiCore.Transaction? { matches.first }
-
-  private var editedAmountMinor: Int { EntryAmount.minorUnits(from: amountText) }
-
-  /// Save is enabled only when the form changes something and the amount is
-  /// valid (DT: "disabled until changed and valid").
-  private var canSaveNow: Bool {
-    guard let transaction else { return false }
-    return canSave(transaction)
-  }
-
-  private func canSave(_ transaction: NomiCore.Transaction) -> Bool {
-    EntrySaveGate.isEnabled(amountMinor: editedAmountMinor) && hasEditChanges(transaction)
-  }
-
-  private func hasEditChanges(_ transaction: NomiCore.Transaction) -> Bool {
-    editedAmountMinor != transaction.amountMinor
-      || editedDescription != transaction.descriptionText
-      || TransactionDetailLogic.noteToSave(from: editedNote) != transaction.note
-  }
-
-  /// U18: the edit field's leading glyph is the row's own currency symbol,
-  /// not a hardcoded "₹" — a USD row edits in `$`, not rupees. `en_IN` stays
-  /// the locale (same reasoning as `NomiFormatters.amountString`); only the
-  /// symbol is read off the formatter, the amount text field carries the
-  /// digits.
-  private var currencySymbol: String {
-    guard let currencyCode = transaction?.currencyCode, currencyCode != "INR" else { return "₹" }
-    let formatter = NumberFormatter()
-    formatter.locale = Locale(identifier: "en_IN")
-    formatter.numberStyle = .currency
-    formatter.currencyCode = currencyCode
-    return formatter.currencySymbol
-  }
 
   private func categoryFor(_ transaction: NomiCore.Transaction) -> NomiCore.Category? {
     transaction.categoryID.flatMap { id in categories.first { $0.id == id } }
@@ -204,11 +161,7 @@ public struct TransactionDetailScreen: View {
         if let transaction {
           ScrollView {
             VStack(spacing: NomiSpacing.sm) {
-              if isEditing {
-                editContent(transaction)
-              } else {
-                readContent(transaction)
-              }
+              readContent(transaction)
             }
             .padding(.horizontal, NomiSpacing.screenGutter)
             .padding(.top, NomiSpacing.xs)
@@ -217,20 +170,24 @@ public struct TransactionDetailScreen: View {
           .onAppear {
             refreshSuggestion()
             readNote = transaction.note ?? ""
-            refreshRuleState(for: transaction)
-            refreshMatchCount(for: transaction)
+            ruleSwitch.refresh(pattern: rulePattern(for: transaction), categoryID: transaction.categoryID) {
+              try storedRules()
+            }
+            ruleSwitch.refreshMatchCount(pattern: rulePattern(for: transaction), ruleStore: ruleStore)
           }
           .onChange(of: transaction.note) { _, newValue in
             readNote = newValue ?? ""
           }
-          .onChange(of: transaction.categoryID) { _, _ in
-            refreshRuleState(for: transaction)
+          .onChange(of: transaction.categoryID) { _, newValue in
+            ruleSwitch.refresh(pattern: rulePattern(for: transaction), categoryID: newValue) {
+              try storedRules()
+            }
           }
-          .task(id: appliedCount) {
-            guard appliedCount != nil else { return }
+          .task(id: ruleSwitch.appliedCount) {
+            guard ruleSwitch.appliedCount != nil else { return }
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
-            appliedCount = nil
+            ruleSwitch.clearAppliedNote()
           }
         } else {
           // Reached for a beat after `delete()` dismisses this sheet — the
@@ -245,7 +202,7 @@ public struct TransactionDetailScreen: View {
       #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
       #endif
-      .navigationTitle(isEditing ? "Edit transaction" : "")
+      .navigationTitle("")
     }
     .nomiSheet(detents: [.large])
     .alert("Delete this transaction?", isPresented: $isConfirmingDelete) {
@@ -265,62 +222,58 @@ public struct TransactionDetailScreen: View {
     .sheet(isPresented: $isDatePickerPresented, onDismiss: commitPickedDate) {
       DatePickerSheet(date: $pickedDate)
     }
+    .sheet(item: $editModel) { model in
+      TransactionEditSheet(model: model, transactionStore: transactionStore) {
+        dismiss()
+      }
+    }
     .alert(
       "Something went wrong",
-      isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }),
-      presenting: errorMessage,
+      isPresented: Binding(get: { failureMessage != nil }, set: { if !$0 { clearFailure() } }),
+      presenting: failureMessage,
       actions: { _ in Button("OK", role: .cancel) {} },
       message: { message in Text(message) }
     )
   }
 
+  /// The text of the one error alert: the screen's own failure, else the rule switch's
+  /// refused write (see `DetailErrorAlert`).
+  private var failureMessage: String? {
+    DetailErrorAlert.message(screen: errorMessage, ruleSwitch: ruleSwitch.errorMessage)
+  }
+
+  /// Dismissing the alert clears the failure it showed. A second failure stays until its turn.
+  private func clearFailure() {
+    if errorMessage != nil {
+      errorMessage = nil
+    } else {
+      ruleSwitch.clearError()
+    }
+  }
+
   // MARK: - Toolbar
 
-  /// Read state: Close on the leading side, Edit on the trailing side. Edit
-  /// state: Cancel and Save.
+  /// Close on the leading side, Edit on the trailing side. Edit opens the sheet.
   @ToolbarContentBuilder
   private var toolbarContent: some ToolbarContent {
-    if isEditing {
-      ToolbarItem(placement: .cancellationAction) {
-        Button {
-          endEditing()
-        } label: {
-          Text("Cancel")
-            .nomiTextStyle(.navAction)
-            .foregroundStyle(NomiColor.navy)
-        }
+    ToolbarItem(placement: .cancellationAction) {
+      Button {
+        dismiss()
+      } label: {
+        Text("Close")
+          .nomiTextStyle(.navAction)
+          .foregroundStyle(NomiColor.navy)
       }
-      ToolbarItem(placement: .confirmationAction) {
-        Button {
-          saveEdit()
-        } label: {
-          Text("Save")
-            .nomiTextStyle(.navActionStrong)
-            .foregroundStyle(NomiColor.navy)
-        }
-        .disabled(!canSaveNow)
-        .opacity(canSaveNow ? 1 : 0.4)
+    }
+    ToolbarItem(placement: .primaryAction) {
+      Button {
+        startEditing()
+      } label: {
+        Text("Edit")
+          .nomiTextStyle(.navActionStrong)
+          .foregroundStyle(NomiColor.navy)
       }
-    } else {
-      ToolbarItem(placement: .cancellationAction) {
-        Button {
-          dismiss()
-        } label: {
-          Text("Close")
-            .nomiTextStyle(.navAction)
-            .foregroundStyle(NomiColor.navy)
-        }
-      }
-      ToolbarItem(placement: .primaryAction) {
-        Button {
-          startEditing()
-        } label: {
-          Text("Edit")
-            .nomiTextStyle(.navActionStrong)
-            .foregroundStyle(NomiColor.navy)
-        }
-        .disabled(transaction == nil)
-      }
+      .disabled(transaction == nil)
     }
   }
 
@@ -447,12 +400,16 @@ public struct TransactionDetailScreen: View {
       if showsRule, let pattern {
         hairline
         NomiToggleRow(
-          title: "Always use this for \(MerchantRulePattern.displayName(merchantName: transaction.merchantName, normalizedDescription: transaction.normalizedDescription))",
-          caption: ruleCaption(transaction, pattern: pattern),
+          title: "Always use this for \(ruleTitleName(transaction))",
+          caption: ruleSwitch.isSeeded
+            ? TransactionDetailLogic.seededRuleText(merchant: ruleTitleName(transaction))
+            : ruleSwitch.caption(),
           isOn: ruleBinding(transaction, pattern: pattern)
         )
-        .id(ruleSwitchRevision)
-        .disabled(!TransactionDetailLogic.ruleSwitchEnabled(categoryID: transaction.categoryID))
+        .id(ruleSwitch.revision)
+        .disabled(
+          !TransactionDetailLogic.ruleSwitchEnabled(
+            categoryID: transaction.categoryID, seededCovers: ruleSwitch.isSeeded))
         .padding(.vertical, NomiSpacing.xs)
       }
     }
@@ -500,14 +457,10 @@ public struct TransactionDetailScreen: View {
       .frame(height: 1)
   }
 
-  /// The count under the switch: the matches, said as "match" (S10's ruling),
-  /// or the two-second note after a switch-on.
-  private func ruleCaption(_ transaction: NomiCore.Transaction, pattern: String) -> String? {
-    if let appliedCount {
-      return TransactionDetailLogic.appliedText(count: appliedCount)
-    }
-    guard let matchCount else { return nil }
-    return TransactionDetailLogic.matchCountText(count: matchCount, isOn: ruleIsOn)
+  /// The merchant name the rule row shows, as the title and the seeded caption both use it.
+  private func ruleTitleName(_ transaction: NomiCore.Transaction) -> String {
+    MerchantRulePattern.displayName(
+      merchantName: transaction.merchantName, normalizedDescription: transaction.normalizedDescription)
   }
 
   /// The rules as the store holds them now. Read fresh, not from the `@Query`,
@@ -518,80 +471,17 @@ public struct TransactionDetailScreen: View {
     }
   }
 
-  /// The user rule the switch reads for this row's pattern and category, if any.
-  private func currentRuleID(for transaction: NomiCore.Transaction, pattern: String) throws -> UUID? {
-    guard let categoryID = transaction.categoryID else { return nil }
-    return TransactionDetailLogic.existingRuleID(
-      among: try storedRules(), pattern: pattern, categoryID: categoryID)
-  }
-
-  /// Sets the switch from the store. A read that fails leaves the switch off
-  /// and says so, since the switch cannot show a rule it cannot read.
-  private func refreshRuleState(for transaction: NomiCore.Transaction) {
-    guard let pattern = rulePattern(for: transaction) else {
-      ruleIsOn = false
-      return
-    }
-    do {
-      ruleIsOn = try currentRuleID(for: transaction, pattern: pattern) != nil
-    } catch {
-      ruleIsOn = false
-      errorMessage = "Could not read this rule."
-    }
-  }
-
+  /// The switch's binding. A toggle is decided and written by `ruleSwitch`, which
+  /// then sets the switch from the store again (see `TransactionRuleSwitchModel`).
   private func ruleBinding(_ transaction: NomiCore.Transaction, pattern: String) -> Binding<Bool> {
     Binding(
-      get: { ruleIsOn },
-      set: { isOn in applyRuleSwitch(transaction, pattern: pattern, turningOn: isOn) }
-    )
-  }
-
-  /// Carries out one toggle. The decision is made from the store's current rule
-  /// (`TransactionDetailLogic.ruleSwitchAction`), then the switch is set from the
-  /// store again. A failed write shows an error and leaves the switch in its
-  /// prior state.
-  private func applyRuleSwitch(_ transaction: NomiCore.Transaction, pattern: String, turningOn: Bool) {
-    do {
-      let existing = try currentRuleID(for: transaction, pattern: pattern)
-      let action = TransactionDetailLogic.ruleSwitchAction(
-        turningOn: turningOn, existingRuleID: existing, categoryID: transaction.categoryID)
-      switch action {
-      case .none:
-        break
-      case .create(let categoryID):
-        // The store re-applies the rule across the ledger; the result says how many
-        // past rows it recategorised.
-        guard let ruleStore else { break }
-        let result = try ruleStore.create(pattern: pattern, categoryID: categoryID)
-        appliedCount = result.recategorized
-      case .delete(let id):
-        // Rows keep their categories: that is the store's existing policy for a
-        // deleted rule.
-        guard let ruleStore else { break }
-        try ruleStore.delete(id)
-        appliedCount = nil
+      get: { ruleSwitch.isOn },
+      set: { isOn in
+        ruleSwitch.setOn(isOn, pattern: pattern, categoryID: transaction.categoryID, ruleStore: ruleStore) {
+          try storedRules()
+        }
       }
-      ruleIsOn = try currentRuleID(for: transaction, pattern: pattern) != nil
-      refreshMatchCount(for: transaction)
-    } catch {
-      errorMessage = turningOn ? "Could not save this rule." : "Could not turn this rule off."
-      ruleSwitchRevision += 1
-    }
-  }
-
-  /// The past-row count for this row's pattern. A count that cannot be read is
-  /// left out, the same as the suggestion: it is an aid, not an action.
-  private func refreshMatchCount(for transaction: NomiCore.Transaction) {
-    guard let ruleStore, let pattern = rulePattern(for: transaction) else {
-      matchCount = nil
-      return
-    }
-    do {
-      matchCount = try ruleStore.preview(pattern: pattern)
-    } catch {
-      matchCount = nil
-    }
+    )
   }
 
   // MARK: - Transfer and note card
@@ -952,67 +842,6 @@ public struct TransactionDetailScreen: View {
     .padding(.top, NomiSpacing.xs)
   }
 
-  // MARK: - Edit state
-
-  private func editContent(_ transaction: NomiCore.Transaction) -> some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.xs) {
-      fieldLabel("Amount")
-      fieldCard {
-        HStack(spacing: NomiSpacing.xxs) {
-          Text(currencySymbol)
-            .font(Font.custom(NomiFont.interMedium, size: 22, relativeTo: .title2))
-            .foregroundStyle(NomiColor.ink)
-          TextField("0", text: $amountText)
-            .font(Font.custom(NomiFont.interMedium, size: 22, relativeTo: .title2))
-            .foregroundStyle(NomiColor.ink)
-            .accessibilityLabel("Amount")
-            #if os(iOS)
-            .keyboardType(.decimalPad)
-            #endif
-            .onChange(of: amountText) { _, newValue in
-              let sanitized = EntryAmount.sanitizeInput(newValue)
-              if sanitized != newValue { amountText = sanitized }
-            }
-        }
-      }
-      fieldLabel("Description")
-      fieldCard {
-        TextField("Description", text: $editedDescription)
-          .nomiTextStyle(.body)
-          .foregroundStyle(NomiColor.ink)
-          .accessibilityLabel("Description")
-      }
-      fieldLabel("Note")
-      fieldCard {
-        TextField("Note", text: $editedNote)
-          .nomiTextStyle(.body)
-          .foregroundStyle(NomiColor.ink)
-          .accessibilityLabel("Note")
-      }
-      NomiDestructiveRow(title: "Delete transaction") {
-        isConfirmingDelete = true
-      }
-      .padding(.horizontal, NomiSpacing.sm)
-      .padding(.top, NomiSpacing.md)
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-  }
-
-  private func fieldLabel(_ text: String) -> some View {
-    Text(text)
-      .nomiTextStyle(.subhead)
-      .foregroundStyle(NomiColor.inkDeep)
-      .padding(.leading, NomiSpacing.xxs)
-      .padding(.top, NomiSpacing.xxs)
-  }
-
-  private func fieldCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-    content()
-      .padding(.horizontal, NomiSpacing.sm)
-      .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
-      .nomiCard(padding: EdgeInsets())
-  }
-
   // MARK: - Actions
 
   /// This package's `swift test` also builds for plain macOS (see
@@ -1027,16 +856,15 @@ public struct TransactionDetailScreen: View {
     #endif
   }
 
+  /// Opens the edit sheet on this row. The sheet keeps its own copy of the fields,
+  /// so this read state is unchanged until the sheet saves.
   private func startEditing() {
     guard let transaction else { return }
-    amountText = String(format: "%.2f", Double(transaction.amountMinor) / 100)
-    editedDescription = transaction.descriptionText
-    editedNote = transaction.note ?? ""
-    isEditing = true
-  }
-
-  private func endEditing() {
-    isEditing = false
+    editModel = TransactionEditModel(
+      transactionID: transactionID, amountMinor: transaction.amountMinor, date: transaction.date,
+      descriptionText: transaction.descriptionText, note: transaction.note, direction: transaction.direction,
+      isTransfer: transaction.isTransfer, currencyCode: transaction.currencyCode,
+      merchantLabel: titleText(transaction), editor: editor)
   }
 
   /// The suggestion read is a `do`/`catch` to `nil` — an assist that fails is
@@ -1099,18 +927,6 @@ public struct TransactionDetailScreen: View {
       try transactionStore.setAccount(transactionID, to: accountID)
     } catch {
       errorMessage = "Could not update the account."
-    }
-  }
-
-  private func saveEdit() {
-    guard let transaction, canSave(transaction) else { return }
-    do {
-      try editor.update(
-        transactionID, amountMinor: editedAmountMinor, date: transaction.date, descriptionText: editedDescription,
-        note: TransactionDetailLogic.noteToSave(from: editedNote))
-      endEditing()
-    } catch {
-      errorMessage = "Could not save the changes."
     }
   }
 

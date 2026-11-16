@@ -549,4 +549,97 @@ final class TransactionDetailLogicTests: XCTestCase {
     XCTAssertFalse(TransactionDetailLogic.suggestionAllowed(isTransfer: true))
     XCTAssertTrue(TransactionDetailLogic.suggestionAllowed(isTransfer: false))
   }
+
+  // MARK: - S3b follow-up 1: a transfer leg's delete copy
+
+  /// Deleting one leg of a transfer leaves the partner counting again (B9), so the
+  /// alert says so, after the sentence about the totals.
+  func testDeleteConfirmationAddsTheTransferSentenceForATransferLeg() {
+    XCTAssertEqual(
+      TransactionDetailLogic.deleteConfirmationSentence(
+        amountText: "₹845.00", merchant: "Ola", date: kolkataDate(13, 21, 42), calendar: kolkata, isTransfer: true),
+      "₹845.00 to Ola on 13 Nov will be removed from every total. Its matching transfer will count as an ordinary transaction."
+    )
+  }
+
+  func testDeleteConfirmationOmitsTheTransferSentenceForAnOrdinaryRow() {
+    XCTAssertEqual(
+      TransactionDetailLogic.deleteConfirmationSentence(
+        amountText: "₹845.00", merchant: "Ola", date: kolkataDate(13, 21, 42), calendar: kolkata, isTransfer: false),
+      "₹845.00 to Ola on 13 Nov will be removed from every total.")
+  }
+
+  // MARK: - S3b follow-up 2: a seeded rule that already files this merchant
+
+  func testSystemRuleCoversOnlyTheSamePatternAndCategoryAndOnlyASystemRule() {
+    let food = UUID()
+    let bills = UUID()
+    let rules: [TransactionDetailLogic.RuleRef] = [
+      .init(id: UUID(), pattern: "*OLACABS*", categoryID: food, isSystem: true),
+      .init(id: UUID(), pattern: "*OLACABS*", categoryID: bills, isSystem: false),
+      .init(id: UUID(), pattern: "*OLA*", categoryID: food, isSystem: true),
+    ]
+    XCTAssertTrue(TransactionDetailLogic.systemRuleCovers(among: rules, pattern: "*OLACABS*", categoryID: food))
+    XCTAssertFalse(TransactionDetailLogic.systemRuleCovers(among: rules, pattern: "*OLACABS*", categoryID: bills))
+    XCTAssertFalse(TransactionDetailLogic.systemRuleCovers(among: rules, pattern: "*OLACABS*", categoryID: UUID()))
+    XCTAssertFalse(TransactionDetailLogic.systemRuleCovers(among: rules, pattern: "*UBER*", categoryID: food))
+  }
+
+  /// The seeded rule already files the row under this category: no duplicate user rule.
+  func testSwitchOnWhenTheSeededRuleCoversTheCategoryCreatesNothing() {
+    XCTAssertEqual(
+      TransactionDetailLogic.ruleSwitchAction(
+        turningOn: true, existingRuleID: nil, categoryID: UUID(), seededCovers: true),
+      .none)
+  }
+
+  /// A different category is a real override, so the user rule is created.
+  func testSwitchOnWhenTheSeededRuleFilesAnotherCategoryCreatesTheOverride() {
+    let category = UUID()
+    XCTAssertEqual(
+      TransactionDetailLogic.ruleSwitchAction(
+        turningOn: true, existingRuleID: nil, categoryID: category, seededCovers: false),
+      .create(categoryID: category))
+  }
+
+  /// A seeded rule cannot be deleted by the switch, so turning it off writes nothing.
+  func testSwitchOffWhenOnlyTheSeededRuleCoversWritesNothing() {
+    XCTAssertEqual(
+      TransactionDetailLogic.ruleSwitchAction(
+        turningOn: false, existingRuleID: nil, categoryID: UUID(), seededCovers: true),
+      .none)
+  }
+
+  /// The caption under a locked switch names the merchant the seeded rule files.
+  func testSeededRuleCaptionNamesTheMerchant() {
+    XCTAssertEqual(TransactionDetailLogic.seededRuleText(merchant: "Olacabs"), "Nomi already files Olacabs here")
+  }
+
+  /// The switch reads on for a seeded rule and cannot be changed: its state is
+  /// the seeded rule's, not a user rule's to remove.
+  func testRuleSwitchIsLockedWhenTheSeededRuleCovers() {
+    XCTAssertFalse(TransactionDetailLogic.ruleSwitchEnabled(categoryID: UUID(), seededCovers: true))
+    XCTAssertTrue(TransactionDetailLogic.ruleSwitchEnabled(categoryID: UUID(), seededCovers: false))
+    XCTAssertFalse(TransactionDetailLogic.ruleSwitchEnabled(categoryID: nil, seededCovers: false))
+  }
+
+  // MARK: - Fix round: the detail's one error alert
+
+  /// The rule switch's refused write reaches the alert when the screen has no failure of its own.
+  func testRuleSwitchErrorReachesTheDetailAlert() {
+    XCTAssertEqual(
+      DetailErrorAlert.message(screen: nil, ruleSwitch: "Could not save this rule."),
+      "Could not save this rule.")
+  }
+
+  /// The screen's own failure shows first; the switch's waits behind it.
+  func testScreenErrorShowsBeforeTheRuleSwitchError() {
+    XCTAssertEqual(
+      DetailErrorAlert.message(screen: "Could not save the changes.", ruleSwitch: "Could not save this rule."),
+      "Could not save the changes.")
+  }
+
+  func testNoErrorMeansNoAlert() {
+    XCTAssertNil(DetailErrorAlert.message(screen: nil, ruleSwitch: nil))
+  }
 }
