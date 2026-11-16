@@ -501,4 +501,52 @@ final class TransactionDetailLogicTests: XCTestCase {
     XCTAssertEqual(TransactionDetailLogic.appliedText(count: 1), "Applied to 1 transaction")
     XCTAssertEqual(TransactionDetailLogic.appliedText(count: 5), "Applied to 5 transactions")
   }
+
+  // MARK: - S3a fix round (Lim, PR #220): the switch decides, then writes
+
+  /// Turning the switch on creates the rule when none exists for this category.
+  func testRuleSwitchOnWithNoRuleCreatesForTheCategory() {
+    let category = UUID()
+    XCTAssertEqual(
+      TransactionDetailLogic.ruleSwitchAction(turningOn: true, existingRuleID: nil, categoryID: category),
+      .create(categoryID: category))
+  }
+
+  /// Turning the switch on when the rule already exists writes nothing.
+  func testRuleSwitchOnWithAnExistingRuleDoesNothing() {
+    XCTAssertEqual(
+      TransactionDetailLogic.ruleSwitchAction(turningOn: true, existingRuleID: UUID(), categoryID: UUID()), .none)
+  }
+
+  /// Turning the switch off deletes the rule this switch reads, by its id.
+  func testRuleSwitchOffWithAnExistingRuleDeletesThatID() {
+    let rule = UUID()
+    XCTAssertEqual(
+      TransactionDetailLogic.ruleSwitchAction(turningOn: false, existingRuleID: rule, categoryID: UUID()),
+      .delete(rule))
+  }
+
+  /// Turning the switch off with no rule to delete writes nothing.
+  func testRuleSwitchOffWithNoRuleDoesNothing() {
+    XCTAssertEqual(
+      TransactionDetailLogic.ruleSwitchAction(turningOn: false, existingRuleID: nil, categoryID: UUID()), .none)
+  }
+
+  /// A row with no category cannot take a rule, so turning on writes nothing.
+  func testRuleSwitchOnWithoutACategoryDoesNothing() {
+    XCTAssertEqual(
+      TransactionDetailLogic.ruleSwitchAction(turningOn: true, existingRuleID: nil, categoryID: nil), .none)
+  }
+
+  // MARK: - S3a fix round: transfer leg predicates (Lim's M4)
+
+  func testCategoryChipIsDisabledForATransferLeg() {
+    XCTAssertFalse(TransactionDetailLogic.categoryChipEnabled(isTransfer: true))
+    XCTAssertTrue(TransactionDetailLogic.categoryChipEnabled(isTransfer: false))
+  }
+
+  func testSuggestionIsNeverOfferedOnATransferLeg() {
+    XCTAssertFalse(TransactionDetailLogic.suggestionAllowed(isTransfer: true))
+    XCTAssertTrue(TransactionDetailLogic.suggestionAllowed(isTransfer: false))
+  }
 }

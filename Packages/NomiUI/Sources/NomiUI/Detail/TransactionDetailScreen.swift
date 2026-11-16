@@ -55,16 +55,23 @@ public struct TransactionDetailScreen: View {
   @Query private var matches: [NomiCore.Transaction]
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
   @Query(sort: \NomiCore.Account.displayName) private var accounts: [NomiCore.Account]
-  @Query(sort: \NomiCore.Rule.priority) private var rules: [NomiCore.Rule]
 
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   /// Read only: the transfer partner is found by the shared group id (DEC-05 T3).
-  /// The screen writes through `editor`, never through this context.
+  /// The screen writes through `editor`, never through this context. The rule
+  /// switch also reads its rules from here, fresh at each toggle (see
+  /// `storedRules`), because the `@Query` above does not refresh for a rule the
+  /// rule store just wrote.
   @Environment(\.modelContext) private var modelContext
   /// "Always use this for <merchant>" writes go through the rule store (S3a).
   /// Nil hides the rule row.
   @Environment(\.nomiRuleStore) private var ruleStore
 
+  /// Whether the rule switch is on, read from the store after each write.
+  @State private var ruleIsOn = false
+  /// Bumped when a rule write fails, so the switch redraws in its prior state.
+  @State private var ruleSwitchRevision = 0
   @State private var isEditing = false
   /// The note as the read state's row shows it. Written on submit.
   @State private var readNote = ""
@@ -172,7 +179,7 @@ public struct TransactionDetailScreen: View {
 
   /// A transfer leg has no category to suggest, so the panel never shows on one.
   private func isSuggestionShown(for transaction: NomiCore.Transaction) -> Bool {
-    guard !transaction.isTransfer else { return false }
+    guard TransactionDetailLogic.suggestionAllowed(isTransfer: transaction.isTransfer) else { return false }
     return SuggestionRow.isShown(
       suggestion: suggestion, currentCategoryID: transaction.categoryID, categorySource: transaction.categorySource)
   }
@@ -210,10 +217,14 @@ public struct TransactionDetailScreen: View {
           .onAppear {
             refreshSuggestion()
             readNote = transaction.note ?? ""
+            refreshRuleState(for: transaction)
             refreshMatchCount(for: transaction)
           }
           .onChange(of: transaction.note) { _, newValue in
             readNote = newValue ?? ""
+          }
+          .onChange(of: transaction.categoryID) { _, _ in
+            refreshRuleState(for: transaction)
           }
           .task(id: appliedCount) {
             guard appliedCount != nil else { return }
@@ -407,15 +418,32 @@ public struct TransactionDetailScreen: View {
     let pattern = rulePattern(for: transaction)
     let showsRule = TransactionDetailLogic.showsRuleRow(
       hasRuleStore: ruleStore != nil, isTransfer: transaction.isTransfer, pattern: pattern)
+    // At accessibility sizes the label sits above the chip, so neither is squeezed
+    // into the other's width; the chip then has the card's full width to wrap in.
+    let stacked = dynamicTypeSize.isAccessibilitySize
     return VStack(spacing: 0) {
-      HStack(spacing: NomiSpacing.xs) {
-        Text("Category")
-          .nomiTextStyle(.rowTitle)
-          .foregroundStyle(NomiColor.ink)
-        Spacer(minLength: NomiSpacing.xs)
-        categoryChip(transaction)
+      Group {
+        if stacked {
+          VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+            Text("Category")
+              .nomiTextStyle(.rowTitle)
+              .foregroundStyle(NomiColor.ink)
+              .fixedSize(horizontal: false, vertical: true)
+            categoryChip(transaction)
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+          HStack(spacing: NomiSpacing.xs) {
+            Text("Category")
+              .nomiTextStyle(.rowTitle)
+              .foregroundStyle(NomiColor.ink)
+              .fixedSize(horizontal: true, vertical: false)
+            Spacer(minLength: NomiSpacing.xs)
+            categoryChip(transaction)
+          }
+        }
       }
-      .frame(minHeight: NomiSpacing.rowMinHeight)
+      .frame(minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
       if showsRule, let pattern {
         hairline
         NomiToggleRow(
@@ -423,6 +451,7 @@ public struct TransactionDetailScreen: View {
           caption: ruleCaption(transaction, pattern: pattern),
           isOn: ruleBinding(transaction, pattern: pattern)
         )
+        .id(ruleSwitchRevision)
         .disabled(!TransactionDetailLogic.ruleSwitchEnabled(categoryID: transaction.categoryID))
         .padding(.vertical, NomiSpacing.xs)
       }
@@ -441,10 +470,17 @@ public struct TransactionDetailScreen: View {
       isCategoryPickerPresented = true
     } label: {
       HStack(spacing: NomiSpacing.xxs) {
+        // One line, scaled down rather than wrapped: a category name never breaks
+        // mid-word or across a hyphen at any text size.
         Text(
           TransactionDetailLogic.categoryChipText(
-            isTransfer: transaction.isTransfer, categoryName: categoryName(for: transaction)))
+            isTransfer: transaction.isTransfer, categoryName: categoryName(for: transaction))
+        )
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
+        .layoutPriority(1)
         Image(systemName: "chevron.down")
+          .fixedSize()
           .accessibilityHidden(true)
       }
       .nomiTextStyle(.chipSelected)
@@ -454,8 +490,8 @@ public struct TransactionDetailScreen: View {
       .background(Capsule().fill(NomiColor.primary))
     }
     .buttonStyle(.plain)
-    .disabled(transaction.isTransfer)
-    .opacity(transaction.isTransfer ? 0.4 : 1)
+    .disabled(!TransactionDetailLogic.categoryChipEnabled(isTransfer: transaction.isTransfer))
+    .opacity(TransactionDetailLogic.categoryChipEnabled(isTransfer: transaction.isTransfer) ? 1 : 0.4)
   }
 
   private var hairline: some View {
@@ -471,56 +507,76 @@ public struct TransactionDetailScreen: View {
       return TransactionDetailLogic.appliedText(count: appliedCount)
     }
     guard let matchCount else { return nil }
-    return TransactionDetailLogic.matchCountText(
-      count: matchCount, isOn: existingRuleID(for: transaction, pattern: pattern) != nil)
+    return TransactionDetailLogic.matchCountText(count: matchCount, isOn: ruleIsOn)
   }
 
-  /// The user rule this row's switch reads, if one exists for its pattern and category.
-  private func existingRuleID(for transaction: NomiCore.Transaction, pattern: String) -> UUID? {
+  /// The rules as the store holds them now. Read fresh, not from the `@Query`,
+  /// so a rule the switch just wrote or deleted is seen at once.
+  private func storedRules() throws -> [TransactionDetailLogic.RuleRef] {
+    try modelContext.fetch(FetchDescriptor<NomiCore.Rule>(sortBy: [SortDescriptor(\.priority)])).map {
+      TransactionDetailLogic.RuleRef(id: $0.id, pattern: $0.pattern, categoryID: $0.categoryID, isSystem: $0.isSystem)
+    }
+  }
+
+  /// The user rule the switch reads for this row's pattern and category, if any.
+  private func currentRuleID(for transaction: NomiCore.Transaction, pattern: String) throws -> UUID? {
     guard let categoryID = transaction.categoryID else { return nil }
     return TransactionDetailLogic.existingRuleID(
-      among: rules.map {
-        TransactionDetailLogic.RuleRef(id: $0.id, pattern: $0.pattern, categoryID: $0.categoryID, isSystem: $0.isSystem)
-      },
-      pattern: pattern, categoryID: categoryID)
+      among: try storedRules(), pattern: pattern, categoryID: categoryID)
+  }
+
+  /// Sets the switch from the store. A read that fails leaves the switch off
+  /// and says so, since the switch cannot show a rule it cannot read.
+  private func refreshRuleState(for transaction: NomiCore.Transaction) {
+    guard let pattern = rulePattern(for: transaction) else {
+      ruleIsOn = false
+      return
+    }
+    do {
+      ruleIsOn = try currentRuleID(for: transaction, pattern: pattern) != nil
+    } catch {
+      ruleIsOn = false
+      errorMessage = "Could not read this rule."
+    }
   }
 
   private func ruleBinding(_ transaction: NomiCore.Transaction, pattern: String) -> Binding<Bool> {
     Binding(
-      get: { existingRuleID(for: transaction, pattern: pattern) != nil },
-      set: { isOn in
-        if isOn {
-          turnOnRule(transaction, pattern: pattern)
-        } else {
-          turnOffRule(transaction, pattern: pattern)
-        }
-      })
+      get: { ruleIsOn },
+      set: { isOn in applyRuleSwitch(transaction, pattern: pattern, turningOn: isOn) }
+    )
   }
 
-  /// Turning the switch on creates the rule for this row's pattern and category.
-  /// The store re-applies it across the ledger; the result says how many past
-  /// rows it recategorised.
-  private func turnOnRule(_ transaction: NomiCore.Transaction, pattern: String) {
-    guard let ruleStore, let categoryID = transaction.categoryID else { return }
+  /// Carries out one toggle. The decision is made from the store's current rule
+  /// (`TransactionDetailLogic.ruleSwitchAction`), then the switch is set from the
+  /// store again. A failed write shows an error and leaves the switch in its
+  /// prior state.
+  private func applyRuleSwitch(_ transaction: NomiCore.Transaction, pattern: String, turningOn: Bool) {
     do {
-      let result = try ruleStore.create(pattern: pattern, categoryID: categoryID)
-      appliedCount = result.recategorized
+      let existing = try currentRuleID(for: transaction, pattern: pattern)
+      let action = TransactionDetailLogic.ruleSwitchAction(
+        turningOn: turningOn, existingRuleID: existing, categoryID: transaction.categoryID)
+      switch action {
+      case .none:
+        break
+      case .create(let categoryID):
+        // The store re-applies the rule across the ledger; the result says how many
+        // past rows it recategorised.
+        guard let ruleStore else { break }
+        let result = try ruleStore.create(pattern: pattern, categoryID: categoryID)
+        appliedCount = result.recategorized
+      case .delete(let id):
+        // Rows keep their categories: that is the store's existing policy for a
+        // deleted rule.
+        guard let ruleStore else { break }
+        try ruleStore.delete(id)
+        appliedCount = nil
+      }
+      ruleIsOn = try currentRuleID(for: transaction, pattern: pattern) != nil
       refreshMatchCount(for: transaction)
     } catch {
-      errorMessage = "Could not save this rule."
-    }
-  }
-
-  /// Turning the switch off deletes the rule it made. Rows keep their categories:
-  /// that is the store's existing policy for a deleted rule.
-  private func turnOffRule(_ transaction: NomiCore.Transaction, pattern: String) {
-    guard let ruleStore, let id = existingRuleID(for: transaction, pattern: pattern) else { return }
-    do {
-      try ruleStore.delete(id)
-      appliedCount = nil
-      refreshMatchCount(for: transaction)
-    } catch {
-      errorMessage = "Could not turn this rule off."
+      errorMessage = turningOn ? "Could not save this rule." : "Could not turn this rule off."
+      ruleSwitchRevision += 1
     }
   }
 

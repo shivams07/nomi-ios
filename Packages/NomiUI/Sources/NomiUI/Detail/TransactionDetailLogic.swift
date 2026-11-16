@@ -338,6 +338,35 @@ extension TransactionDetailLogic {
     String(localized: "Applied to \(count) transactions", bundle: .module)
   }
 
+  /// What the rule switch writes for a toggle. The switch is read from the rule
+  /// store, so a write is decided from the fresh read and never from the
+  /// switch's last drawn state. On creates the rule when none exists for the
+  /// row's category; off deletes the rule the switch reads (`existingRuleID`).
+  public enum RuleSwitchAction: Equatable, Sendable {
+    case none
+    case create(categoryID: UUID)
+    case delete(UUID)
+  }
+
+  public static func ruleSwitchAction(turningOn: Bool, existingRuleID: UUID?, categoryID: UUID?) -> RuleSwitchAction {
+    if turningOn {
+      guard existingRuleID == nil, let categoryID else { return .none }
+      return .create(categoryID: categoryID)
+    }
+    guard let existingRuleID else { return .none }
+    return .delete(existingRuleID)
+  }
+
+  /// A transfer leg has no category, so its chip does not open the picker.
+  public static func categoryChipEnabled(isTransfer: Bool) -> Bool {
+    !isTransfer
+  }
+
+  /// A transfer leg has no category to suggest, so the panel is never offered.
+  public static func suggestionAllowed(isTransfer: Bool) -> Bool {
+    !isTransfer
+  }
+
   /// A formatter for the calendar's zone, in en_IN (the app's locale for dates).
   private static func formatter(_ format: String, calendar: Calendar) -> DateFormatter {
     let formatter = DateFormatter()
