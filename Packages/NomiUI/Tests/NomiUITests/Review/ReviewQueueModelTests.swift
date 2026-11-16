@@ -80,11 +80,14 @@ final class ReviewQueueModelTests: XCTestCase {
   @MainActor private final class SpyRuleStore: RuleStore {
     var failCreate = false
     private(set) var creates: [(pattern: String, categoryID: UUID)] = []
+    /// The rules the store now holds, as the screen's reader sees them.
+    var stored: [ReviewQueueRule] = []
 
     @discardableResult
     func create(pattern: String, categoryID: UUID, scope: RuleScope) throws -> RuleApplyResult {
       if failCreate { throw SpyFailure() }
       creates.append((pattern, categoryID))
+      stored.append(ReviewQueueRule(pattern: pattern, categoryID: categoryID, isEnabled: true))
       return RuleApplyResult(matched: 0, recategorized: 0)
     }
     @discardableResult
@@ -123,13 +126,16 @@ final class ReviewQueueModelTests: XCTestCase {
 
     func makeModel() -> ReviewQueueModel {
       let now = self.now
-      return ReviewQueueModel(
+      let model = ReviewQueueModel(
         transactionStore: transactions,
         insightsStore: insights,
         ruleStore: rules,
         suggester: suggester,
         now: { now },
         calendar: calendar)
+      let store = rules
+      model.existingRules = { store.stored }
+      return model
     }
   }
 
@@ -442,7 +448,9 @@ final class ReviewQueueModelTests: XCTestCase {
 
     model.confirmNext()
 
-    XCTAssertEqual(model.errorMessage, "That didn't save. Try again.")
+    // The category was saved first, so the copy must not claim it failed.
+    XCTAssertEqual(model.errorMessage, "The category saved, but the rule didn't. Try again.")
+    XCTAssertEqual(fixture.transactions.setCategoryCalls.count, 1)
     XCTAssertEqual(model.current?.id, row.id)
     XCTAssertTrue(fixture.transactions.dismissedIDs.isEmpty)
   }
@@ -484,5 +492,103 @@ final class ReviewQueueModelTests: XCTestCase {
     XCTAssertEqual(fixture.transactions.setAccountCalls.first?.accountID, account)
     XCTAssertEqual(model.accountID, account)
     XCTAssertEqual(model.current?.id, row.id)
+  }
+
+  // MARK: - Duplicate rules on re-confirm (P10)
+
+  /// A manual row with no account stays in the queue after it is confirmed, so the
+  /// next open shows it again. Confirming it a second time with Remember on must not
+  /// write a second identical rule.
+  func testConfirmingTheSameMerchantTwiceWithRememberOnWritesOneRule() {
+    let cafe = UUID()
+    let row = unassignedRow("Blue Tokai")
+    let fixture = Fixture(flagged: [row], now: now)
+    let first = fixture.makeModel()
+    first.load()
+    first.selectedCategoryID = cafe
+    first.confirmNext()
+    XCTAssertEqual(fixture.rules.creates.count, 1)
+
+    let reopened = fixture.makeModel()
+    reopened.load()
+    XCTAssertEqual(reopened.current?.id, row.id)
+    XCTAssertEqual(reopened.selectedCategoryID, cafe)
+    reopened.confirmNext()
+
+    XCTAssertEqual(fixture.rules.creates.count, 1, "a second identical rule was written")
+    XCTAssertEqual(fixture.transactions.setCategoryCalls.count, 1)
+  }
+
+  /// A rule list that cannot be read means a duplicate cannot be ruled out, so the
+  /// confirm writes nothing and says so.
+  func testAnUnreadableRuleListWritesNothing() {
+    let row = unassignedRow("Blue Tokai")
+    let fixture = Fixture(flagged: [row], now: now)
+    let model = fixture.makeModel()
+    model.load()
+    model.existingRules = { throw SpyFailure() }
+    model.selectedCategoryID = UUID()
+
+    model.confirmNext()
+
+    XCTAssertTrue(fixture.transactions.setCategoryCalls.isEmpty)
+    XCTAssertTrue(fixture.rules.creates.isEmpty)
+    XCTAssertEqual(model.errorMessage, "That didn't save. Try again.")
+    XCTAssertEqual(model.current?.id, row.id)
+  }
+
+  /// A stored rule that already files the merchant under the chosen category stops
+  /// the create, even when the row's own evidence says nothing.
+  func testAStoredRuleUnderTheChosenCategoryStopsTheCreate() {
+    let cafe = UUID()
+    let row = unassignedRow("Blue Tokai")
+    let fixture = Fixture(flagged: [row], now: now)
+    fixture.rules.stored = [ReviewQueueRule(pattern: "*BLUE TOKAI*", categoryID: cafe, isEnabled: true)]
+    let model = fixture.makeModel()
+    model.load()
+    model.selectedCategoryID = cafe
+
+    model.confirmNext()
+
+    XCTAssertTrue(fixture.rules.creates.isEmpty)
+    XCTAssertEqual(fixture.transactions.setCategoryCalls.map(\.categoryID), [cafe])
+  }
+
+  // MARK: - Delete confirmation (M4)
+
+  /// `notATransaction()` must be reached only through the delete alert's Delete button.
+  /// A source scan, as `DestructiveConfirmationTests` does: SwiftUI decides the
+  /// presentation at runtime, so a unit test cannot see the button or the alert.
+  func testNotATransactionIsOnlyCalledFromTheDeleteAlert() throws {
+    let screen = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()  // Review
+      .deletingLastPathComponent()  // NomiUITests
+      .deletingLastPathComponent()  // Tests
+      .deletingLastPathComponent()  // NomiUI (package)
+      .appendingPathComponent("Sources/NomiUI/Review/ReviewQueueScreen.swift")
+    let text = try String(contentsOf: screen, encoding: .utf8)
+    let call = "model.notATransaction()"
+
+    XCTAssertEqual(
+      text.components(separatedBy: call).count - 1, 1,
+      "notATransaction() must be called exactly once, from the delete alert")
+    let alertStart = try XCTUnwrap(text.range(of: ".alert(\"Delete this payment?\""))
+    let messageStart = try XCTUnwrap(
+      text.range(of: "} message: {", range: alertStart.upperBound..<text.endIndex))
+    let callRange = try XCTUnwrap(text.range(of: call))
+    XCTAssertTrue(
+      callRange.lowerBound >= alertStart.upperBound && callRange.upperBound <= messageStart.lowerBound,
+      "notATransaction() is outside the delete alert")
+  }
+
+  private func unassignedRow(_ name: String) -> NomiCore.Transaction {
+    NomiCore.Transaction(
+      date: day(14),
+      descriptionText: name,
+      merchantName: name,
+      normalizedDescription: normalizeDescription(name),
+      amountMinor: 45_000,
+      sourceRaw: IngestSource.manual.rawValue
+    )
   }
 }

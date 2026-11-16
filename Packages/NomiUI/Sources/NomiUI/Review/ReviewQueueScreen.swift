@@ -27,6 +27,7 @@ public struct ReviewQueueScreen: View {
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
   @Query(sort: \NomiCore.Account.displayName) private var accounts: [NomiCore.Account]
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @Environment(\.modelContext) private var modelContext
 
   public init(
     transactionStore: TransactionStore,
@@ -86,7 +87,17 @@ public struct ReviewQueueScreen: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(NomiColor.ground)
-    .task { model.load() }
+    .task {
+      // The stored rules, read fresh at each rule decision. The store has no read
+      // method, so this reads the same `Rule` rows S3a's Detail reads.
+      let context = modelContext
+      model.existingRules = {
+        try context.fetch(FetchDescriptor<NomiCore.Rule>()).map {
+          ReviewQueueRule(pattern: $0.pattern, categoryID: $0.categoryID, isEnabled: $0.isEnabled)
+        }
+      }
+      model.load()
+    }
     .alert("Delete this payment?", isPresented: $isConfirmingDelete) {
       Button("Keep", role: .cancel) {}
       Button("Delete", role: .destructive) { model.notATransaction() }

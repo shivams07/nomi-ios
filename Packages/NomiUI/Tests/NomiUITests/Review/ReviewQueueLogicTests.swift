@@ -276,4 +276,40 @@ final class ReviewQueueLogicTests: XCTestCase {
     XCTAssertTrue(ReviewQueueLogic.isSingleWord("Groceries"))
     XCTAssertFalse(ReviewQueueLogic.isSingleWord("Eating out"))
   }
+
+  // MARK: - Stored rules
+
+  func testAStoredRuleFilesTheMerchantOnlyUnderItsCategory() {
+    let category = UUID()
+    let other = UUID()
+    let rule = ReviewQueueRule(pattern: "*BLUE TOKAI*", categoryID: category, isEnabled: true)
+
+    XCTAssertTrue(
+      ReviewQueueLogic.ruleFiles(
+        [rule], pattern: "*BLUE TOKAI*", normalizedDescription: "UPI/BLUE TOKAI", categoryID: category))
+    XCTAssertFalse(
+      ReviewQueueLogic.ruleFiles(
+        [rule], pattern: "*BLUE TOKAI*", normalizedDescription: "UPI/BLUE TOKAI", categoryID: other))
+  }
+
+  func testADisabledRuleFilesNothing() {
+    let category = UUID()
+    let rule = ReviewQueueRule(pattern: "*BLUE TOKAI*", categoryID: category, isEnabled: false)
+
+    XCTAssertFalse(
+      ReviewQueueLogic.ruleFiles(
+        [rule], pattern: "*BLUE TOKAI*", normalizedDescription: "UPI/BLUE TOKAI", categoryID: category))
+  }
+
+  func testASeedGlobThatMatchesTheRowCountsAsFilingIt() {
+    let category = UUID()
+    let seed = ReviewQueueRule(pattern: "*OLACABS*", categoryID: category, isEnabled: true)
+
+    XCTAssertTrue(
+      ReviewQueueLogic.ruleFiles(
+        [seed], pattern: "*OLA CABS*", normalizedDescription: "UPI/OLACABS/TRIP", categoryID: category))
+    XCTAssertFalse(
+      ReviewQueueLogic.ruleFiles(
+        [seed], pattern: "*SWIGGY*", normalizedDescription: "UPI/SWIGGY", categoryID: category))
+  }
 }

@@ -41,6 +41,9 @@ import Observation
   private(set) var accountID: UUID?
   /// The trailing three months' categories, read once per load. Empty when the read failed.
   private var history: [CategorySlice] = []
+  /// The stored rules, read at the moment of a rule decision. The screen sets it from
+  /// the SwiftData context; the default reads nothing.
+  @ObservationIgnored var existingRules: () throws -> [ReviewQueueRule] = { [] }
   var selectedCategoryID: UUID?
   var remember = false
 
@@ -128,23 +131,48 @@ import Observation
   /// had one. Advances only when every write before it succeeded.
   func confirmNext() {
     guard let row = current, let categoryID = selectedCategoryID else { return }
-    do {
-      // Judged before any write: the first write stamps the row as the user's, and
-      // a suggestion for a manual row is nil.
-      let alreadyFiled = ruleAlreadyFiles(row, categoryID: categoryID)
-      if row.categoryID != categoryID {
-        try transactionStore.setCategory(row.id, to: categoryID)
+
+    // Judged before any write: the first write stamps the row as the user's, and a
+    // suggestion for a manual row is nil. A rule list that cannot be read stops here,
+    // with nothing written, because a duplicate cannot be ruled out.
+    var needsRule = false
+    if remember, let pattern = rememberPattern {
+      do {
+        needsRule = try !ruleAlreadyFiles(row, categoryID: categoryID, pattern: pattern)
+      } catch {
+        errorMessage = Self.saveFailed
+        return
       }
-      if remember, !alreadyFiled, let pattern = rememberPattern {
-        try ruleStore.create(pattern: pattern, categoryID: categoryID)
-      }
-      if row.needsReview {
-        try transactionStore.dismissReview(row.id)
-      }
-      advance()
-    } catch {
-      errorMessage = Self.saveFailed
     }
+
+    if row.categoryID != categoryID {
+      do {
+        try transactionStore.setCategory(row.id, to: categoryID)
+      } catch {
+        errorMessage = Self.saveFailed
+        return
+      }
+    }
+
+    // Past this line the category is saved, so a later failure must not claim it wasn't.
+    if needsRule, let pattern = rememberPattern {
+      do {
+        try ruleStore.create(pattern: pattern, categoryID: categoryID)
+      } catch {
+        errorMessage = Self.categorySavedRuleFailed
+        return
+      }
+    }
+
+    if row.needsReview {
+      do {
+        try transactionStore.dismissReview(row.id)
+      } catch {
+        errorMessage = Self.flagNotCleared
+        return
+      }
+    }
+    advance()
   }
 
   /// Moves on without a write.
@@ -178,6 +206,8 @@ import Observation
   // MARK: - Private
 
   private static let saveFailed = "That didn't save. Try again."
+  private static let categorySavedRuleFailed = "The category saved, but the rule didn't. Try again."
+  private static let flagNotCleared = "The category saved, but the flag didn't clear. Try again."
 
   private func advance() {
     index += 1
@@ -215,18 +245,22 @@ import Observation
   }
 
   /// True when a rule already files this merchant under `categoryID`, so "Remember"
-  /// would only duplicate it. Two sources of evidence: the row was already filed by a
-  /// rule under that category, or the suggester names a rule for that category.
-  ///
-  /// Known gap: the suggester consults history before rules, so when history answers
-  /// first, a system rule that files the merchant under the same category is not seen
-  /// here, and a user rule is written. `RuleStore` has no read method to close that.
-  private func ruleAlreadyFiles(_ row: NomiCore.Transaction, categoryID: UUID) -> Bool {
+  /// would only duplicate it. Three sources of evidence: the row was already filed by a
+  /// rule under that category; the suggester names a rule for that category; or a
+  /// stored rule (system or user) files it under that category. The stored list is
+  /// read through `existingRules`, which the screen fills from the store, so this
+  /// covers the history-first gap the suggester leaves.
+  private func ruleAlreadyFiles(_ row: NomiCore.Transaction, categoryID: UUID, pattern: String) throws -> Bool {
     if row.categorySource == .rule, row.appliedRuleID != nil, row.categoryID == categoryID {
       return true
     }
-    guard let suggestion = suggestion(for: row) else { return false }
-    guard case .rule = suggestion.reason else { return false }
-    return suggestion.categoryID == categoryID
+    if let suggestion = suggestion(for: row), case .rule = suggestion.reason,
+      suggestion.categoryID == categoryID
+    {
+      return true
+    }
+    return ReviewQueueLogic.ruleFiles(
+      try existingRules(), pattern: pattern, normalizedDescription: row.normalizedDescription,
+      categoryID: categoryID)
   }
 }

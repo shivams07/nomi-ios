@@ -1,6 +1,21 @@
 import Foundation
 import NomiCore
 
+/// A stored rule as the Review queue reads it: its glob, the category it files under,
+/// and whether it is on. Built by the screen from the store, so the model needs no
+/// `RuleStore` read.
+public struct ReviewQueueRule: Equatable, Sendable {
+  public let pattern: String
+  public let categoryID: UUID
+  public let isEnabled: Bool
+
+  public init(pattern: String, categoryID: UUID, isEnabled: Bool) {
+    self.pattern = pattern
+    self.categoryID = categoryID
+    self.isEnabled = isEnabled
+  }
+}
+
 /// The pure rules behind the Review queue (S4): which rows it lists and in what
 /// order, the count Home shows (S1b), the words a row carries, and the three
 /// category tiles a row offers. Values in, values out, so the rules run without a
@@ -119,6 +134,25 @@ public enum ReviewQueueLogic {
   /// boundary, so it scales and then truncates instead.
   public static func isSingleWord(_ text: String) -> Bool {
     text.split(whereSeparator: \.isWhitespace).count <= 1
+  }
+
+  /// True when a stored rule already files this merchant under `categoryID`: an enabled
+  /// rule in that category whose glob is the candidate pattern, or matches the row's
+  /// normalised description. Scope is not read. So a narrower rule that already covers
+  /// the merchant can make Remember skip a rule the user wanted; it never writes a
+  /// duplicate.
+  public static func ruleFiles(
+    _ rules: [ReviewQueueRule],
+    pattern: String,
+    normalizedDescription: String,
+    categoryID: UUID
+  ) -> Bool {
+    let candidate = pattern.uppercased()
+    return rules.contains { rule in
+      guard rule.isEnabled, rule.categoryID == categoryID else { return false }
+      let glob = rule.pattern.uppercased()
+      return glob == candidate || globMatches(pattern: glob, value: normalizedDescription)
+    }
   }
 
   /// Newest first. Equal dates fall back to the id, so the order never depends on
