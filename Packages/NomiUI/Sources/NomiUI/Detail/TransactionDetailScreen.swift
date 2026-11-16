@@ -643,23 +643,40 @@ public struct TransactionDetailScreen: View {
     }
   }
 
+  /// The note row. At accessibility sizes the label sits above the field, so
+  /// neither is squeezed into the other's width.
   private func noteRow(_ transaction: NomiCore.Transaction) -> some View {
-    HStack(spacing: NomiSpacing.xs) {
-      Text("Note")
-        .nomiTextStyle(.rowTitle)
-        .foregroundStyle(NomiColor.ink)
-      TextField("Add a note", text: $readNote)
-        .nomiTextStyle(.body)
-        .foregroundStyle(NomiColor.ink)
-        .multilineTextAlignment(.trailing)
-        .submitLabel(.done)
-        .accessibilityLabel("Note")
-        .onSubmit {
-          saveNote(transaction)
+    let stacked = dynamicTypeSize.isAccessibilitySize
+    let label = Text("Note")
+      .nomiTextStyle(.rowTitle)
+      .foregroundStyle(NomiColor.ink)
+      .fixedSize(horizontal: false, vertical: true)
+    let field = TextField("Add a note", text: $readNote)
+      .nomiTextStyle(.body)
+      .foregroundStyle(NomiColor.ink)
+      .multilineTextAlignment(stacked ? .leading : .trailing)
+      .submitLabel(.done)
+      .accessibilityLabel("Note")
+      .onSubmit {
+        saveNote(transaction)
+      }
+    return Group {
+      if stacked {
+        VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+          label
+          field
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+      } else {
+        HStack(spacing: NomiSpacing.xs) {
+          label.fixedSize(horizontal: true, vertical: false)
+          field
+        }
+      }
     }
     .padding(.horizontal, NomiSpacing.sm)
-    .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight)
+    .padding(.vertical, stacked ? NomiSpacing.xs : 0)
+    .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
   }
 
   /// Writes the note when it changed, through the editor with the row's current
@@ -726,24 +743,40 @@ public struct TransactionDetailScreen: View {
     }
   }
 
-  /// A label, a value and a chevron on one card row, 52 pt high.
+  /// A label, a value and a chevron on one card row, 52 pt high. At accessibility
+  /// sizes the label sits above the value, full width, so words wrap at word
+  /// boundaries and never split across the label and value columns.
   private func valueRow(title: String, value: String, action: @escaping () -> Void) -> some View {
-    Button(action: action) {
-      HStack(spacing: NomiSpacing.xs) {
-        Text(title)
-          .nomiTextStyle(.rowBody)
-          .foregroundStyle(NomiColor.inkSecondary)
-        Spacer(minLength: NomiSpacing.xs)
-        Text(value)
-          .nomiTextStyle(.rowTitle)
-          .foregroundStyle(NomiColor.ink)
-          .multilineTextAlignment(.trailing)
+    let stacked = dynamicTypeSize.isAccessibilitySize
+    return Button(action: action) {
+      HStack(alignment: .center, spacing: NomiSpacing.xs) {
+        VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+          Text(title)
+            .nomiTextStyle(.rowBody)
+            .foregroundStyle(NomiColor.inkSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+          if stacked {
+            Text(value)
+              .nomiTextStyle(.rowTitle)
+              .foregroundStyle(NomiColor.ink)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        if !stacked {
+          Text(value)
+            .nomiTextStyle(.rowTitle)
+            .foregroundStyle(NomiColor.ink)
+            .multilineTextAlignment(.trailing)
+            .fixedSize(horizontal: false, vertical: true)
+        }
         Image(systemName: "chevron.right")
           .foregroundStyle(NomiColor.inkSecondary)
           .accessibilityHidden(true)
       }
       .padding(.horizontal, NomiSpacing.sm)
-      .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight)
+      .padding(.vertical, stacked ? NomiSpacing.xs : 0)
+      .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
@@ -873,9 +906,12 @@ public struct TransactionDetailScreen: View {
       }
       if let vpa = transaction.counterpartyVPA {
         HStack(spacing: NomiSpacing.xs) {
+          // One long word: it scales down, then truncates, rather than breaking mid-word.
           Text(vpa)
             .nomiTextStyle(.rowBody)
             .foregroundStyle(NomiColor.inkDeep)
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
             .frame(maxWidth: .infinity, alignment: .leading)
           Button {
             copyToPasteboard(vpa)
