@@ -9,11 +9,20 @@ public struct LicensesScreen: View {
     ScrollView {
       Group {
         if let text = AboutLogic.licencesText() {
-          Text(verbatim: text)
-            .font(.system(.caption, design: .monospaced))
-            .foregroundStyle(NomiColor.inkSecondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .textSelection(.enabled)
+          // One Text over the whole file draws nothing at AX3 and up, so the text
+          // goes in blocks of whole lines (LicensesLogic). Each block is its own layer.
+          // This is a VStack, not a LazyVStack: a lazy stack leaves the rows at a far
+          // jump (bottom of the list at AX5) blank for good, because it never realises them.
+          let blocks = LicensesLogic.blocks(for: text)
+          VStack(alignment: .leading, spacing: 0) {
+            ForEach(blocks.indices, id: \.self) { index in
+              Text(verbatim: blocks[index])
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(NomiColor.inkSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+            }
+          }
         } else {
           Text("The licence text could not be loaded.", bundle: .module)
             .nomiTextStyle(.caption)
