@@ -405,3 +405,11 @@ extension TransactionDetailLogic {
     return formatter
   }
 }
+
+/// The detail sheet's one error alert. The screen's own failure shows first; the rule
+/// switch's refused write shows when the screen has none. Dismissing clears the one shown.
+public enum DetailErrorAlert {
+  public static func message(screen: String?, ruleSwitch: String?) -> String? {
+    screen ?? ruleSwitch
+  }
+}

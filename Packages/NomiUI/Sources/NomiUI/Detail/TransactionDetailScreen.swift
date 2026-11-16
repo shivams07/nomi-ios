@@ -229,11 +229,26 @@ public struct TransactionDetailScreen: View {
     }
     .alert(
       "Something went wrong",
-      isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }),
-      presenting: errorMessage,
+      isPresented: Binding(get: { failureMessage != nil }, set: { if !$0 { clearFailure() } }),
+      presenting: failureMessage,
       actions: { _ in Button("OK", role: .cancel) {} },
       message: { message in Text(message) }
     )
+  }
+
+  /// The text of the one error alert: the screen's own failure, else the rule switch's
+  /// refused write (see `DetailErrorAlert`).
+  private var failureMessage: String? {
+    DetailErrorAlert.message(screen: errorMessage, ruleSwitch: ruleSwitch.errorMessage)
+  }
+
+  /// Dismissing the alert clears the failure it showed. A second failure stays until its turn.
+  private func clearFailure() {
+    if errorMessage != nil {
+      errorMessage = nil
+    } else {
+      ruleSwitch.clearError()
+    }
   }
 
   // MARK: - Toolbar

@@ -67,6 +67,7 @@ import Observation
         appliedCount = nil
       }
       apply(state(in: try rules(), pattern: pattern, categoryID: categoryID))
+      errorMessage = nil
       refreshMatchCount(pattern: pattern, ruleStore: ruleStore)
     } catch {
       errorMessage = turningOn ? "Could not save this rule." : "Could not turn this rule off."
@@ -90,6 +91,11 @@ import Observation
     } catch {
       matchCount = nil
     }
+  }
+
+  /// Called when the alert that shows `errorMessage` is dismissed.
+  func clearError() {
+    errorMessage = nil
   }
 
   /// Called when the two-second "Applied to" note has run its course.

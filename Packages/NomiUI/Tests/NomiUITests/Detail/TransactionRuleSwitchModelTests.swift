@@ -252,4 +252,35 @@ final class TransactionRuleSwitchModelTests: XCTestCase {
     model.refreshMatchCount(pattern: pattern, ruleStore: store)
     XCTAssertNil(model.caption())
   }
+
+  // MARK: - Error surfacing (fix round: the screen must show the switch's error)
+
+  /// A refused write leaves its error on the model. A later write that lands clears it,
+  /// so an old failure is not shown again after the switch works.
+  func testSuccessfulToggleClearsAnEarlierError() {
+    let store = SpyRuleStore()
+    store.createError = SpyError.refused
+    let model = TransactionRuleSwitchModel()
+    refresh(model, store: store, categoryID: food)
+    toggle(model, store: store, on: true, categoryID: food)
+    XCTAssertEqual(model.errorMessage, "Could not save this rule.")
+
+    store.createError = nil
+    toggle(model, store: store, on: true, categoryID: food)
+    XCTAssertNil(model.errorMessage)
+    XCTAssertTrue(model.isOn)
+  }
+
+  /// Dismissing the alert clears the switch's error, as the screen's own errors clear.
+  func testClearErrorRemovesTheMessage() {
+    let store = SpyRuleStore()
+    store.createError = SpyError.refused
+    let model = TransactionRuleSwitchModel()
+    refresh(model, store: store, categoryID: food)
+    toggle(model, store: store, on: true, categoryID: food)
+    XCTAssertNotNil(model.errorMessage)
+
+    model.clearError()
+    XCTAssertNil(model.errorMessage)
+  }
 }

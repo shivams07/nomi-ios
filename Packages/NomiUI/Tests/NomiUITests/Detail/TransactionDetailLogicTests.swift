@@ -622,4 +622,24 @@ final class TransactionDetailLogicTests: XCTestCase {
     XCTAssertTrue(TransactionDetailLogic.ruleSwitchEnabled(categoryID: UUID(), seededCovers: false))
     XCTAssertFalse(TransactionDetailLogic.ruleSwitchEnabled(categoryID: nil, seededCovers: false))
   }
+
+  // MARK: - Fix round: the detail's one error alert
+
+  /// The rule switch's refused write reaches the alert when the screen has no failure of its own.
+  func testRuleSwitchErrorReachesTheDetailAlert() {
+    XCTAssertEqual(
+      DetailErrorAlert.message(screen: nil, ruleSwitch: "Could not save this rule."),
+      "Could not save this rule.")
+  }
+
+  /// The screen's own failure shows first; the switch's waits behind it.
+  func testScreenErrorShowsBeforeTheRuleSwitchError() {
+    XCTAssertEqual(
+      DetailErrorAlert.message(screen: "Could not save the changes.", ruleSwitch: "Could not save this rule."),
+      "Could not save the changes.")
+  }
+
+  func testNoErrorMeansNoAlert() {
+    XCTAssertNil(DetailErrorAlert.message(screen: nil, ruleSwitch: nil))
+  }
 }
