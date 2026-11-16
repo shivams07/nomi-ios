@@ -276,6 +276,28 @@ final class IMAPMailConnectionServiceTests: XCTestCase {
       "not .authenticationFailed - the server never saw it, so 'wrong password' would be a lie")
   }
 
+  /// R13c (S12b, Andrews ruling option b). A server's raw words never reach the
+  /// screen: `.commandFailed` and `.malformedResponse` map to `.unknown("")`, the
+  /// generic copy, so no state carries the raw text. Kills the mutant that maps
+  /// them to `String(describing:)`.
+  func testARawServerReplyBecomesTheGenericErrorNotItsText() async throws {
+    let rawErrors: [IMAPTransportError] = [
+      .commandFailed(tag: "A1", status: .no, text: "raw IMAP text"),
+      .malformedResponse("raw IMAP text"),
+    ]
+    for rawError in rawErrors {
+      let fetcher = FlakyFetcher()
+      fetcher.connectError = rawError
+      let (service, _, _, _) = makeService(fetcher: fetcher)
+
+      try? await service.connect(credentials)
+
+      let seen = try await collect(service.state, count: 3)
+      XCTAssertEqual(seen[2], .failed(.unknown("")), "\(rawError)")
+      XCTAssertFalse(String(describing: seen).contains("raw IMAP text"), "\(rawError)")
+    }
+  }
+
   func testAFailedConnectReportsAuthenticationFailureRatherThanAGenericOne() async throws {
     let fetcher = FlakyFetcher()
     fetcher.connectError = IMAPTransportError.authenticationFailed("Invalid credentials")
