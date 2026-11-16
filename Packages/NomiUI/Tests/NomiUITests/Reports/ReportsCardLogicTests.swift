@@ -65,6 +65,12 @@ final class ReportsCardLogicTests: XCTestCase {
     XCTAssertNil(ReportsBars.caption(anchor: august, now: now, calendar: india))
   }
 
+  /// The Spent / Income control's tap target is at least 44 pt, around the 30 pt visual.
+  func testKindSegmentsTapTargetIsAtLeast44PointsAroundA30PointVisual() {
+    XCTAssertEqual(ReportsKindSegments.visualHeight, 30)
+    XCTAssertGreaterThanOrEqual(ReportsKindSegments.tapHeight, 44)
+  }
+
   func testShortMonthUsesTheArtboardForm() {
     XCTAssertEqual(ReportsPeriod.shortMonthName(9), "Sep")
     XCTAssertEqual(ReportsPeriod.shortMonthName(1), "Jan")
@@ -83,6 +89,18 @@ final class ReportsCardLogicTests: XCTestCase {
     let kept = ReportsKept.minor(creditMinor: 1_000_00, debitMinor: 1_200_00)
     XCTAssertEqual(kept, -200_00)
     XCTAssertEqual(ReportsKept.percentText(keptMinor: kept, creditMinor: 1_000_00), "\u{2212}20%")
+  }
+
+  /// A negative Kept is ink, not navy (the spec: navy with "+" from zero, ink with "−" below).
+  /// Lim's PR #231 review failed the navy-for-both-signs version.
+  func testNegativeKeptIsInkNotNavy() {
+    XCTAssertEqual(ReportsKept.amountColour(keptMinor: -200_00), NomiColor.ink)
+    XCTAssertEqual(ReportsKept.amountColour(keptMinor: -1), NomiColor.ink)
+  }
+
+  func testZeroAndPositiveKeptAreNavy() {
+    XCTAssertEqual(ReportsKept.amountColour(keptMinor: 0), NomiColor.navy)
+    XCTAssertEqual(ReportsKept.amountColour(keptMinor: 3_182_00), NomiColor.navy)
   }
 
   /// No income recorded: no percentage, and the card says so.

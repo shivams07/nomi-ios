@@ -16,6 +16,12 @@ enum ReportsKept {
     let percent = Int((Double(keptMinor) / Double(creditMinor) * 100).rounded())
     return percent < 0 ? "\u{2212}\(abs(percent))%" : "\(percent)%"
   }
+
+  /// The Kept figure's colour. Navy from zero up, ink below zero (the spec's
+  /// rule: navy with "+" when >= 0, ink with "−" when < 0).
+  static func amountColour(keptMinor: Int) -> Color {
+    keptMinor < 0 ? NomiColor.ink : NomiColor.navy
+  }
 }
 
 /// "Kept this month" or "Kept this year" (S6). The amount is credit minus debit
@@ -55,18 +61,20 @@ struct ReportsKeptCard: View {
     .accessibilityElement(children: .combine)
   }
 
-  /// The amount in one line: sign, integer, then the dimmed decimals, all in navy.
-  /// `NomiAmountText` draws ink only, so the figure is set here from the same parts.
+  /// The amount in one line: sign, integer, then the dimmed decimals. Navy from
+  /// zero up, ink below zero. `NomiAmountText` draws ink only, so the figure is
+  /// set here from the same parts.
   private var amountText: Text {
     let parts = NomiAmountFormat.parts(minor: abs(keptMinor))
     let sign = keptMinor < 0 ? "\u{2212}" : "+"
     let style = NomiTextStyle.amountLarge
+    let colour = ReportsKept.amountColour(keptMinor: keptMinor)
     return Text(sign + parts.integer)
       .font(style.font)
-      .foregroundStyle(NomiColor.navy)
+      .foregroundStyle(colour)
       + Text(parts.decimals)
       .font(style.font)
-      .foregroundStyle(NomiColor.navy.opacity(NomiAmountText.decimalsOpacity(for: style)))
+      .foregroundStyle(colour.opacity(NomiAmountText.decimalsOpacity(for: style)))
   }
 
   @ViewBuilder

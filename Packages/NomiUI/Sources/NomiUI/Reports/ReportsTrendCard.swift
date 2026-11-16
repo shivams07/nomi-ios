@@ -51,15 +51,7 @@ struct ReportsTrendCard: View {
         Text(title, bundle: .module)
           .nomiTextStyle(.headline)
           .foregroundStyle(NomiColor.ink)
-        NomiSegmented(
-          [
-            (value: ReportsBarKind.spent, title: String(localized: "Spent", bundle: .module), systemImage: nil),
-            (value: ReportsBarKind.income, title: String(localized: "Income", bundle: .module), systemImage: nil),
-          ],
-          selection: $kind,
-          style: .onGround,
-          height: 30
-        )
+        ReportsKindControl(kind: $kind)
       }
 
       bars
@@ -112,6 +104,56 @@ struct ReportsTrendCard: View {
     }
     .buttonStyle(.plain)
     .accessibilityLabel("\(monthName), \(ReportsRupees.whole(minor: value))")
+    .accessibilityAddTraits(isSelected ? .isSelected : [])
+  }
+}
+
+/// The Spent / Income control's sizes. The drawn segment is `visualHeight`, and
+/// its tap target is `tapHeight` (at least 44 pt, the HIG minimum).
+enum ReportsKindSegments {
+  static let visualHeight: CGFloat = 30
+  static let tapHeight: CGFloat = 44
+  /// The track's inset around the segments, as `NomiSegmented(.onGround)` draws it.
+  static let trackInset: CGFloat = 4
+}
+
+/// The Spent / Income control, drawn as `NomiSegmented(.onGround, height: 30)`:
+/// a track with 30 pt segments and a black selected capsule. Each segment's tap
+/// target is 44 pt tall (`ReportsKindSegments.tapHeight`). The track keeps its
+/// 38 pt height, so the target overflows it by 3 pt top and bottom and the
+/// visual is unchanged. `NomiSegmented` itself is not changed for other callers.
+private struct ReportsKindControl: View {
+  @Binding var kind: ReportsBarKind
+
+  var body: some View {
+    HStack(spacing: ReportsKindSegments.trackInset) {
+      segment(.spent, title: "Spent")
+      segment(.income, title: "Income")
+    }
+    .padding(ReportsKindSegments.trackInset)
+    .frame(height: ReportsKindSegments.visualHeight + 2 * ReportsKindSegments.trackInset)
+    .background(Capsule().fill(NomiColor.secondaryFill))
+  }
+
+  private func segment(_ value: ReportsBarKind, title: LocalizedStringKey) -> some View {
+    let isSelected = kind == value
+    return Button {
+      kind = value
+    } label: {
+      Text(title, bundle: .module)
+        .font(.custom(NomiFont.interSemiBold, size: 15, relativeTo: .subheadline))
+        .foregroundStyle(isSelected ? NomiColor.onPrimary : NomiColor.ink)
+        .frame(maxWidth: .infinity)
+        .frame(height: ReportsKindSegments.visualHeight)
+        .background {
+          if isSelected {
+            Capsule().fill(NomiColor.primary)
+          }
+        }
+        .frame(height: ReportsKindSegments.tapHeight)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
     .accessibilityAddTraits(isSelected ? .isSelected : [])
   }
 }
