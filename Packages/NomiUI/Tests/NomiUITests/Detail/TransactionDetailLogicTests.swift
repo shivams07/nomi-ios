@@ -366,14 +366,187 @@ final class TransactionDetailLogicTests: XCTestCase {
   func testPickerCommitTruthTable() {
     let a = UUID()
     let b = UUID()
-    // Cancel or a dismissed picker reports no pick: nothing is written.
-    XCTAssertFalse(CategoryPickCommit.shouldWrite(picked: nil, current: a))
-    XCTAssertFalse(CategoryPickCommit.shouldWrite(picked: nil, current: nil))
+    // The picker only reports a nil pick when the user taps None (S3a opts in).
+    // Clearing a categorised row writes nil; None on an uncategorised row is no change.
+    XCTAssertEqual(CategoryPickCommit.decision(picked: nil, current: a), .clear)
+    XCTAssertEqual(CategoryPickCommit.decision(picked: nil, current: nil), .keep)
     // Picking the category the row already has is not a change.
-    XCTAssertFalse(CategoryPickCommit.shouldWrite(picked: a, current: a))
+    XCTAssertEqual(CategoryPickCommit.decision(picked: a, current: a), .keep)
     // A different pick is a change.
-    XCTAssertTrue(CategoryPickCommit.shouldWrite(picked: b, current: a))
+    XCTAssertEqual(CategoryPickCommit.decision(picked: b, current: a), .set(b))
     // An uncategorised row takes its first pick.
-    XCTAssertTrue(CategoryPickCommit.shouldWrite(picked: a, current: nil))
+    XCTAssertEqual(CategoryPickCommit.decision(picked: a, current: nil), .set(a))
+  }
+
+  /// S3a/S5 note (Lim, PR 207): the None row must clear the selection. The row
+  /// is first in the picker when `allowsNone`, and its nil pick decides `.clear`.
+  func testNoneRowLeadsThePickerAndClearsTheCategory() {
+    let category = UUID()
+    XCTAssertEqual(CategoryPickerLogic.rows(categoryIDs: [category], allowsNone: true), [.unset, .category(category)])
+    XCTAssertEqual(CategoryPickerLogic.rows(categoryIDs: [category], allowsNone: false), [.category(category)])
+    XCTAssertEqual(CategoryPickCommit.decision(picked: nil, current: category), .clear)
+  }
+
+  // MARK: - S3a: caption
+
+  private var kolkata: Calendar {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Asia/Kolkata")!
+    return calendar
+  }
+
+  private func kolkataDate(_ day: Int, _ hour: Int, _ minute: Int) -> Date {
+    kolkata.date(from: DateComponents(year: 2026, month: 11, day: day, hour: hour, minute: minute))!
+  }
+
+  func testCaptionForToday() {
+    XCTAssertEqual(
+      TransactionDetailLogic.caption(
+        date: kolkataDate(13, 21, 42), now: kolkataDate(13, 18, 0), calendar: kolkata, accountName: "HDFC ••4471"),
+      "Today, 13 Nov · 9:42 pm · HDFC ••4471")
+  }
+
+  func testCaptionForYesterday() {
+    XCTAssertEqual(
+      TransactionDetailLogic.caption(
+        date: kolkataDate(13, 21, 42), now: kolkataDate(14, 10, 0), calendar: kolkata, accountName: "HDFC ••4471"),
+      "Yesterday, 13 Nov · 9:42 pm · HDFC ••4471")
+  }
+
+  func testCaptionForAnOlderDayIsTheDayAndMonthOnly() {
+    XCTAssertEqual(
+      TransactionDetailLogic.caption(
+        date: kolkataDate(11, 9, 5), now: kolkataDate(16, 10, 0), calendar: kolkata, accountName: "HDFC ••4471"),
+      "11 Nov · 9:05 am · HDFC ••4471")
+  }
+
+  func testCaptionOmitsTheAccountWhenThereIsNone() {
+    XCTAssertEqual(
+      TransactionDetailLogic.caption(
+        date: kolkataDate(13, 21, 42), now: kolkataDate(14, 10, 0), calendar: kolkata, accountName: nil),
+      "Yesterday, 13 Nov · 9:42 pm")
+  }
+
+  func testCaptionTreatsABlankAccountAsNone() {
+    XCTAssertEqual(
+      TransactionDetailLogic.caption(
+        date: kolkataDate(13, 21, 42), now: kolkataDate(14, 10, 0), calendar: kolkata, accountName: "  "),
+      "Yesterday, 13 Nov · 9:42 pm")
+  }
+
+  // MARK: - S3a: delete confirmation
+
+  func testDeleteConfirmationSentenceNamesAmountMerchantAndDay() {
+    XCTAssertEqual(
+      TransactionDetailLogic.deleteConfirmationSentence(
+        amountText: "₹845.00", merchant: "Ola", date: kolkataDate(13, 21, 42), calendar: kolkata),
+      "₹845.00 to Ola on 13 Nov will be removed from every total.")
+  }
+
+  // MARK: - S3a: rule row
+
+  func testRuleRowShowsOnlyWithAStoreAPatternAndNoTransfer() {
+    let cases: [(store: Bool, transfer: Bool, pattern: String?, shown: Bool)] = [
+      (true, false, "*OLA*", true),
+      (false, false, "*OLA*", false),
+      (true, true, "*OLA*", false),
+      (true, false, nil, false),
+    ]
+    for row in cases {
+      XCTAssertEqual(
+        TransactionDetailLogic.showsRuleRow(hasRuleStore: row.store, isTransfer: row.transfer, pattern: row.pattern),
+        row.shown,
+        "store \(row.store), transfer \(row.transfer), pattern \(String(describing: row.pattern))")
+    }
+  }
+
+  func testRuleSwitchIsDisabledForAnUncategorisedRow() {
+    XCTAssertFalse(TransactionDetailLogic.ruleSwitchEnabled(categoryID: nil))
+    XCTAssertTrue(TransactionDetailLogic.ruleSwitchEnabled(categoryID: UUID()))
+  }
+
+  func testExistingRuleMatchesOnPatternAndCategoryOnly() {
+    let food = UUID()
+    let bills = UUID()
+    let userRule = UUID()
+    let rules: [TransactionDetailLogic.RuleRef] = [
+      .init(id: UUID(), pattern: "*OLA*", categoryID: food, isSystem: true),
+      .init(id: UUID(), pattern: "*AMAZON*", categoryID: food, isSystem: false),
+      .init(id: UUID(), pattern: "*OLA*", categoryID: bills, isSystem: false),
+      .init(id: userRule, pattern: "*OLA*", categoryID: food, isSystem: false),
+    ]
+    XCTAssertEqual(TransactionDetailLogic.existingRuleID(among: rules, pattern: "*OLA*", categoryID: food), userRule)
+    XCTAssertNil(TransactionDetailLogic.existingRuleID(among: rules, pattern: "*OLA*", categoryID: UUID()))
+    XCTAssertNil(TransactionDetailLogic.existingRuleID(among: [rules[0]], pattern: "*OLA*", categoryID: food))
+  }
+
+  // MARK: - S3a: category chip and copy
+
+  func testCategoryChipTextReadsTransferForATransferLeg() {
+    XCTAssertEqual(TransactionDetailLogic.categoryChipText(isTransfer: true, categoryName: "Food"), "Transfer")
+    XCTAssertEqual(TransactionDetailLogic.categoryChipText(isTransfer: false, categoryName: "Food"), "Food")
+    XCTAssertEqual(TransactionDetailLogic.categoryChipText(isTransfer: false, categoryName: nil), "Uncategorized")
+  }
+
+  /// S10's ruling: the count is what preview matches, so it says "match" and
+  /// not "applies". Catalog plurals on 1 and 2+.
+  func testMatchCountTextPluralisesAndSaysMatch() {
+    XCTAssertEqual(TransactionDetailLogic.matchCountText(count: 1, isOn: true), "Matches 1 past transaction and all future ones")
+    XCTAssertEqual(TransactionDetailLogic.matchCountText(count: 5, isOn: true), "Matches 5 past transactions and all future ones")
+    XCTAssertEqual(TransactionDetailLogic.matchCountText(count: 0, isOn: false), "Matches 0 past transactions")
+    XCTAssertEqual(TransactionDetailLogic.matchCountText(count: 2, isOn: false), "Matches 2 past transactions")
+  }
+
+  func testAppliedTextPluralises() {
+    XCTAssertEqual(TransactionDetailLogic.appliedText(count: 1), "Applied to 1 transaction")
+    XCTAssertEqual(TransactionDetailLogic.appliedText(count: 5), "Applied to 5 transactions")
+  }
+
+  // MARK: - S3a fix round (Lim, PR #220): the switch decides, then writes
+
+  /// Turning the switch on creates the rule when none exists for this category.
+  func testRuleSwitchOnWithNoRuleCreatesForTheCategory() {
+    let category = UUID()
+    XCTAssertEqual(
+      TransactionDetailLogic.ruleSwitchAction(turningOn: true, existingRuleID: nil, categoryID: category),
+      .create(categoryID: category))
+  }
+
+  /// Turning the switch on when the rule already exists writes nothing.
+  func testRuleSwitchOnWithAnExistingRuleDoesNothing() {
+    XCTAssertEqual(
+      TransactionDetailLogic.ruleSwitchAction(turningOn: true, existingRuleID: UUID(), categoryID: UUID()), .none)
+  }
+
+  /// Turning the switch off deletes the rule this switch reads, by its id.
+  func testRuleSwitchOffWithAnExistingRuleDeletesThatID() {
+    let rule = UUID()
+    XCTAssertEqual(
+      TransactionDetailLogic.ruleSwitchAction(turningOn: false, existingRuleID: rule, categoryID: UUID()),
+      .delete(rule))
+  }
+
+  /// Turning the switch off with no rule to delete writes nothing.
+  func testRuleSwitchOffWithNoRuleDoesNothing() {
+    XCTAssertEqual(
+      TransactionDetailLogic.ruleSwitchAction(turningOn: false, existingRuleID: nil, categoryID: UUID()), .none)
+  }
+
+  /// A row with no category cannot take a rule, so turning on writes nothing.
+  func testRuleSwitchOnWithoutACategoryDoesNothing() {
+    XCTAssertEqual(
+      TransactionDetailLogic.ruleSwitchAction(turningOn: true, existingRuleID: nil, categoryID: nil), .none)
+  }
+
+  // MARK: - S3a fix round: transfer leg predicates (Lim's M4)
+
+  func testCategoryChipIsDisabledForATransferLeg() {
+    XCTAssertFalse(TransactionDetailLogic.categoryChipEnabled(isTransfer: true))
+    XCTAssertTrue(TransactionDetailLogic.categoryChipEnabled(isTransfer: false))
+  }
+
+  func testSuggestionIsNeverOfferedOnATransferLeg() {
+    XCTAssertFalse(TransactionDetailLogic.suggestionAllowed(isTransfer: true))
+    XCTAssertTrue(TransactionDetailLogic.suggestionAllowed(isTransfer: false))
   }
 }
