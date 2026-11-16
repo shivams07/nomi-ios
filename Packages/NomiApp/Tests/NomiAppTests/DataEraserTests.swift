@@ -15,8 +15,8 @@ import XCTest
 /// disconnect, the credential delete, each store save, the alert removal and each
 /// preference write. The saves, the alert removal and the preference writes also
 /// record whether `Recovered/` is still on disk, so the file-removal order is
-/// pinned by the trace too. Two steps make no call a spy can see, the cache drop
-/// and the gate reopening, and the order test asserts both after the call returns.
+/// pinned by the trace too. The cache drop and the gate reopen go through seams on
+/// the eraser, so the trace pins them as well.
 /// The pipeline's lock is not observed directly: the save runs in the lock's body
 /// by construction, and `PipelineEpochTests` (B5a) pins the lock.
 @MainActor
@@ -38,9 +38,9 @@ final class DataEraserTests: XCTestCase {
   /// them. Step a reads the mode. Step b cancels the background requests, and
   /// step c is the disconnect and the credential delete. Steps d and e are the two
   /// saves, f is the alert removal, and g (the files) is seen as `recovered=no` on
-  /// everything after f. Step h writes the erasable preferences, and step j
-  /// restarts first run. Steps i (the cache drop) and k (the gate reopening) have
-  /// no spy, so they are asserted after the call.
+  /// everything after f. Step h writes the erasable preferences, step i drops the
+  /// caches, step j restarts first run, and step k reopens the gate. The last two
+  /// steps are the eraser's own seams, so each records its event where the call is made.
   func testOrderOfOperations() async throws {
     let fixture = try await makeFixture()
     let seeded = try fixture.seedEveryModel()
@@ -63,7 +63,11 @@ final class DataEraserTests: XCTestCase {
         "store.save 1",  // d: every row deleted, one save
         "store.save 2",  // e: the reseed's own save
         "notifications.removeAllAlerts",  // f
-      ] + erasable + ["prefs.set \(PreferenceKey.hasCompletedFirstRun)"],  // h, then j
+      ] + erasable + [
+        "caches.dropped",  // i
+        "prefs.set \(PreferenceKey.hasCompletedFirstRun)",  // j
+        "gate.reopened",  // k
+      ],
       "each step ran once, in I-13 order, with nothing extra")
 
     let events = fixture.trace.events
@@ -501,6 +505,100 @@ final class DataEraserTests: XCTestCase {
     XCTAssertTrue(fixture.cache.isEmpty, "the cache holds nothing after erase")
   }
 
+  // MARK: - Production defaults on a real store
+
+  /// The fixtures pass their own `deleteRows` and `saveStore`, so a no-op default
+  /// would pass every test above. This erase takes the defaults on an on-disk
+  /// store. The rows are then read back through a second container on the same file.
+  func testDefaultDeleteAndSaveEmptyARealStore() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("DataEraserDefaults-\(UUID().uuidString)", isDirectory: true)
+    let storeDirectory = root.appendingPathComponent("store", isDirectory: true)
+    let tempDirectory = root.appendingPathComponent("temp", isDirectory: true)
+    try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let storeURL = storeDirectory.appendingPathComponent("default.store")
+    let suiteName = "DataEraserDefaults.\(UUID().uuidString)"
+    let suite = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { suite.removePersistentDomain(forName: suiteName) }
+
+    let container = try NomiModelContainer.makeLocal(at: storeURL)
+    let context = container.mainContext
+    try DefaultCategorySeed.apply(in: context)
+    try DefaultRuleSeed.apply(in: context)
+    try context.save()
+    let seededCategories = Set(try context.fetch(FetchDescriptor<NomiCore.Category>()).map(\.id))
+    let seededRules = Set(try context.fetch(FetchDescriptor<Rule>()).map(\.id))
+    let account = NomiCore.Account(displayName: "Savings")
+    context.insert(account)
+    context.insert(
+      NomiCore.Transaction(
+        date: Date(),
+        descriptionText: "SALARY",
+        merchantName: "Employer",
+        normalizedDescription: "SALARY",
+        amountMinor: 1_000_000))
+    context.insert(NomiCore.Budget(categoryID: UUID(), amountMinor: 50_000))
+    context.insert(BudgetAlertLog(categoryID: UUID(), periodKey: "2026-11"))
+    context.insert(AccountBinding(senderDomain: "bank.example", cardFragment: "1234", accountID: account.id))
+    context.insert(ColumnMappingRecord(formatSignature: "sig", bankLabel: "Bank", mappingJSON: "{}"))
+    context.insert(NomiCore.Category(name: "Mine"))
+    context.insert(Rule(pattern: "MINE", categoryID: UUID(), priority: 1))
+    try context.save()
+
+    let trace = EraseTrace()
+    let credentials = TracingCredentials(trace: trace)
+    let preferences = TracingPreferences(trace: trace)
+    let mailStack = MailStack(
+      fetcher: EraseFetcher(disconnect: .succeeds, trace: trace),
+      pipeline: SilentPipeline(),
+      credentials: credentials,
+      preferences: preferences
+    )
+    let pipeline = IngestPipeline(store: EmptyPipelineStore())
+    let sync = AppSyncCoordinator(
+      mail: mailStack, pipeline: pipeline, submitter: TracingSubmitter(trace: trace))
+    preferences.set(true, forKey: PreferenceKey.hasCompletedFirstRun)
+    let firstRun = FirstRunGate(store: preferences)
+    let service = await mailStack.service
+    let eraser = DataEraser(
+      container: container,
+      storageMode: { .cloudKit },
+      sync: sync,
+      pipeline: pipeline,
+      mail: service,
+      credentials: credentials,
+      notifications: TracingNotifications(trace: trace),
+      preferences: preferences,
+      standardDefaults: suite,
+      firstRun: firstRun,
+      writes: WriteCoordinator(cache: InsightsCache()),
+      storeDirectory: storeDirectory,
+      tempDirectory: tempDirectory,
+      disconnectTimeout: 5
+    )
+
+    try await withTestTimeout(seconds: 30) { [eraser] in try await eraser.eraseEverything() }
+
+    let reopenedContainer = try NomiModelContainer.makeLocal(at: storeURL)
+    let reopened = ModelContext(reopenedContainer)
+    XCTAssertEqual(try reopened.fetchCount(FetchDescriptor<NomiCore.Transaction>()), 0, "transactions are gone")
+    XCTAssertEqual(try reopened.fetchCount(FetchDescriptor<NomiCore.Budget>()), 0, "budgets are gone")
+    XCTAssertEqual(try reopened.fetchCount(FetchDescriptor<BudgetAlertLog>()), 0, "alert logs are gone")
+    XCTAssertEqual(try reopened.fetchCount(FetchDescriptor<NomiCore.Account>()), 0, "accounts are gone")
+    XCTAssertEqual(try reopened.fetchCount(FetchDescriptor<AccountBinding>()), 0, "bindings are gone")
+    XCTAssertEqual(try reopened.fetchCount(FetchDescriptor<ColumnMappingRecord>()), 0, "mappings are gone")
+    XCTAssertEqual(
+      Set(try reopened.fetch(FetchDescriptor<NomiCore.Category>()).map(\.id)), seededCategories,
+      "on disk, only the seeded categories remain")
+    XCTAssertEqual(
+      Set(try reopened.fetch(FetchDescriptor<Rule>()).map(\.id)), seededRules,
+      "on disk, only the seeded rules remain")
+    withExtendedLifetime(container) {}
+    withExtendedLifetime(reopenedContainer) {}
+  }
+
   // MARK: - Fixtures
 
   private func makeFixture(
@@ -621,6 +719,8 @@ private final class EraseFixture {
     let modeBox = self.mode
     let saveSeam = self.saveSeam
     let deleteSeam = self.deleteSeam
+    let sync = self.sync
+    let writes = self.writes
     eraser = DataEraser(
       container: stack.container,
       storageMode: {
@@ -651,6 +751,14 @@ private final class EraseFixture {
         trace.record("store.save \(number)", stamped: true)
         if saveSeam.failing.contains(number) { throw FixtureSaveError.failed }
         try context.save()
+      },
+      dropCaches: { [writes] in
+        writes.didWrite(affectedCategoryIDs: [])
+        trace.record("caches.dropped")
+      },
+      reopenGate: { [sync] token in
+        await sync.endErase(token)
+        trace.record("gate.reopened")
       }
     )
   }

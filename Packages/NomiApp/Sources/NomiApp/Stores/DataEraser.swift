@@ -30,13 +30,16 @@ final class DataEraser: DataErasing {
   private let disconnectTimeout: TimeInterval
   private let deleteRows: @MainActor (any PersistentModel.Type, ModelContext) throws -> Void
   private let saveStore: @MainActor (ModelContext) throws -> Void
+  private let dropCaches: @MainActor () -> Void
+  private let reopenGate: @MainActor (EraseToken) async -> Void
 
   /// `storageMode` is read at each call, so the scope a Settings row shows and the
   /// scope an erase acts on are the same answer.
   ///
-  /// `disconnectTimeout`, `deleteRows` and `saveStore` exist for tests. Production
-  /// takes the defaults: 10 s for the mail disconnect, a plain `delete(model:)`
-  /// per model, and a plain `save()`.
+  /// `disconnectTimeout`, `deleteRows`, `saveStore`, `dropCaches` and `reopenGate`
+  /// exist for tests. Production takes the defaults: 10 s for the mail disconnect,
+  /// a plain `delete(model:)` per model, a plain `save()`, the write coordinator's
+  /// cache drop, and the sync coordinator's `endErase`.
   init(
     container: ModelContainer,
     storageMode: @escaping @MainActor () -> StorageMode,
@@ -56,7 +59,9 @@ final class DataEraser: DataErasing {
     deleteRows: @escaping @MainActor (any PersistentModel.Type, ModelContext) throws -> Void = { model, context in
       try context.delete(model: model)
     },
-    saveStore: @escaping @MainActor (ModelContext) throws -> Void = { try $0.save() }
+    saveStore: @escaping @MainActor (ModelContext) throws -> Void = { try $0.save() },
+    dropCaches: (@MainActor () -> Void)? = nil,
+    reopenGate: (@MainActor (EraseToken) async -> Void)? = nil
   ) {
     self.container = container
     self.storageModeProvider = storageMode
@@ -75,6 +80,8 @@ final class DataEraser: DataErasing {
     self.disconnectTimeout = disconnectTimeout
     self.deleteRows = deleteRows
     self.saveStore = saveStore
+    self.dropCaches = dropCaches ?? { writes.didWrite(affectedCategoryIDs: []) }
+    self.reopenGate = reopenGate ?? { token in await sync.endErase(token) }
   }
 
   var scope: EraseScope {
@@ -158,13 +165,13 @@ final class DataEraser: DataErasing {
     }
 
     // i. Every cache drops. No observer runs: there are no budgets left to evaluate.
-    writes.didWrite(affectedCategoryIDs: [])
+    dropCaches()
 
     // j. First run starts again from Welcome (G10).
     firstRun.restartAfterErase()
 
     // k. Reopen the gate. Only the holder's token can do this.
-    await sync.endErase(token)
+    await reopenGate(token)
 
     // l. Reported last, so every other step has already run. Covers a failed
     // credential delete, a failed store save and a failed reseed.
