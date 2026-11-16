@@ -97,6 +97,46 @@ enum DevLaunchRoute: String, CaseIterable, Equatable, Sendable {
   static func demoCompletesFirstRun(for route: DevLaunchRoute?) -> Bool {
     route?.onboardingStep == nil
   }
+
+  /// What a launch does with its route, given the first-run flag's state. The
+  /// decision is pinned here, for all three flag states and with or without demo
+  /// data.
+  ///
+  /// - A shell route opens in every state. With no first run done, it waits for the
+  ///   shell, which appears when first run completes. With demo data the flag is
+  ///   set in memory first, so the shell appears at once.
+  /// - Welcome and Bring in your data open their step while first run is open. A
+  ///   recorded true flag means first run is done, so they do nothing.
+  /// - An absent flag and a recorded false are the same first run. `UserDefaults`
+  ///   answers false for both, and the gate cannot tell them apart.
+  ///
+  /// `demo` does not change either answer. The demo overlay sets the flag only for
+  /// a shell route (see `demoCompletesFirstRun`), so an onboarding route still
+  /// sees the stored flag.
+  static func stage(for route: DevLaunchRoute?, flag: FirstRunFlag, demo: Bool) -> DevLaunchStage {
+    _ = demo
+    guard let route else { return .none }
+    if let step = route.onboardingStep {
+      return flag == .recordedTrue ? .none : .onboardingStep(step)
+    }
+    return .shellRoute(route)
+  }
+}
+
+/// The first-run flag as a launch sees it: never written, written false, or
+/// written true. `UserDefaults` cannot tell the first two apart, which is why the
+/// decision is pinned for each.
+enum FirstRunFlag: CaseIterable, Equatable, Sendable {
+  case absent
+  case recordedFalse
+  case recordedTrue
+}
+
+/// What a launch does with its route. See `DevLaunchRoute.stage`.
+enum DevLaunchStage: Equatable, Sendable {
+  case none
+  case onboardingStep(OnboardingStep)
+  case shellRoute(DevLaunchRoute)
 }
 
 /// A pushed screen with no `HomeRoute` case. About and Licences are inline links

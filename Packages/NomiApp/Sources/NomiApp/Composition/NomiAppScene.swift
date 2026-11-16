@@ -82,6 +82,9 @@ enum AppServices {
   /// `preferenceStore`.
   static func launchPreferences(persistent: Bool, defaults: UserDefaults) -> any KeyValueStoring {
     #if DEBUG && targetEnvironment(simulator)
+      // Reads the route first, so an unknown NOMI_START_ROUTE is logged at launch,
+      // before any screen is built. See `DevLaunchRoute.launch`.
+      _ = DevLaunchRoute.launch
       return launchPreferences(
         persistent: persistent, defaults: defaults, environment: ProcessInfo.processInfo.environment)
     #else

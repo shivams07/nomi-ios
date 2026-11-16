@@ -87,6 +87,45 @@ final class DevLaunchRouteTests: XCTestCase {
     XCTAssertFalse(DevLaunchRoute.demoCompletesFirstRun(for: .bringData))
   }
 
+  // MARK: - The three flag states, with and without demo data
+
+  /// A shell route opens in every flag state, with or without demo data. An absent
+  /// flag and an explicit false are the same first run; only a true flag is done.
+  func testAShellRouteOpensInEveryFlagStateWithOrWithoutDemoData() {
+    for route in DevLaunchRoute.allCases where route.onboardingStep == nil {
+      for flag in FirstRunFlag.allCases {
+        for demo in [false, true] {
+          XCTAssertEqual(
+            DevLaunchRoute.stage(for: route, flag: flag, demo: demo), .shellRoute(route),
+            "\(route.rawValue) flag=\(flag) demo=\(demo)")
+        }
+      }
+    }
+  }
+
+  /// Welcome and Bring in your data open their step while first run is open, and
+  /// do nothing once it is done. Demo data does not change either answer.
+  func testAnOnboardingRouteOpensItsStepUnlessFirstRunIsDone() {
+    for route in [DevLaunchRoute.welcome, .bringData] {
+      guard let step = route.onboardingStep else {
+        return XCTFail("\(route.rawValue) has no onboarding step")
+      }
+      for demo in [false, true] {
+        XCTAssertEqual(DevLaunchRoute.stage(for: route, flag: .absent, demo: demo), .onboardingStep(step))
+        XCTAssertEqual(DevLaunchRoute.stage(for: route, flag: .recordedFalse, demo: demo), .onboardingStep(step))
+        XCTAssertEqual(DevLaunchRoute.stage(for: route, flag: .recordedTrue, demo: demo), .none)
+      }
+    }
+  }
+
+  func testNoRouteDoesNothingInAnyFlagState() {
+    for flag in FirstRunFlag.allCases {
+      for demo in [false, true] {
+        XCTAssertEqual(DevLaunchRoute.stage(for: nil, flag: flag, demo: demo), .none)
+      }
+    }
+  }
+
   // MARK: - Source pins
 
   /// Every use of the launch route in the composition root and the shell sits
@@ -152,6 +191,24 @@ final class DevLaunchRouteTests: XCTestCase {
         persistent: true, defaults: defaults,
         environment: ["NOMI_DEMO_DATA": "1", "NOMI_START_ROUTE": "welcome"])
       XCTAssertFalse(prefs.bool(forKey: PreferenceKey.hasCompletedFirstRun))
+    }
+
+    /// Absent, recorded false and recorded true all open a shell route with demo
+    /// data, and the real store is left as it was.
+    func testDemoDataOpensAShellRouteInEveryRecordedFlagState() {
+      for recorded: Bool? in [nil, false, true] {
+        let defaults = suite()
+        if let recorded {
+          defaults.set(recorded, forKey: PreferenceKey.hasCompletedFirstRun)
+        }
+        let prefs = AppServices.launchPreferences(
+          persistent: true, defaults: defaults,
+          environment: ["NOMI_DEMO_DATA": "1", "NOMI_START_ROUTE": "settings"])
+        XCTAssertTrue(prefs.bool(forKey: PreferenceKey.hasCompletedFirstRun), "recorded=\(String(describing: recorded))")
+        XCTAssertEqual(
+          defaults.object(forKey: PreferenceKey.hasCompletedFirstRun) as? Bool, recorded,
+          "the real store must not change")
+      }
     }
 
     func testWithoutDemoDataNoLaunchRouteSetsTheFlag() {
