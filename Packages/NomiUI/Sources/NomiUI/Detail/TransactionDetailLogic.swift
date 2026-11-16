@@ -278,11 +278,25 @@ extension TransactionDetailLogic {
   }
 
   /// The body of the delete alert: "₹845.00 to Ola on 13 Nov will be removed from
-  /// every total." (States board, Destructive).
-  public static func deleteConfirmationSentence(amountText: String, merchant: String, date: Date, calendar: Calendar) -> String {
+  /// every total." (States board, Destructive). A transfer leg adds one sentence:
+  /// its partner stops being a transfer when this leg goes (B9), so it counts again.
+  public static func deleteConfirmationSentence(
+    amountText: String, merchant: String, date: Date, calendar: Calendar, isTransfer: Bool = false
+  ) -> String {
     let day = formatter("d MMM", calendar: calendar).string(from: date)
-    return String(localized: "\(amountText) to \(merchant) on \(day) will be removed from every total.", bundle: .module)
+    let sentence = String(localized: "\(amountText) to \(merchant) on \(day) will be removed from every total.", bundle: .module)
+    guard isTransfer else { return sentence }
+    return sentence + " " + transferDeleteSentence
   }
+
+  /// The line under the switch when a seeded rule already files this merchant under
+  /// this category. The switch reads on and is locked, so the caption says why.
+  public static func seededRuleText(merchant: String) -> String {
+    "Nomi already files \(merchant) here"
+  }
+
+  /// The second sentence of a transfer leg's delete alert (S3a follow-up, Andrews 2026-11-16).
+  public static let transferDeleteSentence = "Its matching transfer will count as an ordinary transaction."
 
   /// The rule row is drawn only where a rule store was handed in, the row is not a
   /// transfer leg (a leg has no category to file), and the row has a pattern.
@@ -290,9 +304,11 @@ extension TransactionDetailLogic {
     hasRuleStore && !isTransfer && pattern != nil
   }
 
-  /// The switch needs a category to file the rule under.
-  public static func ruleSwitchEnabled(categoryID: UUID?) -> Bool {
-    categoryID != nil
+  /// The switch needs a category to file the rule under. A seeded rule that already
+  /// files this merchant under this category locks the switch: it reads on, and the
+  /// switch can neither add a duplicate nor delete the seeded rule.
+  public static func ruleSwitchEnabled(categoryID: UUID?, seededCovers: Bool = false) -> Bool {
+    categoryID != nil && !seededCovers
   }
 
   /// The fields of a `Rule` the "Always use this" switch reads.
@@ -314,6 +330,13 @@ extension TransactionDetailLogic {
   /// system rule is never the switch's rule, since the switch cannot delete it.
   public static func existingRuleID(among rules: [RuleRef], pattern: String, categoryID: UUID) -> UUID? {
     rules.first { !$0.isSystem && $0.pattern == pattern && $0.categoryID == categoryID }?.id
+  }
+
+  /// A seeded rule (one `DefaultRuleSeed` owns) that already files this pattern
+  /// under this category. The switch must not add a user rule for it: that would be
+  /// a duplicate the ledger carries twice (S3a follow-up, seeded-rule duplicate).
+  public static func systemRuleCovers(among rules: [RuleRef], pattern: String, categoryID: UUID) -> Bool {
+    rules.contains { $0.isSystem && $0.pattern == pattern && $0.categoryID == categoryID }
   }
 
   /// The category chip's words: a transfer leg reads "Transfer", whatever it holds.
@@ -348,9 +371,14 @@ extension TransactionDetailLogic {
     case delete(UUID)
   }
 
-  public static func ruleSwitchAction(turningOn: Bool, existingRuleID: UUID?, categoryID: UUID?) -> RuleSwitchAction {
+  /// `seededCovers` is true when a seeded rule already files this pattern under the
+  /// row's category. On then creates nothing, since that rule already applies; off
+  /// deletes nothing, since the switch cannot delete a seeded rule.
+  public static func ruleSwitchAction(
+    turningOn: Bool, existingRuleID: UUID?, categoryID: UUID?, seededCovers: Bool = false
+  ) -> RuleSwitchAction {
     if turningOn {
-      guard existingRuleID == nil, let categoryID else { return .none }
+      guard existingRuleID == nil, !seededCovers, let categoryID else { return .none }
       return .create(categoryID: categoryID)
     }
     guard let existingRuleID else { return .none }
