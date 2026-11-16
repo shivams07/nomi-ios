@@ -346,9 +346,13 @@ public struct ConnectMailScreen: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 0) {
         VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+          // One line that shrinks to fit: an address has no break points, so at AX3
+          // it would otherwise break mid-word.
           Text(address)
             .nomiTextStyle(.rowTitle)
             .foregroundStyle(NomiColor.ink)
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
           checkedLine
         }
         .padding(NomiSpacing.sm)

@@ -38,14 +38,40 @@ final class MailProviderGuideTests: XCTestCase {
     }
   }
 
-  func testFootnoteKeepsTheKeychainClaimAndStatesTheMailScope() {
-    let footnote = ConnectMailFootnote.text
-    XCTAssertTrue(footnote.hasPrefix(ConnectMailCopy.credentialCaption))
-    XCTAssertTrue(
-      footnote.contains(
-        "Nomi reads emails from bank and payment senders and keeps only transaction alerts."))
-    for banned in ["device-only", "thisdeviceonly", "stays", "each device", "never leave", "only bank alert"] {
-      XCTAssertFalse(footnote.lowercased().contains(banned), "overstates: \(banned)")
+  /// The footnote is pinned whole: the Keychain caption (unchanged) and the scope
+  /// sentence (Lim, PR #224: "keeps only transaction alerts" was untrue, because a
+  /// bank statement notice passes MailPreFilter and lands in Review).
+  func testFootnotePinsTheKeychainCaptionAndTheScopeSentence() {
+    XCTAssertEqual(
+      ConnectMailFootnote.text,
+      "Your mail password is kept in this device’s Keychain. It does not sync, so you may need to enter it again on another device. Your transactions sync only if you use iCloud. Nomi looks for transactions in emails from bank and payment senders. Anything it can't read clearly goes to Review for you to check.")
+  }
+
+  func testFootnoteClaimsNoMoreThanTheCodeDoes() {
+    let lowered = ConnectMailFootnote.text.lowercased()
+    for banned in ["device-only", "thisdeviceonly", "stays", "each device", "never leave", "only transaction", "keeps only", "bank alert"] {
+      XCTAssertFalse(lowered.contains(banned), "overstates: \(banned)")
     }
+  }
+
+  /// Pins the Gmail wording exactly. The "16-character" line is what the user
+  /// matches against Google's screen (a "12-character" mutant survived review).
+  func testGmailStepsArePinnedWordForWord() {
+    XCTAssertEqual(
+      MailProvider.gmail.steps,
+      [
+        "Turn on 2-Step Verification in your Google account",
+        "Create an app password for Nomi",
+        "Paste the 16-character password below",
+      ])
+  }
+
+  /// Each provider's app-password link goes to its own account page. Pinned by
+  /// host, so an appleid.apple.com mutant fails (it survived review).
+  func testEachProviderLinkGoesToItsAccountHost() {
+    XCTAssertEqual(MailProvider.gmail.appPasswordURL?.host, "myaccount.google.com")
+    XCTAssertEqual(MailProvider.gmail.appPasswordURL?.path, "/apppasswords")
+    XCTAssertEqual(MailProvider.icloud.appPasswordURL?.host, "account.apple.com")
+    XCTAssertEqual(MailProvider.zoho.appPasswordURL?.host, "accounts.zoho.com")
   }
 }

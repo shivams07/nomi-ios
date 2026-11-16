@@ -18,7 +18,7 @@ extension MailProvider {
       ]
     case .icloud:
       return [
-        "Sign in at account.apple.com",
+        "Sign in to your Apple Account at the link below",
         "Under Sign-In and Security, choose App-Specific Passwords",
         "Generate an app-specific password and paste it below",
       ]
@@ -68,5 +68,5 @@ extension MailProvider {
 enum ConnectMailFootnote {
   static let text =
     ConnectMailCopy.credentialCaption
-    + " Nomi reads emails from bank and payment senders and keeps only transaction alerts."
+    + " Nomi looks for transactions in emails from bank and payment senders. Anything it can't read clearly goes to Review for you to check."
 }
