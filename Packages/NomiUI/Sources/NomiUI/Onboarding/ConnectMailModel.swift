@@ -129,6 +129,12 @@ struct ConnectMailObservation: Equatable {
     }
   }
 
+  /// "Scan last 6 months" (S12b). It starts nothing itself: the screen's handler
+  /// pushes Backfill, which owns the scan. No service method is called here.
+  func scanRecent(_ startBackfill: () -> Void) {
+    startBackfill()
+  }
+
   /// Arms the disconnect. It calls no service method: the confirmation dialog
   /// decides whether `confirmDisconnect` runs.
   func requestDisconnect() {

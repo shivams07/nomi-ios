@@ -1,14 +1,17 @@
+#if os(iOS)
+import UIKit
+#endif
 import NomiCore
 import NomiPreview
 import SwiftUI
 
 /// Connect mail (ConnectMail and ConnectMailAttention artboards, SIMP §3 item 5).
-/// H0 large title. Provider and account fields sit on cards. The Connect button
-/// is pinned at the bottom, and the credential caption is its footer.
+/// The form opens with the provider chips, the provider's steps and the two
+/// fields. The Connect button is pinned at the bottom, and the footnote under it
+/// says what is kept and what is read.
 ///
 /// Also renders the connected state, so Settings can push here to manage the
-/// connection. That state has no artboard; it uses the same card and row
-/// tokens as the form.
+/// connection: the account card, Check now, Scan last 6 months, and Disconnect.
 public struct ConnectMailScreen: View {
   public let mailConnectionService: MailConnectionService
   public var onBackfillStart: (() -> Void)?
@@ -21,13 +24,34 @@ public struct ConnectMailScreen: View {
   @State private var password = ""
 
   public init(mailConnectionService: MailConnectionService, onBackfillStart: (() -> Void)? = nil) {
+    self.init(
+      mailConnectionService: mailConnectionService,
+      onBackfillStart: onBackfillStart,
+      startingProvider: .gmail
+    )
+  }
+
+  /// The provider the form opens on. The public init opens on Gmail; previews and
+  /// the visual check open each provider through this one.
+  init(
+    mailConnectionService: MailConnectionService,
+    onBackfillStart: (() -> Void)?,
+    startingProvider: MailProvider
+  ) {
     self.mailConnectionService = mailConnectionService
     self.onBackfillStart = onBackfillStart
     _model = State(initialValue: ConnectMailModel(service: mailConnectionService))
+    _provider = State(initialValue: startingProvider)
   }
 
   private var canConnect: Bool {
     ConnectFormGate.isValid(provider: provider, address: address, host: host, password: password)
+  }
+
+  /// The connected view keeps the large title; the form's own h1 names the provider.
+  private var isConnected: Bool {
+    if case .connected = model.connectionState { return true }
+    return false
   }
 
   public var body: some View {
@@ -42,7 +66,7 @@ public struct ConnectMailScreen: View {
     .background(NomiColor.ground.ignoresSafeArea())
     .navigationTitle("Connect mail")
     #if os(iOS)
-    .navigationBarTitleDisplayMode(.large)
+    .navigationBarTitleDisplayMode(isConnected ? .large : .inline)
     #endif
     .task {
       for await state in mailConnectionService.state {
@@ -79,19 +103,31 @@ public struct ConnectMailScreen: View {
           reconnectCard
             .padding(.bottom, NomiSpacing.xxs)
         }
-        sectionLabel("Provider", isFirst: true)
-        providerCard
-        sectionLabel("Account")
-        accountCard
-        Text(provider.passwordInstructions)
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.inkSecondary)
-          .padding(.top, NomiSpacing.xs + NomiSpacing.xxs)
-          .padding(.horizontal, NomiSpacing.xxs)
+        Text("Connect \(provider.displayName)")
+          .nomiTextStyle(.title)
+          .foregroundStyle(NomiColor.ink)
+          .accessibilityAddTraits(.isHeader)
+          .padding(.bottom, NomiSpacing.sm)
+        providerChips
+          .padding(.bottom, NomiSpacing.sm)
+        if let title = provider.guideTitle {
+          stepsCard(title: title)
+        } else {
+          genericNote
+        }
+        fieldsBlock
+          .padding(.top, NomiSpacing.sm)
         if let errorText = model.errorText {
           errorLine(errorText)
             .padding(.top, NomiSpacing.sm)
         }
+        // The footnote scrolls with the form, so at AX3 it never covers the fields.
+        Text(ConnectMailFootnote.text)
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .multilineTextAlignment(.center)
+          .frame(maxWidth: .infinity)
+          .padding(.top, NomiSpacing.sm)
       }
       .padding(.horizontal, NomiSpacing.screenGutter)
       .padding(.bottom, NomiSpacing.sm)
@@ -120,34 +156,82 @@ public struct ConnectMailScreen: View {
     .nomiCard(padding: EdgeInsets())
   }
 
-  private func sectionLabel(_ title: String, isFirst: Bool = false) -> some View {
-    Text(title)
-      .nomiTextStyle(.label)
-      .foregroundStyle(NomiColor.inkDeep)
-      .padding(.top, isFirst ? 0 : NomiSpacing.sm)
-      .padding(.bottom, NomiSpacing.xs)
-      .padding(.horizontal, NomiSpacing.xxs)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .accessibilityAddTraits(.isHeader)
-  }
-
-  private var providerCard: some View {
-    cardRow {
-      Picker("Provider", selection: $provider) {
+  /// One chip per provider the app connects to. The selected chip is black.
+  private var providerChips: some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: NomiSpacing.xs) {
         ForEach(MailProvider.allCases) { option in
-          Text(option.displayName).tag(option)
+          providerChip(option)
         }
       }
-      .labelsHidden()
-      .pickerStyle(.menu)
-      .tint(NomiColor.ink)
     }
+    .fixedSize(horizontal: false, vertical: true)
+  }
+
+  private func providerChip(_ option: MailProvider) -> some View {
+    let isSelected = provider == option
+    return Button {
+      provider = option
+    } label: {
+      Text(option.displayName)
+        .nomiTextStyle(.label)
+        .foregroundStyle(isSelected ? NomiColor.card : NomiColor.ink)
+        .padding(.horizontal, NomiSpacing.sm)
+        .frame(minHeight: 40)
+        .background(Capsule().fill(isSelected ? NomiColor.ink : NomiColor.card))
+    }
+    .buttonStyle(.plain)
+    .accessibilityAddTraits(isSelected ? .isSelected : [])
+  }
+
+  /// The numbered steps for the chosen provider, and its app-password page.
+  private func stepsCard(title: String) -> some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.sm) {
+      Text(title)
+        .nomiTextStyle(.rowTitle)
+        .foregroundStyle(NomiColor.ink)
+      ForEach(Array(provider.steps.enumerated()), id: \.offset) { index, step in
+        HStack(alignment: .top, spacing: NomiSpacing.sm) {
+          Text("\(index + 1)")
+            .nomiTextStyle(.label)
+            .foregroundStyle(NomiColor.inkDeep)
+            .frame(width: 34, height: 34)
+            .background(Circle().fill(NomiColor.secondaryFill))
+          Text(step)
+            .nomiTextStyle(.body)
+            .foregroundStyle(NomiColor.ink)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+      }
+      if let url = provider.appPasswordURL, let linkTitle = provider.appPasswordLinkTitle {
+        Link(destination: url) {
+          Text(linkTitle)
+            .nomiTextStyle(.label)
+            .foregroundStyle(NomiColor.primary)
+            .frame(minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+        }
+      }
+    }
+    .padding(NomiSpacing.sm)
+    .frame(maxWidth: .infinity, alignment: .leading)
     .nomiCard(padding: EdgeInsets())
   }
 
-  private var accountCard: some View {
-    VStack(spacing: 0) {
-      cardRow {
+  /// Generic IMAP has no steps: the user's own provider issues the password.
+  private var genericNote: some View {
+    Text(MailProvider.genericPasswordNote)
+      .nomiTextStyle(.caption)
+      .foregroundStyle(NomiColor.inkSecondary)
+      .padding(.horizontal, NomiSpacing.xxs)
+      .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  /// The address, the IMAP host for generic IMAP only, and the app password.
+  private var fieldsBlock: some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+      fieldLabel("Email address")
+      fieldBox {
         TextField("Email address", text: $address)
           #if os(iOS)
           .keyboardType(.emailAddress)
@@ -156,8 +240,8 @@ public struct ConnectMailScreen: View {
           .autocorrectionDisabled()
       }
       if provider.fixedHost == nil {
-        cardDivider
-        cardRow {
+        fieldLabel("IMAP host")
+        fieldBox {
           TextField("IMAP host", text: $host)
             .autocorrectionDisabled()
             #if os(iOS)
@@ -165,28 +249,55 @@ public struct ConnectMailScreen: View {
             #endif
         }
       }
-      cardDivider
-      cardRow {
-        SecureField("Password", text: $password)
+      fieldLabel("App password")
+      fieldBox {
+        SecureField("App password", text: $password)
+        #if os(iOS)
+        Button("Paste") { pasteFromClipboard() }
+          .nomiTextStyle(.label)
+          .foregroundStyle(NomiColor.primary)
+          .frame(minHeight: NomiSpacing.rowMinHeight)
+        #endif
       }
     }
-    .nomiCard(padding: EdgeInsets())
   }
 
-  /// A 56-high field row with the body style and 16 pt side padding.
-  private func cardRow<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-    content()
-      .nomiTextStyle(.body)
-      .foregroundStyle(NomiColor.ink)
-      .padding(.horizontal, NomiSpacing.sm)
-      .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+  private func fieldLabel(_ title: String) -> some View {
+    Text(title)
+      .nomiTextStyle(.label)
+      .foregroundStyle(NomiColor.inkDeep)
+      .padding(.top, NomiSpacing.xs)
+      .padding(.horizontal, NomiSpacing.xxs)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .accessibilityHidden(true)
   }
 
-  private var cardDivider: some View {
-    Rectangle()
-      .fill(NomiColor.separator)
-      .frame(height: 1)
-      .padding(.horizontal, NomiSpacing.sm)
+  /// A 54 pt field: the card fill, an 18 pt radius and a hairline stroke.
+  private func fieldBox<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+    HStack(spacing: NomiSpacing.xs) {
+      content()
+    }
+    .nomiTextStyle(.body)
+    .foregroundStyle(NomiColor.ink)
+    .padding(.horizontal, NomiSpacing.sm)
+    .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+    .background(
+      RoundedRectangle(cornerRadius: NomiRadius.inset, style: NomiRadius.cardSheetStyle)
+        .fill(NomiColor.card)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: NomiRadius.inset, style: NomiRadius.cardSheetStyle)
+        .stroke(NomiColor.separator, lineWidth: 1)
+    )
+  }
+
+  /// The clipboard is read only on this tap. Nothing reads it on appearance.
+  private func pasteFromClipboard() {
+    #if os(iOS)
+    if let text = UIPasteboard.general.string {
+      password = text
+    }
+    #endif
   }
 
   /// The error line is the only red text on the screen. It carries an icon, so
@@ -205,8 +316,8 @@ public struct ConnectMailScreen: View {
     .padding(.horizontal, NomiSpacing.xxs)
   }
 
-  /// Pinned Connect button, with the credential caption under it as a footer
-  /// (SIMP §3 item 5). The caption's claims are checked in `ConnectMailCopy`.
+  /// Pinned Connect button, with the footnote under it. The footnote's claims are
+  /// checked in `ConnectMailFootnote` and `ConnectMailCopy`.
   private var connectFooter: some View {
     VStack(spacing: NomiSpacing.xs) {
       Button {
@@ -216,17 +327,11 @@ public struct ConnectMailScreen: View {
           ProgressView()
             .tint(NomiColor.onPrimary)
         } else {
-          Text("Connect")
+          Text("Connect and scan 6 months")
         }
       }
       .buttonStyle(NomiPrimaryButtonStyle(height: 52))
       .disabled(!canConnect || model.isConnecting)
-
-      Text(ConnectMailCopy.credentialCaption)
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.inkSecondary)
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
     }
     .padding(.horizontal, NomiSpacing.screenGutter)
     .padding(.top, NomiSpacing.xs + NomiSpacing.xxs)
@@ -244,20 +349,21 @@ public struct ConnectMailScreen: View {
           Text(address)
             .nomiTextStyle(.rowTitle)
             .foregroundStyle(NomiColor.ink)
-          SyncStatusRow(state: model.connectionState)
+          checkedLine
         }
         .padding(NomiSpacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
         .nomiCard(padding: EdgeInsets())
 
-        // Sync keeps its own card. Disconnect draws its own (NomiDestructiveRow),
-        // so it sits outside this card rather than inside it.
-        Button("Sync now") { model.syncNow() }
-          .buttonStyle(NomiSecondaryButtonStyle())
-          .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
-          .padding(.horizontal, NomiSpacing.sm)
-          .nomiCard(padding: EdgeInsets())
-          .padding(.top, NomiSpacing.sm)
+        // Check now and Scan last 6 months share one card. Disconnect draws its
+        // own (NomiDestructiveRow), so it sits outside, as the artboard has it.
+        VStack(spacing: 0) {
+          connectedRow("Check now") { model.syncNow() }
+          cardDivider
+          connectedRow("Scan last 6 months") { model.scanRecent { onBackfillStart?() } }
+        }
+        .nomiCard(padding: EdgeInsets())
+        .padding(.top, NomiSpacing.sm)
 
         NomiDestructiveRow(title: "Disconnect") { model.requestDisconnect() }
           .padding(.top, NomiSpacing.sm)
@@ -281,6 +387,42 @@ public struct ConnectMailScreen: View {
     } message: {
       Text("Nomi stops scanning this mailbox and forgets the saved password. Your transactions stay in Nomi.")
     }
+  }
+
+  /// "Checked <relative>" once a sync has landed; otherwise the shared status row.
+  @ViewBuilder private var checkedLine: some View {
+    if case .connected(_, let lastSync?) = model.connectionState {
+      Text("Checked \(SyncStatusRow.relativeSyncPhrase(lastSync, now: Date()))")
+        .nomiTextStyle(.caption)
+        .foregroundStyle(NomiColor.inkSecondary)
+    } else {
+      SyncStatusRow(state: model.connectionState)
+    }
+  }
+
+  private func connectedRow(_ title: String, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: NomiSpacing.sm) {
+        Text(title)
+          .nomiTextStyle(.body)
+          .foregroundStyle(NomiColor.ink)
+        Spacer(minLength: 0)
+        Image(systemName: "chevron.right")
+          .foregroundStyle(NomiColor.inkSecondary)
+          .accessibilityHidden(true)
+      }
+      .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+      .padding(.horizontal, NomiSpacing.sm)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+  }
+
+  private var cardDivider: some View {
+    Rectangle()
+      .fill(NomiColor.separator)
+      .frame(height: 1)
+      .padding(.horizontal, NomiSpacing.sm)
   }
 
   // MARK: - Actions
@@ -352,6 +494,26 @@ private struct MailAttentionCard: View {
 #Preview("Connect mail — form") {
   NavigationStack {
     ConnectMailScreen(mailConnectionService: FakeMailConnectionService())
+  }
+}
+
+#Preview("Connect mail — Zoho steps") {
+  NavigationStack {
+    ConnectMailScreen(
+      mailConnectionService: FakeMailConnectionService(),
+      onBackfillStart: nil,
+      startingProvider: .zoho
+    )
+  }
+}
+
+#Preview("Connect mail — generic IMAP") {
+  NavigationStack {
+    ConnectMailScreen(
+      mailConnectionService: FakeMailConnectionService(),
+      onBackfillStart: nil,
+      startingProvider: .generic
+    )
   }
 }
 

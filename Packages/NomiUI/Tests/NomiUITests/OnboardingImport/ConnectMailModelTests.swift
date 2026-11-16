@@ -153,6 +153,20 @@ final class ConnectMailModelTests: XCTestCase {
     XCTAssertEqual(model.errorMessage, "Couldn't disconnect right now. Try again in a moment.")
   }
 
+  /// "Scan last 6 months" hands control to the screen's handler exactly once and
+  /// calls no service method itself: the view pushes Backfill, the model does not
+  /// start a scan. Kills a mutant that calls `startBackfill` from the model.
+  func testScanRecentCallsTheBackfillHandler() {
+    let spy = MailConnectionSpy()
+    let model = ConnectMailModel(service: spy)
+    var handlerCalls = 0
+
+    model.scanRecent { handlerCalls += 1 }
+
+    XCTAssertEqual(handlerCalls, 1)
+    XCTAssertEqual(spy.calls, [])
+  }
+
   func testSyncNowFailureShowsTheAlertCopy() async throws {
     let spy = MailConnectionSpy()
     spy.fail(.syncNow, with: MailError.connectionFailed)
