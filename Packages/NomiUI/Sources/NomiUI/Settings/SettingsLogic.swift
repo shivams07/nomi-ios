@@ -15,7 +15,7 @@ enum NotificationToggleDisplay {
   }
 }
 
-/// The "iCloud sync" row (B11, then U9b).
+/// The "iCloud sync" row (B11, then U9b, then S9a).
 ///
 /// The app falls back to a local-only store when the CloudKit container will
 /// not construct, and it *pauses* sync when there is no usable iCloud account.
@@ -47,23 +47,24 @@ enum StorageModeDisplay {
   /// The caption under the row. `nil` when syncing, so the row renders as one
   /// line and nothing is said where there is nothing to say.
   ///
-  /// **Every non-syncing caption except `.inMemory` opens by saying the data is
-  /// safe**, because the report this row exists to prevent is "the app lost my
-  /// transactions" — which is what a user concludes when their second device is
-  /// empty. The reassurance has to come before the explanation, not after it.
+  /// **Every non-syncing caption except `.inMemory` and `.localOnly` opens by
+  /// saying the data is safe**, because the report this row exists to prevent is
+  /// "the app lost my transactions" — which is what a user concludes when their
+  /// second device is empty. The reassurance has to come before the explanation.
   /// `.inMemory` says the opposite, so its reason is shown alone.
   ///
-  /// `.localOnly` and `.couldNotDetermine` end in developer-shaped text,
-  /// deliberately: a user who can read it out gives a usable report, and a
-  /// hand-written friendly string would have to guess at causes this code does
-  /// not know. The other paused reasons are known exactly, so they get a
-  /// sentence written for a person, and `.noAccount` names where to go.
+  /// `.localOnly` (S9a step 4) is a plain sentence that says everything is kept on
+  /// this iPhone. Its reason is developer text, so it goes to "Copy details" (see
+  /// `SettingsLogic.copyableDetails`), not into the caption.
+  ///
+  /// `.couldNotDetermine` still ends in its detail, deliberately: a user who can
+  /// read it out gives a usable report.
   static func caption(for mode: StorageMode) -> String? {
     switch mode {
     case .cloudKit:
       return nil
-    case .localOnly(let reason):
-      return "Your data is safe on this device, but it is not syncing to iCloud. \(reason)"
+    case .localOnly:
+      return "Nomi couldn’t start iCloud sync, so everything is kept on this iPhone."
     case .inMemory(let reason):
       return reason
     case .cloudKitPaused(.noAccount):
@@ -77,36 +78,6 @@ enum StorageModeDisplay {
     case .cloudKitPaused(.couldNotDetermine(let detail)):
       return "Your data is safe on this device. \(detail)"
     }
-  }
-}
-
-/// The re-scan action, pulled out so it is spy-testable: it must call
-/// `syncNow()` and nothing else — specifically never `disconnect()` followed
-/// by `connect()`, which the U7 notes call out explicitly as the wrong shape.
-enum SettingsActions {
-  @discardableResult
-  static func rescan(using service: MailConnectionService) async throws -> SyncSummary {
-    try await service.syncNow()
-  }
-
-  /// M7: "Scan last 6 months" — a manual backfill trigger, distinct from
-  /// Force Re-scan's incremental `syncNow()`. Six months is fixed, not user
-  /// configurable, the same window `BackfillScreen`'s onboarding scan offers.
-  @discardableResult
-  static func scanRecent(using service: MailConnectionService) async throws -> SyncSummary {
-    try await service.startBackfill(months: 6)
-  }
-
-  /// Y10: the copy for a failed re-scan or scan alert. Never `localizedDescription`,
-  /// which for an arbitrary error is the framework's "The operation couldn't be
-  /// completed" line with the type name in it. `nil` means no alert: a cancelled
-  /// scan is not a failure the user needs told about.
-  static func alertText(for error: Error) -> String? {
-    if error is CancellationError { return nil }
-    if let mailError = error as? MailError {
-      return MailErrorMessage.text(for: mailError)
-    }
-    return "Couldn’t finish the scan. Check your connection and try again."
   }
 }
 
@@ -129,26 +100,9 @@ enum StoreRecoveryDisplay {
   }
 }
 
-/// The unmatched-sender rows shown after a manual re-scan (§2.5.1,
-/// `ui-unmatched-senders`). Domain and count only — `UnmatchedSender` cannot
-/// carry a full address, but the guard is repeated here at the display layer.
-/// An empty list renders as no rows, never an empty section — the screen
-/// decides whether to show the section at all from this same emptiness.
-enum UnmatchedSenderDisplay {
-  static func rows(for senders: [UnmatchedSender]) -> [String] {
-    senders.map { "\($0.domain) — \($0.count)" }
-  }
-}
-
 /// ST copy that the Settings screen builds from data, kept pure so it can be
 /// tested without rendering.
 enum SettingsLogic {
-  /// The disclosure row under the Mail card (SIMP §3 item 17): "Not matched (2)".
-  /// The screen shows the row only when `count` is above zero.
-  static func notMatchedTitle(count: Int) -> String {
-    "Not matched (\(count))"
-  }
-
   /// The attention row's title when mail is not connected (artboard states
   /// ST Edges). `nil` for `.connected`, which shows the address and status
   /// instead.
@@ -159,5 +113,79 @@ enum SettingsLogic {
     case .connecting: return "Connecting…"
     case .failed: return "Couldn’t reach your mail"
     }
+  }
+
+  /// "Mail alerts" is On only while the mail connection is live.
+  static func mailIsOn(_ state: MailConnectionState) -> Bool {
+    if case .connected = state { return true }
+    return false
+  }
+
+  /// The address the row shows on its own line when mail is connected. A single long
+  /// word, so the row gives it its own line and scales it rather than breaking it.
+  static func mailAddress(for state: MailConnectionState) -> String? {
+    if case .connected(let address, _) = state { return address }
+    return nil
+  }
+
+  /// The status line under the address: when mail was last checked. Not connected, it is
+  /// the same words as the attention title, so the row and the mail screen agree.
+  static func mailStatus(for state: MailConnectionState, now: Date) -> String {
+    if case .connected(_, let lastSync) = state {
+      guard let lastSync else { return "not checked yet" }
+      return "checked \(SyncStatusRow.relativeSyncPhrase(lastSync, now: now))"
+    }
+    return attentionTitle(for: state) ?? ""
+  }
+
+  /// The row's caption as one line of text: the address, then the status.
+  static func mailAlertsCaption(for state: MailConnectionState, now: Date) -> String {
+    guard let address = mailAddress(for: state) else { return mailStatus(for: state, now: now) }
+    return "\(address) · \(mailStatus(for: state, now: now))"
+  }
+
+  /// The Budget alerts row's caption, read from the threshold the app actually uses.
+  static func budgetAlertsCaption(thresholdFraction: Double) -> String {
+    let percent = Int((thresholdFraction * 100).rounded())
+    return "At \(percent)% and when you go over"
+  }
+
+  /// "1 category", "14 categories". The plural comes from the string catalog (G9).
+  static func categoriesText(count: Int) -> String {
+    String(localized: "\(count) categories", bundle: .module)
+  }
+
+  /// "Auto-categorise" counts the rules the user made that are switched on. System
+  /// rules and switched-off rules are not merchants remembered.
+  static func merchantsRemembered(_ rules: [(isSystem: Bool, isEnabled: Bool)]) -> Int {
+    rules.filter { !$0.isSystem && $0.isEnabled }.count
+  }
+
+  static func merchantsRememberedText(count: Int) -> String {
+    String(localized: "\(count) merchants remembered", bundle: .module)
+  }
+
+  /// "3 accounts · ₹1,18,481.00 estimated". The total is signed through the same rule
+  /// the Accounts screen uses.
+  static func accountsText(count: Int, totalMinor: Int) -> String {
+    let plural = String(localized: "\(count) accounts", bundle: .module)
+    var amount = TrackedBalanceText.string(minor: totalMinor)
+    // A word joiner keeps "-" with "₹" when the line wraps at accessibility sizes.
+    if amount.hasPrefix("-") { amount.insert("\u{2060}", at: amount.index(after: amount.startIndex)) }
+    return "\(plural) · \(amount) \(String(localized: "estimated", bundle: .module))"
+  }
+
+  /// What "Copy details" writes for the local fallback. Only `.localOnly` has a reason
+  /// to copy: the other states already say what they mean in a sentence.
+  static func copyableDetails(for mode: StorageMode) -> String? {
+    if case .localOnly(let reason) = mode { return reason }
+    return nil
+  }
+
+  /// What "Copy details" writes for an erase that cannot run: the reason the store
+  /// was not opened.
+  static func copyableDetails(for scope: EraseScope) -> String? {
+    if case .unavailable(let reason) = scope { return reason }
+    return nil
   }
 }

@@ -1,14 +1,16 @@
 import NomiCore
 import NomiPreview
+import SwiftData
 import SwiftUI
 import UserNotifications
 
-/// The Settings screen (U7, v5 addition; restyled to the Settings artboard by
-/// ST). Five groups, top to bottom: Mail account (address and status, one
-/// "Scan mail" menu, Manage connection, Not matched), Organize (Categories,
-/// Budgets when its stores are passed, Rules), Data (Import from file, and
-/// iCloud sync as a read-only value), Preferences (the budget-alert switch),
-/// and About. Reads `Design/**`. Must not edit it.
+/// The Settings screen, drawn to the Moss "Settings" artboard (S9a). Four groups and
+/// a card of About, top to bottom: Where transactions come from (Mail alerts, Import a
+/// statement, Accounts), How they are sorted (Categories, Auto-categorise), Privacy and
+/// data (iCloud sync, Export everything, Erase all Nomi data), Notifications (Budget
+/// alerts), then About and privacy. The Face ID, SMS and Weekly summary rows are not
+/// drawn (Corrections 8). The store-recovery notice (R7) sits at the top of Privacy and
+/// data. Reads `Design/**`.
 public struct SettingsScreen: View {
   public let mailConnectionService: MailConnectionService
   public let fileImportService: FileImportService
@@ -16,33 +18,40 @@ public struct SettingsScreen: View {
   public let ruleStore: RuleStore
   @Binding public var notificationSettings: NotificationSettings
   public let storageMode: StorageMode
-  /// The live account list, passed through to `RulesScreen` so the rule
-  /// editor's Account picker has something to show. `RootView` supplies it;
-  /// the default `[]` keeps every preview compiling and leaves the picker at
-  /// "Any", which is what an empty list shows anyway.
+  /// The live account list, passed through to `RulesScreen` (its Account picker) and
+  /// to the CSV export, where it names each account. `RootView` supplies it.
   public let accounts: [NomiCore.Account]
-  /// The Budgets row (ST). It appears under Organize only when both stores
-  /// are passed, so every call site that does not pass them compiles and shows
-  /// no row. The toolbar icon this replaces is `RootView`'s to remove (S1).
-  public let budgetStore: BudgetStore?
+  /// Reads the Accounts row's count and total, and the all-time export. `nil` shows
+  /// the row without a count, and the export says it could not run.
   public let insightsStore: InsightsStore?
-  /// G4. Passed on to the Budgets row, so a pushed `BudgetsScreen` re-reads
-  /// when the cache is invalidated. Stored and never read here, as on
-  /// `DashboardView.refreshToken`.
+  /// The erase seam (S9a). `nil` hides the Erase row, so no preview or test can erase
+  /// by accident. `RootView` passes `AppEnvironment.eraser`.
+  public let eraser: (any DataErasing)?
+  /// True while the OS notification prompt is up, so the Budget alerts row shows a
+  /// spinner in place of its switch (R10).
+  public let isRequestingNotificationPermission: Bool
+  /// G4. Re-reads the Accounts row when the cache generation changes. Stored and read
+  /// only through `.task(id:)`.
   public let refreshToken: Int
+
+  @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
+  @Query private var rules: [NomiCore.Rule]
 
   @State private var connectionState: MailConnectionState = .disconnected
   @State private var permissionDenied = false
-  /// The scans, their error copy and R7's notice (T2a). See `SettingsModel`.
+  /// The Accounts read and the R7 notice (T2a, S9a). See `SettingsModel`.
   @State private var model: SettingsModel
+  @State private var share = ReportsShareState()
+  @State private var exportError = false
+  @State private var showsErase = false
   private let forcedPermissionDenied: Bool?
 
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-  /// `storageMode` defaults to `.cloudKit` so every existing call site and
-  /// preview compiles unchanged; `RootView` passes the real value.
-  /// `storeRecovery` reads the R7 record from standard defaults, so `RootView`
-  /// needs no change; previews pass a fixed notice instead.
+  /// Every argument after `notificationSettings` defaults, so each existing call site
+  /// and preview compiles unchanged. `storeRecovery` reads the R7 record from standard
+  /// defaults, so `RootView` needs no change for it; previews pass a fixed notice.
   public init(
     mailConnectionService: MailConnectionService,
     fileImportService: FileImportService,
@@ -51,8 +60,9 @@ public struct SettingsScreen: View {
     notificationSettings: Binding<NotificationSettings>,
     storageMode: StorageMode = .cloudKit,
     accounts: [NomiCore.Account] = [],
-    budgetStore: BudgetStore? = nil,
     insightsStore: InsightsStore? = nil,
+    eraser: (any DataErasing)? = nil,
+    isRequestingNotificationPermission: Bool = false,
     refreshToken: Int = 0,
     storeRecovery: StoreRecoveryNotice? = StoreRecoveryRecord.load(from: .standard)
   ) {
@@ -63,12 +73,13 @@ public struct SettingsScreen: View {
     _notificationSettings = notificationSettings
     self.storageMode = storageMode
     self.accounts = accounts
-    self.budgetStore = budgetStore
     self.insightsStore = insightsStore
+    self.eraser = eraser
+    self.isRequestingNotificationPermission = isRequestingNotificationPermission
     self.refreshToken = refreshToken
     _model = State(
       initialValue: SettingsModel(
-        service: mailConnectionService, storeRecovery: storeRecovery, recoveryDefaults: .standard))
+        storeRecovery: storeRecovery, recoveryDefaults: .standard, insightsStore: insightsStore))
     forcedPermissionDenied = nil
   }
 
@@ -84,8 +95,9 @@ public struct SettingsScreen: View {
     forcedPermissionDenied: Bool,
     storageMode: StorageMode = .cloudKit,
     accounts: [NomiCore.Account] = [],
-    budgetStore: BudgetStore? = nil,
     insightsStore: InsightsStore? = nil,
+    eraser: (any DataErasing)? = nil,
+    isRequestingNotificationPermission: Bool = false,
     refreshToken: Int = 0,
     storeRecovery: StoreRecoveryNotice? = StoreRecoveryRecord.load(from: .standard)
   ) {
@@ -96,50 +108,46 @@ public struct SettingsScreen: View {
     _notificationSettings = notificationSettings
     self.storageMode = storageMode
     self.accounts = accounts
-    self.budgetStore = budgetStore
     self.insightsStore = insightsStore
+    self.eraser = eraser
+    self.isRequestingNotificationPermission = isRequestingNotificationPermission
     self.refreshToken = refreshToken
     _model = State(
       initialValue: SettingsModel(
-        service: mailConnectionService, storeRecovery: storeRecovery, recoveryDefaults: .standard))
+        storeRecovery: storeRecovery, recoveryDefaults: .standard, insightsStore: insightsStore))
     self.forcedPermissionDenied = forcedPermissionDenied
   }
 
-  /// The Rules destination, built with the account list. Internal so
-  /// `RulesAccountsWiringTests` can check what reaches `RulesScreen`'s
-  /// initialiser without rendering the view.
+  /// The Auto-categorise destination, built with the account list. Internal so
+  /// `RulesAccountsWiringTests` can check what reaches `RulesScreen`'s initialiser
+  /// without rendering the view.
   func rulesScreen() -> RulesScreen {
     RulesScreen(ruleStore: ruleStore, categoryStore: categoryStore, accounts: accounts)
-  }
-
-  /// The Budgets destination, or nil when either store is missing (no row).
-  /// Carries `refreshToken` (G4). Internal so `SettingsRefreshTokenWiringTests`
-  /// can check what reaches `BudgetsScreen`'s initialiser without rendering.
-  func budgetsScreen() -> BudgetsScreen? {
-    guard let budgetStore, let insightsStore else { return nil }
-    return BudgetsScreen(budgetStore: budgetStore, insightsStore: insightsStore, refreshToken: refreshToken)
   }
 
   public var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 0) {
-        mailGroup
-        organizeGroup
-        dataGroup
-        preferencesGroup
+        transactionsGroup
+        sortedGroup
+        privacyGroup
+        notificationsGroup
         aboutGroup
       }
       .padding(.horizontal, NomiSpacing.screenGutter)
       .padding(.bottom, NomiSpacing.lg)
     }
     .background(NomiColor.ground)
-    .alert(
-      "Couldn't re-scan",
-      isPresented: Binding(get: { model.rescanError != nil }, set: { if !$0 { model.rescanError = nil } })
-    ) {
-      Button("OK", role: .cancel) { model.rescanError = nil }
-    } message: {
-      Text(model.rescanError ?? "")
+    .alert("Could not export CSV", isPresented: $exportError) {
+      Button("OK", role: .cancel) {}
+    }
+    .sheet(item: $share.item) { item in
+      ReportsShareSheet(url: item.url)
+    }
+    .sheet(isPresented: $showsErase) {
+      if let eraser {
+        EraseDataSheet(eraser: eraser)
+      }
     }
     .navigationTitle("Settings")
     #if os(iOS)
@@ -149,6 +157,9 @@ public struct SettingsScreen: View {
       for await state in mailConnectionService.state {
         connectionState = state
       }
+    }
+    .task(id: refreshToken) {
+      model.loadAccounts()
     }
     .task {
       await refreshPermissionStatus()
@@ -168,157 +179,36 @@ public struct SettingsScreen: View {
 
   // MARK: - Groups
 
-  private var connectedAddress: String? {
-    if case .connected(let address, _) = connectionState {
-      return address
-    }
-    return nil
-  }
-
-  private var mailGroup: some View {
-    settingsGroup("Mail account", first: true) {
-      if let address = connectedAddress {
-        connectedMailCard(address: address)
-      } else if let title = SettingsLogic.attentionTitle(for: connectionState) {
-        disconnectedMailContent(title: title)
-      }
-    }
-  }
-
-  /// Connected: address and status, the scan menu, Manage connection, and the
-  /// Not matched disclosure when there is something to show.
-  private func connectedMailCard(address: String) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(address)
-          .nomiTextStyle(.rowBody)
-          .foregroundStyle(NomiColor.ink)
-        HStack(spacing: NomiSpacing.xxs) {
-          Circle()
-            .fill(NomiColor.inkSecondary)
-            .frame(width: 6, height: 6)
-            .accessibilityHidden(true)
-          Text(SyncStatusRow.statusText(for: connectionState))
-            .nomiTextStyle(.footnote)
-            .foregroundStyle(NomiColor.inkSecondary)
-        }
-      }
-      .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
-      .padding(.vertical, NomiSpacing.xs)
-      rowDivider
-      scanMailRow
-      rowDivider
-      navigationRow("Manage connection") {
-        ConnectMailScreen(mailConnectionService: mailConnectionService)
-      }
-      if !unmatchedSenderRows.isEmpty {
+  private var transactionsGroup: some View {
+    settingsGroup("Where transactions come from", first: true) {
+      VStack(alignment: .leading, spacing: 0) {
+        mailAlertsRow
         rowDivider
-        notMatchedDisclosure
-      }
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .nomiCard()
-  }
-
-  /// Not connected: the attention row is the first row of the Mail group. It
-  /// draws its own card, so the Not matched disclosure, if any, gets a card
-  /// of its own beneath it.
-  private func disconnectedMailContent(title: String) -> some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.cardGap) {
-      NavigationLink {
-        ConnectMailScreen(mailConnectionService: mailConnectionService)
-      } label: {
-        NomiAttentionRow(systemImage: "envelope", title: title, message: nil)
-      }
-      .buttonStyle(.plain)
-      if !unmatchedSenderRows.isEmpty {
-        notMatchedDisclosure
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .nomiCard()
-      }
-    }
-  }
-
-  /// One "Scan mail" row that opens a menu. Both actions are the same two as
-  /// before: `rescan()` (syncNow) and `scanRecent()` (6 months).
-  private var scanMailRow: some View {
-    Menu {
-      Button("Force re-scan") {
-        model.rescan()
-      }
-      Button("Scan last 6 months") {
-        model.scanRecent()
-      }
-    } label: {
-      HStack(spacing: NomiSpacing.xs) {
-        Text("Scan mail")
-          .nomiTextStyle(.rowTitle)
-          .foregroundStyle(NomiColor.navy)
-        Spacer(minLength: 0)
-        if model.isRescanning || model.isScanningRecent {
-          ProgressView()
-        } else {
-          Image(systemName: "ellipsis")
-            .foregroundStyle(NomiColor.inkSecondary)
-            .accessibilityHidden(true)
-        }
-      }
-      .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
-      .contentShape(Rectangle())
-    }
-  }
-
-  /// Shown only when there are unmatched senders. The rows are domain and
-  /// count, as before, and sit under one disclosure row in place of the old
-  /// card of grey captions.
-  private var notMatchedDisclosure: some View {
-    DisclosureGroup {
-      VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-        ForEach(unmatchedSenderRows, id: \.self) { row in
-          Text(row)
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.inkSecondary)
-        }
+        valueLinkRow(
+          .importStatement, symbol: "doc.text", title: "Import a statement", caption: "CSV or Excel")
+        rowDivider
+        valueLinkRow(
+          .accounts, symbol: "creditcard", title: "Accounts", caption: accountsCaption)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.bottom, NomiSpacing.xs)
-    } label: {
-      Text(SettingsLogic.notMatchedTitle(count: unmatchedSenderRows.count))
-        .nomiTextStyle(.rowBody)
-        .foregroundStyle(NomiColor.ink)
+      .nomiCard()
     }
-    .disclosureGroupStyle(SettingsDisclosureStyle())
   }
 
-  private var organizeGroup: some View {
-    settingsGroup("Organize") {
+  private var sortedGroup: some View {
+    settingsGroup("How they are sorted") {
       VStack(alignment: .leading, spacing: 0) {
-        navigationRow("Categories") {
+        pushRow(
+          symbol: "square.grid.2x2", title: "Categories",
+          caption: SettingsLogic.categoriesText(count: categories.count)
+        ) {
           CategoriesScreen(categoryStore: categoryStore)
         }
         rowDivider
-        // Accounts moved here from the tab bar (I-15). It is a value link, so it
-        // pushes onto Home's stack, where `HomeRoute.accounts` is handled.
-        NavigationLink(value: HomeRoute.accounts) {
-          HStack(spacing: NomiSpacing.xs) {
-            Text("Accounts")
-              .nomiTextStyle(.rowBody)
-              .foregroundStyle(NomiColor.ink)
-            Spacer(minLength: 0)
-            RowChevron()
-          }
-          .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
-          .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        rowDivider
-        if let budgets = budgetsScreen() {
-          navigationRow("Budgets") {
-            budgets
-          }
-          rowDivider
-        }
-        navigationRow("Rules") {
+        pushRow(
+          symbol: "wand.and.stars", title: "Auto-categorise",
+          caption: SettingsLogic.merchantsRememberedText(count: merchantsRemembered)
+        ) {
           rulesScreen()
         }
       }
@@ -327,18 +217,27 @@ public struct SettingsScreen: View {
     }
   }
 
-  private var dataGroup: some View {
-    settingsGroup("Data") {
+  private var privacyGroup: some View {
+    settingsGroup("Privacy and data") {
       VStack(alignment: .leading, spacing: NomiSpacing.cardGap) {
         if let storeRecovery = model.storeRecovery {
           storeRecoveryNotice(storeRecovery)
         }
         VStack(alignment: .leading, spacing: 0) {
-          navigationRow("Import from file") {
-            ImportEntryView(fileImportService: fileImportService)
-          }
-          rowDivider
           iCloudRow
+          rowDivider
+          actionRow(
+            symbol: "square.and.arrow.up", title: "Export everything",
+            caption: "One CSV of every transaction", action: exportEverything)
+          if eraser != nil {
+            rowDivider
+            actionRow(
+              symbol: "trash", title: "Erase all Nomi data",
+              caption: "On this iPhone and in iCloud", destructive: true
+            ) {
+              showsErase = true
+            }
+          }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .nomiCard()
@@ -346,35 +245,21 @@ public struct SettingsScreen: View {
     }
   }
 
-  /// The R7 notice: says once that the store was moved aside, until Dismiss.
-  /// `NomiAttentionRow` draws its own card, so it sits beside the Data card
-  /// rather than inside it, as the Mail group's attention row does.
-  private func storeRecoveryNotice(_ notice: StoreRecoveryNotice) -> some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.xs) {
-      Self.storeRecoveryRow(notice)
-      Button("Dismiss") {
-        model.dismissStoreRecovery()
-      }
-      .buttonStyle(NomiSecondaryButtonStyle())
-      .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget, alignment: .leading)
-    }
-  }
-
-  private var preferencesGroup: some View {
-    settingsGroup("Preferences") {
+  private var notificationsGroup: some View {
+    settingsGroup("Notifications") {
       VStack(alignment: .leading, spacing: 0) {
-        Toggle(isOn: budgetAlertsBinding) {
-          Text("Budget Alerts")
-            .nomiTextStyle(.rowBody)
-            .foregroundStyle(NomiColor.ink)
-        }
-        .tint(NomiColor.navy)
+        NomiToggleRow(
+          title: "Budget alerts",
+          caption: SettingsLogic.budgetAlertsCaption(thresholdFraction: notificationSettings.thresholdFraction),
+          isOn: budgetAlertsBinding,
+          isPending: isRequestingNotificationPermission
+        )
         .disabled(permissionDenied)
-        .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
         if NotificationToggleDisplay.showsPermissionExplanation(permissionDenied: permissionDenied) {
           Text("Notifications are turned off for Nomi in iOS Settings, so budget alerts can't be delivered.")
             .nomiTextStyle(.caption)
             .foregroundStyle(NomiColor.inkSecondary)
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, NomiSpacing.xs)
         }
@@ -387,7 +272,10 @@ public struct SettingsScreen: View {
   /// The About row, on its own card below the groups, as the artboard draws it.
   private var aboutGroup: some View {
     VStack(alignment: .leading, spacing: 0) {
-      navigationRow("About") {
+      pushRow(
+        symbol: "info.circle", title: "About and privacy",
+        caption: AboutLogic.versionLine(bundle: .main)
+      ) {
         AboutScreen()
       }
     }
@@ -396,58 +284,201 @@ public struct SettingsScreen: View {
     .padding(.top, 18)
   }
 
-  // MARK: - Rows
+  // MARK: - Values
 
-  /// B11, then U9b, now ST. The value is `StorageModeDisplay.text`, read-only.
-  /// The caption under it stays for every state that is not syncing, so the
-  /// reason is not lost in the restyle.
-  private var iCloudRow: some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-      HStack(alignment: .firstTextBaseline, spacing: NomiSpacing.xs) {
-        Text("iCloud sync")
-          .nomiTextStyle(.rowBody)
-          .foregroundStyle(NomiColor.ink)
-        Spacer(minLength: 0)
-        Text(StorageModeDisplay.text(for: storageMode))
-          .nomiTextStyle(.rowBody)
-          .foregroundStyle(storageMode.isSyncing ? NomiColor.inkDeep : NomiColor.ink)
-          .multilineTextAlignment(.trailing)
-      }
-      if let caption = StorageModeDisplay.caption(for: storageMode) {
-        Text(caption)
-          .nomiTextStyle(.caption)
-          .foregroundStyle(NomiColor.inkSecondary)
-          .frame(maxWidth: .infinity, alignment: .leading)
+  private var merchantsRemembered: Int {
+    SettingsLogic.merchantsRemembered(rules.map { (isSystem: $0.isSystem, isEnabled: $0.isEnabled) })
+  }
+
+  /// The Accounts row's caption, read the way the Accounts screen reads it. `nil` when
+  /// Settings has no store to read from.
+  private var accountsCaption: String? {
+    guard let accounts = model.accounts else { return nil }
+    switch accounts.state {
+    case .loading:
+      return "Loading…"
+    case .failed:
+      return "Couldn’t load your accounts"
+    case .loaded:
+      return SettingsLogic.accountsText(count: accounts.active.count, totalMinor: accounts.totalMinor)
+    }
+  }
+
+  private var mailAlertsRow: some View {
+    NavigationLink(value: HomeRoute.connectMail) {
+      rowBody(
+        symbol: "envelope", title: "Mail alerts",
+        caption: SettingsLogic.mailStatus(for: connectionState, now: Date()),
+        primary: SettingsLogic.mailAddress(for: connectionState),
+        valueBelow: true
+      ) {
+        HStack(spacing: NomiSpacing.xs) {
+          NomiTag(SettingsLogic.mailIsOn(connectionState) ? "On" : "Off")
+          RowChevron()
+        }
       }
     }
-    .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+    .buttonStyle(.plain)
+  }
+
+  /// iCloud sync is a read-only value: its tag is the storage mode's text, its caption
+  /// the sentence for the state. The local fallback also offers its reason to copy.
+  private var iCloudRow: some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+      rowBody(
+        symbol: "icloud", title: "iCloud sync",
+        caption: StorageModeDisplay.caption(for: storageMode),
+        valueBelow: true
+      ) {
+        NomiTag(StorageModeDisplay.text(for: storageMode))
+      }
+      if let details = SettingsLogic.copyableDetails(for: storageMode) {
+        CopyDetailsLink(text: details)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.vertical, NomiSpacing.xs)
   }
 
-  /// A label that opens a destination, with a trailing chevron. Tap target is
-  /// the full row, at least 52 pt high.
-  private func navigationRow<Destination: View>(
-    _ title: String,
+  // MARK: - Rows
+
+  /// A row that pushes a destination onto the stack, with a chevron.
+  private func pushRow<Destination: View>(
+    symbol: String,
+    title: String,
+    caption: String?,
     @ViewBuilder destination: @escaping () -> Destination
   ) -> some View {
     NavigationLink {
       destination()
     } label: {
-      HStack(spacing: NomiSpacing.xs) {
-        Text(title)
-          .nomiTextStyle(.rowBody)
-          .foregroundStyle(NomiColor.ink)
-        Spacer(minLength: 0)
+      rowBody(symbol: symbol, title: title, caption: caption) {
         RowChevron()
       }
-      .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
-      .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
   }
 
-  /// A section label and the card under it. The label is `label` style in
-  /// `inkDeep`, 18 pt above (none for the first group) and 8 pt below.
+  /// A row that pushes a Home route (`HomeRoute`), with a chevron. The route is
+  /// handled by `RootView`'s Home stack, so Settings itself needs no destination.
+  private func valueLinkRow(
+    _ route: HomeRoute,
+    symbol: String,
+    title: String,
+    caption: String?
+  ) -> some View {
+    NavigationLink(value: route) {
+      rowBody(symbol: symbol, title: title, caption: caption) {
+        RowChevron()
+      }
+    }
+    .buttonStyle(.plain)
+  }
+
+  /// A row that does something instead of navigating. Erase's title is in the error colour.
+  private func actionRow(
+    symbol: String,
+    title: String,
+    caption: String?,
+    destructive: Bool = false,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      rowBody(symbol: symbol, title: title, caption: caption, destructive: destructive) {
+        EmptyView()
+      }
+    }
+    .buttonStyle(.plain)
+  }
+
+  /// The row's layout: a 42 pt icon tile, a title over an optional caption, and a
+  /// trailing value. At accessibility sizes the value moves under the text (label above
+  /// value), so no word breaks and nothing is pushed off the card. Words wrap; the
+  /// caption never truncates.
+  private func rowBody<Trailing: View>(
+    symbol: String,
+    title: String,
+    caption: String?,
+    primary: String? = nil,
+    destructive: Bool = false,
+    valueBelow: Bool = false,
+    @ViewBuilder trailing: () -> Trailing
+  ) -> some View {
+    let stacked = valueBelow && dynamicTypeSize.isAccessibilitySize
+    return Group {
+      if stacked {
+        VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+          HStack(alignment: .center, spacing: NomiSpacing.xs) {
+            iconTile(symbol: symbol, destructive: destructive)
+            textColumn(title: title, primary: primary, caption: caption, destructive: destructive)
+          }
+          trailing()
+        }
+      } else {
+        HStack(alignment: .center, spacing: NomiSpacing.xs) {
+          iconTile(symbol: symbol, destructive: destructive)
+          textColumn(title: title, primary: primary, caption: caption, destructive: destructive)
+          trailing()
+        }
+      }
+    }
+    .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
+    .padding(.vertical, NomiSpacing.xs)
+    .contentShape(Rectangle())
+  }
+
+  private func textColumn(title: String, primary: String?, caption: String?, destructive: Bool) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text(title)
+        .nomiTextStyle(.rowTitle)
+        .foregroundStyle(destructive ? NomiColor.error : NomiColor.ink)
+        .fixedSize(horizontal: false, vertical: true)
+      if let primary {
+        // One word that can be long (an address): one line, scaled down, then truncated,
+        // never broken across lines.
+        Text(primary)
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.6)
+      }
+      if let caption {
+        Text(caption)
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private func iconTile(symbol: String, destructive: Bool) -> some View {
+    Image(systemName: symbol)
+      .resizable()
+      .scaledToFit()
+      .frame(width: 18, height: 18)
+      .foregroundStyle(destructive ? NomiColor.error : NomiColor.navy)
+      .frame(width: 42, height: 42)
+      .background(Circle().fill(destructive ? NomiColor.errorTint : NomiColor.iconTile))
+      .accessibilityHidden(true)
+  }
+
+  /// The R7 notice: says once that the store was moved aside, until Dismiss.
+  /// `NomiAttentionRow` draws its own card, so it sits above the Privacy card
+  /// rather than inside it.
+  private func storeRecoveryNotice(_ notice: StoreRecoveryNotice) -> some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+      Self.storeRecoveryRow(notice)
+      Button("Dismiss") {
+        model.dismissStoreRecovery()
+      }
+      .buttonStyle(NomiSecondaryButtonStyle())
+      .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget, alignment: .leading)
+    }
+  }
+
+  /// A section label and the card under it. The label is 13 pt Medium in
+  /// `inkSecondary`, 18 pt above (none for the first group) and 8 pt below.
   private func settingsGroup<Content: View>(
     _ title: String,
     first: Bool = false,
@@ -455,8 +486,8 @@ public struct SettingsScreen: View {
   ) -> some View {
     VStack(alignment: .leading, spacing: 0) {
       Text(title)
-        .nomiTextStyle(.label)
-        .foregroundStyle(NomiColor.inkDeep)
+        .nomiTextStyle(.subhead)
+        .foregroundStyle(NomiColor.inkSecondary)
         .accessibilityAddTraits(.isHeader)
         .padding(.top, first ? 0 : 18)
         .padding(.bottom, NomiSpacing.xs)
@@ -466,14 +497,15 @@ public struct SettingsScreen: View {
     }
   }
 
-  /// The hairline between rows inside a card: `separator`, inset by the card's
-  /// own padding, as the artboard draws it.
+  /// The hairline between rows inside a card: `separator`, as the artboard draws it.
   private var rowDivider: some View {
     Rectangle()
       .fill(NomiColor.separator)
       .frame(height: 1)
       .accessibilityHidden(true)
   }
+
+  // MARK: - Actions
 
   private var budgetAlertsBinding: Binding<Bool> {
     Binding(
@@ -485,9 +517,26 @@ public struct SettingsScreen: View {
     )
   }
 
-  private var unmatchedSenderRows: [String] {
-    guard let lastSyncSummary = model.lastSyncSummary else { return [] }
-    return UnmatchedSenderDisplay.rows(for: lastSyncSummary.unmatchedSenders)
+  /// Writes every transaction to a CSV and opens its share sheet. A failed read or write
+  /// raises the export alert and opens no sheet.
+  private func exportEverything() {
+    let names = CSVNameMaps(categories: categoryNames, accounts: accountNames)
+    do {
+      let url = try model.exportEverything(names: names)
+      share.item = ReportsShareItem(url: url)
+    } catch {
+      exportError = true
+    }
+  }
+
+  /// `uniquingKeysWith` for the same reason as Insights: two devices can insert rows
+  /// sharing an id before the first sync, and `uniqueKeysWithValues:` would trap.
+  private var categoryNames: [UUID: String] {
+    Dictionary(categories.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+  }
+
+  private var accountNames: [UUID: String] {
+    Dictionary(accounts.map { ($0.id, $0.displayName) }, uniquingKeysWith: { first, _ in first })
   }
 
   /// The R7 notice's row. It has no chevron: the notice does not navigate, so
@@ -524,54 +573,7 @@ private struct RowChevron: View {
   }
 }
 
-/// The "Not matched" disclosure with its chevron on the trailing edge, as the
-/// artboard draws it. The default style puts the chevron on the leading edge.
-private struct SettingsDisclosureStyle: DisclosureGroupStyle {
-  func makeBody(configuration: Configuration) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
-      Button {
-        withAnimation(.easeInOut(duration: 0.2)) {
-          configuration.isExpanded.toggle()
-        }
-      } label: {
-        HStack(spacing: NomiSpacing.xs) {
-          configuration.label
-          Spacer(minLength: 0)
-          RowChevron()
-            .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
-        }
-        .frame(maxWidth: .infinity, minHeight: NomiSpacing.rowMinHeight, alignment: .leading)
-        .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
-      if configuration.isExpanded {
-        configuration.content
-      }
-    }
-  }
-}
-
-/// M7 done-when: "mail section with both buttons" — `FakeMailConnectionService`
-/// only reaches `.connected` live, via `connect()`, which a static preview
-/// never calls. `ConnectedFakeMailConnectionService` already exists for
-/// exactly this (`Onboarding/OnboardingPreviewSupport.swift`, internal to
-/// this module, not edited here) and starts already connected.
-#Preview("Settings — mail connected, scan menu, light") {
-  NavigationStack {
-    SettingsScreen(
-      mailConnectionService: ConnectedFakeMailConnectionService(),
-      fileImportService: FakeFileImportService(),
-      categoryStore: FakeCategoryStore(),
-      ruleStore: FakeRuleStore(),
-      notificationSettings: .constant(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9))
-    )
-  }
-  .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
-  .preferredColorScheme(.light)
-}
-
-#Preview("Settings — with Budgets row, light") {
+#Preview("Settings — mail connected, light") {
   NavigationStack {
     SettingsScreen(
       mailConnectionService: ConnectedFakeMailConnectionService(),
@@ -579,29 +581,15 @@ private struct SettingsDisclosureStyle: DisclosureGroupStyle {
       categoryStore: FakeCategoryStore(),
       ruleStore: FakeRuleStore(),
       notificationSettings: .constant(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9)),
-      budgetStore: FakeBudgetStore(budgets: []),
-      insightsStore: BudgetsPreviewSupport.makeInsightsStore(progress: [])
+      insightsStore: FakeInsightsStore(),
+      eraser: EraseDataPreviewEraser(scope: .everywhere)
     )
   }
   .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
   .preferredColorScheme(.light)
 }
 
-#Preview("Settings — alerts on, light") {
-  NavigationStack {
-    SettingsScreen(
-      mailConnectionService: FakeMailConnectionService(),
-      fileImportService: FakeFileImportService(),
-      categoryStore: FakeCategoryStore(),
-      ruleStore: FakeRuleStore(),
-      notificationSettings: .constant(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9))
-    )
-  }
-  .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
-  .preferredColorScheme(.light)
-}
-
-#Preview("Settings — iCloud sync off, light") {
+#Preview("Settings — mail not connected, light") {
   NavigationStack {
     SettingsScreen(
       mailConnectionService: FakeMailConnectionService(),
@@ -609,18 +597,35 @@ private struct SettingsDisclosureStyle: DisclosureGroupStyle {
       categoryStore: FakeCategoryStore(),
       ruleStore: FakeRuleStore(),
       notificationSettings: .constant(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9)),
-      // Not "Not entitled to use CloudKit", which is what this said before:
-      // U9b established that a missing entitlement never surfaces as a
-      // construction error, so that fixture modelled a state that cannot
-      // happen. `.localOnly` is reached by a store that will not open.
-      storageMode: .localOnly(reason: "SwiftDataError: could not open the persistent store")
+      insightsStore: FakeInsightsStore(),
+      eraser: EraseDataPreviewEraser(scope: .everywhere)
     )
   }
   .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
   .preferredColorScheme(.light)
 }
 
-#Preview("Settings — not being saved") {
+#Preview("Settings — iCloud on this device only, light") {
+  NavigationStack {
+    SettingsScreen(
+      mailConnectionService: FakeMailConnectionService(),
+      fileImportService: FakeFileImportService(),
+      categoryStore: FakeCategoryStore(),
+      ruleStore: FakeRuleStore(),
+      notificationSettings: .constant(NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9)),
+      // Not "Not entitled to use CloudKit": U9b established that a missing entitlement
+      // never surfaces as a construction error. `.localOnly` is reached by a store that
+      // will not open, and its reason goes to "Copy details".
+      storageMode: .localOnly(reason: "SwiftDataError: could not open the persistent store"),
+      insightsStore: FakeInsightsStore(),
+      eraser: EraseDataPreviewEraser(scope: .thisDeviceOnly)
+    )
+  }
+  .modelContainer(EntryRulesPreviewSupport.makeRulesContainer())
+  .preferredColorScheme(.light)
+}
+
+#Preview("Settings — not being saved, light") {
   // R7c: the store would not open at all, so nothing this launch adds is kept.
   // The caption is the reason alone, with no "safe" sentence.
   NavigationStack {
@@ -639,9 +644,6 @@ private struct SettingsDisclosureStyle: DisclosureGroupStyle {
 }
 
 #Preview("Settings — iCloud signed out, light") {
-  // U9b's state, and the one a user is most likely to be in: the container
-  // constructed fine, so B11's preview above cannot show it. Sync is paused,
-  // not failed, and the caption says where to go rather than what broke.
   NavigationStack {
     SettingsScreen(
       mailConnectionService: FakeMailConnectionService(),
@@ -685,7 +687,7 @@ private struct SettingsDisclosureStyle: DisclosureGroupStyle {
   .preferredColorScheme(.light)
 }
 
-#Preview("Settings — store recovered") {
+#Preview("Settings — store recovered, light") {
   NavigationStack {
     SettingsScreen(
       mailConnectionService: FakeMailConnectionService(),
