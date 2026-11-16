@@ -45,6 +45,33 @@ enum PlanLogic {
     isAccessibilitySize ? 1 : 2
   }
 
+  /// Lines a budget tile's name may take. A name with a space wraps onto two lines at
+  /// the space. A single word stays on one line and scales down or truncates, so it is
+  /// never split inside the word.
+  static func tileNameLineLimit(_ name: String) -> Int {
+    name.rangeOfCharacter(from: .whitespacesAndNewlines) != nil ? 2 : 1
+  }
+
+  /// What a recurring row does with a horizontal drag, from its translation (negative is
+  /// leftward) and whether it is already open. A full swipe dismisses; a partial one
+  /// opens the "Not recurring" action; anything short rests.
+  enum RecurringSwipeOutcome: Equatable {
+    case rest
+    case reveal
+    case dismiss
+  }
+
+  /// Leftward distance that counts as a full swipe.
+  static let fullSwipeWidth: CGFloat = 220
+  /// Leftward distance that opens the action on a partial swipe.
+  static let revealThreshold: CGFloat = 56
+
+  static func recurringSwipeOutcome(translationWidth: CGFloat, isRevealed: Bool) -> RecurringSwipeOutcome {
+    if translationWidth <= -fullSwipeWidth { return .dismiss }
+    if translationWidth < -revealThreshold || (isRevealed && translationWidth < 0) { return .reveal }
+    return .rest
+  }
+
   static func suggestion(
     byCategory3m: [CategorySlice],
     budgeted: Set<UUID>

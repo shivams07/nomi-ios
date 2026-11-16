@@ -307,8 +307,9 @@ public struct PlanScreen: View {
           Text(item.categoryName)
             .nomiTextStyle(.rowTitle)
             .foregroundStyle(NomiColor.ink)
-            .lineLimit(2)
-            .fixedSize(horizontal: false, vertical: true)
+            .lineLimit(PlanLogic.tileNameLineLimit(item.categoryName))
+            .minimumScaleFactor(0.7)
+            .truncationMode(.tail)
           Spacer(minLength: 0)
           if let tag = state.tagText {
             NomiTag(tag, tone: state == .over ? .error : .warning)
@@ -523,12 +524,21 @@ private struct PlanRecurringRow: View {
             .onChanged { value in
               guard abs(value.translation.width) > abs(value.translation.height) else { return }
               let base: CGFloat = isRevealed ? -revealWidth : 0
-              offset = min(0, max(-revealWidth, base + value.translation.width))
+              offset = min(0, max(-PlanLogic.fullSwipeWidth, base + value.translation.width))
             }
             .onEnded { value in
-              let shouldReveal = value.translation.width < -revealWidth / 2 || (isRevealed && value.translation.width < 0)
-              isRevealed = shouldReveal
-              withAnimation(.snappy) { offset = shouldReveal ? -revealWidth : 0 }
+              switch PlanLogic.recurringSwipeOutcome(translationWidth: value.translation.width, isRevealed: isRevealed) {
+              case .dismiss:
+                isRevealed = false
+                withAnimation(.snappy) { offset = 0 }
+                onDismiss()
+              case .reveal:
+                isRevealed = true
+                withAnimation(.snappy) { offset = -revealWidth }
+              case .rest:
+                isRevealed = false
+                withAnimation(.snappy) { offset = 0 }
+              }
             }
         )
     }
