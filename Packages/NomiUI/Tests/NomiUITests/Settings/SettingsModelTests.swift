@@ -4,15 +4,14 @@ import XCTest
 
 @testable import NomiUI
 
-/// `SettingsModel` with a spy service (T2a). Each scan's Task is awaited under
-/// `withTestTimeout`, and nothing sleeps. The kill list is in each test's comment.
+/// `SettingsModel` (T2a, S9a). The store-recovery notice, the Accounts row's
+/// reads and the "Export everything" file. Nothing here sleeps or awaits a task.
 @MainActor
 final class SettingsModelTests: XCTestCase {
   private var suiteName = ""
   private var defaults: UserDefaults!
 
-  /// An error whose `localizedDescription` is the framework's, with the type name in it.
-  private struct E: Error {}
+  private struct SpyFailure: Error {}
 
   override func setUp() {
     super.setUp()
@@ -26,94 +25,14 @@ final class SettingsModelTests: XCTestCase {
     super.tearDown()
   }
 
-  private func awaitTask(_ task: Task<Void, Never>) async throws {
-    try await withTestTimeout { await task.value }
-  }
-
   private func notice() -> StoreRecoveryNotice {
     StoreRecoveryNotice(movedAt: Date(timeIntervalSince1970: 1_794_648_612), fileName: "default-20261114T093012.store")
-  }
-
-  /// The alert copy never shows `localizedDescription`. Kills T2-M12.
-  func testRescanFailureNeverShowsTheErrorDescription() async throws {
-    let spy = MailConnectionSpy()
-    spy.fail(.syncNow, with: E())
-    let model = SettingsModel(service: spy, storeRecovery: nil, recoveryDefaults: defaults)
-
-    try await awaitTask(model.rescan())
-
-    let text = try XCTUnwrap(model.rescanError)
-    XCTAssertEqual(text, "Couldn’t finish the scan. Check your connection and try again.")
-    XCTAssertFalse(text.contains("E()"))
-    XCTAssertFalse(text.contains("operation"))
-  }
-
-  /// The same copy for the six-month scan. Kills T2-M13.
-  func testScanRecentFailureNeverShowsTheErrorDescription() async throws {
-    let spy = MailConnectionSpy()
-    spy.fail(.startBackfill(months: 6), with: E())
-    let model = SettingsModel(service: spy, storeRecovery: nil, recoveryDefaults: defaults)
-
-    try await awaitTask(model.scanRecent())
-
-    let text = try XCTUnwrap(model.rescanError)
-    XCTAssertEqual(text, "Couldn’t finish the scan. Check your connection and try again.")
-    XCTAssertFalse(text.contains("E()"))
-    XCTAssertFalse(text.contains("operation"))
-  }
-
-  /// A cancelled scan is not a failure the user is told about.
-  func testCancelledScanRaisesNoAlert() async throws {
-    let spy = MailConnectionSpy()
-    spy.fail(.syncNow, with: CancellationError())
-    let model = SettingsModel(service: spy, storeRecovery: nil, recoveryDefaults: defaults)
-
-    try await awaitTask(model.rescan())
-
-    XCTAssertNil(model.rescanError)
-  }
-
-  func testMailErrorUsesMailCopy() async throws {
-    let spy = MailConnectionSpy()
-    spy.fail(.syncNow, with: MailError.authenticationFailed)
-    let model = SettingsModel(service: spy, storeRecovery: nil, recoveryDefaults: defaults)
-
-    try await awaitTask(model.rescan())
-
-    XCTAssertEqual(model.rescanError, MailErrorMessage.text(for: .authenticationFailed))
-  }
-
-  /// Force re-scan calls `syncNow` and nothing else, and keeps the summary. The
-  /// loading flag is on as soon as the call returns, and off once it ends.
-  func testRescanCallsSyncNowOnlyAndKeepsTheSummary() async throws {
-    let spy = MailConnectionSpy()
-    let model = SettingsModel(service: spy, storeRecovery: nil, recoveryDefaults: defaults)
-
-    let task = model.rescan()
-    XCTAssertTrue(model.isRescanning)
-
-    try await awaitTask(task)
-
-    XCTAssertEqual(spy.calls, [.syncNow])
-    XCTAssertEqual(model.lastSyncSummary?.scanned, 3)
-    XCTAssertFalse(model.isRescanning)
-  }
-
-  /// "Scan last 6 months" asks the service for six months, and nothing else.
-  func testScanRecentAsksForSixMonths() async throws {
-    let spy = MailConnectionSpy()
-    let model = SettingsModel(service: spy, storeRecovery: nil, recoveryDefaults: defaults)
-
-    try await awaitTask(model.scanRecent())
-
-    XCTAssertEqual(spy.calls, [.startBackfill(months: 6)])
-    XCTAssertFalse(model.isScanningRecent)
   }
 
   /// Dismiss forgets the record in the suite and hides the row. Kills T2-M14.
   func testDismissClearsTheRecordAndHidesTheRow() throws {
     StoreRecoveryRecord.save(notice(), to: defaults)
-    let model = SettingsModel(service: MailConnectionSpy(), storeRecovery: notice(), recoveryDefaults: defaults)
+    let model = SettingsModel(storeRecovery: notice(), recoveryDefaults: defaults)
     XCTAssertNotNil(model.storeRecovery)
 
     model.dismissStoreRecovery()
@@ -129,5 +48,119 @@ final class SettingsModelTests: XCTestCase {
     XCTAssertFalse(row.showsChevron)
     XCTAssertEqual(row.title, "Saved data couldn’t be opened")
     XCTAssertEqual(row.message, StoreRecoveryDisplay.caption(for: notice()))
+  }
+
+  // MARK: - S9a step 2: the Accounts row reads what Accounts reads
+
+  /// Archived accounts are left out of the count and the total, as on the Accounts
+  /// screen. The total is signed, so an owed card takes away from it.
+  func testAccountsRowCountsActiveAccountsAndTotalsThemWithoutArchived() throws {
+    let spy = SpyInsightsStore()
+    spy.summaries = [
+      summary("Savings", tracked: 100_000),
+      summary("Card", kindRaw: "card", tracked: -20_000),
+      summary("Old", tracked: 50_000, archived: true),
+    ]
+    let model = SettingsModel(storeRecovery: nil, recoveryDefaults: defaults, insightsStore: spy)
+
+    model.loadAccounts()
+
+    let accounts = try XCTUnwrap(model.accounts)
+    XCTAssertEqual(accounts.state, .loaded)
+    XCTAssertEqual(accounts.active.count, 2)
+    XCTAssertEqual(accounts.totalMinor, 80_000)
+  }
+
+  func testAFailedAccountsReadIsTheFailedStateNotAZeroTotal() throws {
+    let spy = SpyInsightsStore()
+    spy.failSummaries = true
+    let model = SettingsModel(storeRecovery: nil, recoveryDefaults: defaults, insightsStore: spy)
+
+    model.loadAccounts()
+
+    XCTAssertEqual(try XCTUnwrap(model.accounts).state, .failed)
+  }
+
+  /// With no store there is nothing to read, so there is no Accounts model at all.
+  func testWithoutAnInsightsStoreThereIsNoAccountsRead() {
+    let model = SettingsModel(storeRecovery: nil, recoveryDefaults: defaults, insightsStore: nil)
+
+    model.loadAccounts()
+
+    XCTAssertNil(model.accounts)
+  }
+
+  // MARK: - S9a step 2: Export everything
+
+  /// The file is named as Insights names its exports, holds every transaction in the
+  /// store's answer, and is removed by the same call Insights uses.
+  func testExportEverythingWritesAnAllTimeCSVFile() throws {
+    let spy = SpyInsightsStore()
+    let model = SettingsModel(storeRecovery: nil, recoveryDefaults: defaults, insightsStore: spy)
+
+    let url = try model.exportEverything(names: CSVNameMaps(categories: [:], accounts: [:]))
+    defer { ReportsCSVExport.remove(url) }
+
+    XCTAssertTrue(url.lastPathComponent.hasPrefix("nomi-report-"))
+    XCTAssertEqual(url.pathExtension, "csv")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+    XCTAssertEqual(spy.periodsRequested, [.allTime])
+  }
+
+  func testExportWithoutAStoreWritesNothing() {
+    let model = SettingsModel(storeRecovery: nil, recoveryDefaults: defaults, insightsStore: nil)
+
+    XCTAssertThrowsError(try model.exportEverything(names: CSVNameMaps(categories: [:], accounts: [:])))
+  }
+
+  /// A read that fails must not leave an empty CSV behind that looks like a real export.
+  func testExportReadFailureIsThrownAndWritesNoFile() {
+    let spy = SpyInsightsStore()
+    spy.failTransactions = true
+    let model = SettingsModel(storeRecovery: nil, recoveryDefaults: defaults, insightsStore: spy)
+
+    XCTAssertThrowsError(try model.exportEverything(names: CSVNameMaps(categories: [:], accounts: [:])))
+  }
+
+  // MARK: - Helpers
+
+  private final class SpyInsightsStore: InsightsStore {
+    var summaries: [AccountSummary] = []
+    var failSummaries = false
+    var failTransactions = false
+    private(set) var periodsRequested: [InsightPeriod] = []
+
+    func insights(for period: InsightPeriod) throws -> PeriodInsights { throw SpyFailure() }
+    func trend(months: Int) throws -> [MonthBucket] { [] }
+    func accountSummaries(includeArchived: Bool) throws -> [AccountSummary] {
+      if failSummaries { throw SpyFailure() }
+      return summaries
+    }
+    func budgetProgress(year: Int, month: Int) throws -> [BudgetProgress] { [] }
+    func transactions(in period: InsightPeriod) throws -> [NomiCore.Transaction] {
+      periodsRequested.append(period)
+      if failTransactions { throw SpyFailure() }
+      return []
+    }
+    func unassignedTransactions() throws -> [NomiCore.Transaction] { [] }
+  }
+
+  private func summary(
+    _ name: String,
+    kindRaw: String = "bank",
+    tracked: Int,
+    archived: Bool = false
+  ) -> AccountSummary {
+    AccountSummary(
+      id: UUID(),
+      displayName: name,
+      institution: "Bank",
+      lastFour: "0000",
+      kindRaw: kindRaw,
+      trackedBalanceMinor: tracked,
+      transactionCount: 0,
+      trackingSince: nil,
+      isArchived: archived
+    )
   }
 }

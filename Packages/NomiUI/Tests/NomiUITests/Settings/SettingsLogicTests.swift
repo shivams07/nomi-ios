@@ -3,43 +3,6 @@ import NomiCore
 import XCTest
 @testable import NomiUI
 
-private actor SpyMailConnectionService: MailConnectionService {
-  nonisolated let state: AsyncStream<MailConnectionState>
-  nonisolated let backfillProgress: AsyncStream<BackfillProgress>
-
-  private(set) var calledMethods: [String] = []
-  private(set) var backfillMonths: [Int] = []
-
-  init() {
-    state = AsyncStream { _ in }
-    backfillProgress = AsyncStream { _ in }
-  }
-
-  func connect(_ credentials: IMAPCredentials) async throws {
-    calledMethods.append("connect")
-  }
-
-  func disconnect() async throws {
-    calledMethods.append("disconnect")
-  }
-
-  @discardableResult
-  func syncNow() async throws -> SyncSummary {
-    calledMethods.append("syncNow")
-    return SyncSummary(scanned: 5, created: 1, merged: 0, flagged: 0, packMatched: 1, heuristicMatched: 0, unmatchedSenders: [])
-  }
-
-  @discardableResult
-  func startBackfill(months: Int) async throws -> SyncSummary {
-    calledMethods.append("startBackfill")
-    backfillMonths.append(months)
-    return SyncSummary(scanned: 180, created: 12, merged: 0, flagged: 2, packMatched: 10, heuristicMatched: 2, unmatchedSenders: [])
-  }
-
-  func recordedMethods() -> [String] { calledMethods }
-  func recordedBackfillMonths() -> [Int] { backfillMonths }
-}
-
 final class SettingsLogicTests: XCTestCase {
   func testToggleIsOffWhenPermissionDeniedEvenIfSettingIsOn() {
     let settings = NotificationSettings(budgetAlertsEnabled: true, thresholdFraction: 0.9)
@@ -58,65 +21,11 @@ final class SettingsLogicTests: XCTestCase {
     XCTAssertFalse(NotificationToggleDisplay.showsPermissionExplanation(permissionDenied: false))
   }
 
-  func testRescanCallsSyncNowOnly() async throws {
-    let spy = SpyMailConnectionService()
-    _ = try await SettingsActions.rescan(using: spy)
-    let calls = await spy.recordedMethods()
-    XCTAssertEqual(calls, ["syncNow"])
-  }
-
-  func testRescanNeverCallsDisconnectOrConnect() async throws {
-    let spy = SpyMailConnectionService()
-    _ = try await SettingsActions.rescan(using: spy)
-    let calls = await spy.recordedMethods()
-    XCTAssertFalse(calls.contains("disconnect"))
-    XCTAssertFalse(calls.contains("connect"))
-  }
-
-  func testRescanReturnsTheSyncSummaryRatherThanDiscardingIt() async throws {
-    let spy = SpyMailConnectionService()
-    let summary = try await SettingsActions.rescan(using: spy)
-    XCTAssertEqual(summary.scanned, 5)
-  }
-
-  // MARK: - M7: "Scan last 6 months"
-
-  func testScanRecentCallsStartBackfillWithSixMonthsOnly() async throws {
-    let spy = SpyMailConnectionService()
-    _ = try await SettingsActions.scanRecent(using: spy)
-    let calls = await spy.recordedMethods()
-    XCTAssertEqual(calls, ["startBackfill"])
-  }
-
-  func testScanRecentPassesSixMonths() async throws {
-    let spy = SpyMailConnectionService()
-    _ = try await SettingsActions.scanRecent(using: spy)
-    let months = await spy.recordedBackfillMonths()
-    XCTAssertEqual(months, [6])
-  }
-
-  func testScanRecentReturnsTheBackfillSummaryRatherThanDiscardingIt() async throws {
-    let spy = SpyMailConnectionService()
-    let summary = try await SettingsActions.scanRecent(using: spy)
-    XCTAssertEqual(summary.scanned, 180)
-    XCTAssertEqual(summary.created, 12)
-  }
-
-  func testUnmatchedSenderRowsNamesDomainAndCount() {
-    let rows = UnmatchedSenderDisplay.rows(for: [UnmatchedSender(domain: "chase.com", count: 3)])
-    XCTAssertEqual(rows, ["chase.com — 3"])
-  }
-
-  func testUnmatchedSenderRowsIsEmptyForNoneUnmatchedRatherThanAnEmptySection() {
-    XCTAssertEqual(UnmatchedSenderDisplay.rows(for: []), [])
-  }
-
-  func testUnmatchedSenderRowsNeverEmitsAnAddress() {
-    let rows = UnmatchedSenderDisplay.rows(for: [
-      UnmatchedSender(domain: "chase.com", count: 3),
-      UnmatchedSender(domain: "boa.com", count: 1),
-    ])
-    XCTAssertFalse(rows.contains { $0.contains("@") })
+  /// The row's caption names the threshold the app really uses (`thresholdFraction`), so a
+  /// changed threshold cannot leave a stale "90%" under the switch.
+  func testBudgetAlertCaptionNamesTheThreshold() {
+    XCTAssertEqual(SettingsLogic.budgetAlertsCaption(thresholdFraction: 0.9), "At 90% and when you go over")
+    XCTAssertEqual(SettingsLogic.budgetAlertsCaption(thresholdFraction: 0.8), "At 80% and when you go over")
   }
 
   // MARK: - B11: the storage mode is visible to the user, not just to Xcode
@@ -128,21 +37,28 @@ final class SettingsLogicTests: XCTestCase {
       "one line when there is nothing to explain")
   }
 
-  /// The row a user in the fallback state sees. Before this they saw nothing
-  /// at all: the app worked and simply never appeared on their other device.
-  func testTheLocalFallbackSaysSoAndSaysWhy() {
-    let mode = StorageMode.localOnly(reason: "CKError: Not entitled")
+  // MARK: - S9a step 4: the local fallback is a plain sentence, and its reason is copyable
+
+  /// The caption is a sentence a person can read. The reason is developer text and
+  /// moves to "Copy details", so it must not appear in the caption.
+  func testTheLocalFallbackCaptionIsAPlainSentenceWithoutTheReason() {
+    let reason = "CKError: Not entitled"
+    let mode = StorageMode.localOnly(reason: reason)
 
     XCTAssertEqual(StorageModeDisplay.text(for: mode), "Off — this device only")
+    XCTAssertEqual(
+      StorageModeDisplay.caption(for: mode),
+      "Nomi couldn’t start iCloud sync, so everything is kept on this iPhone.")
+    XCTAssertFalse(StorageModeDisplay.caption(for: mode)?.contains(reason) == true)
+  }
 
-    let caption = StorageModeDisplay.caption(for: mode)
-    XCTAssertNotNil(caption)
-    XCTAssertTrue(
-      caption?.contains("CKError: Not entitled") == true,
-      "the underlying reason is carried through so a report is actionable")
-    XCTAssertTrue(
-      caption?.contains("safe on this device") == true,
-      "the first thing to say is that nothing was lost")
+  /// "Copy details" writes the reason, and only the local fallback has one to copy.
+  func testCopyableDetailsIsTheLocalFallbackReason() {
+    XCTAssertEqual(
+      SettingsLogic.copyableDetails(for: StorageMode.localOnly(reason: "CKError: Not entitled")),
+      "CKError: Not entitled")
+    XCTAssertNil(SettingsLogic.copyableDetails(for: StorageMode.cloudKit))
+    XCTAssertNil(SettingsLogic.copyableDetails(for: StorageMode.cloudKitPaused(.noAccount)))
   }
 
   func testTheModeAccessorsAgreeWithWhatIsDisplayed() {
@@ -226,10 +142,11 @@ final class SettingsLogicTests: XCTestCase {
 
   /// The invariant across every non-syncing state, checked in one place so a
   /// later case cannot quietly skip it. The report this row exists to prevent
-  /// is "the app lost my data" — reassurance comes before explanation.
-  func testEveryNonSyncingCaptionOpensBySayingTheDataIsSafe() {
+  /// is "the app lost my data" — reassurance comes before explanation. The
+  /// local fallback is the one exception: its caption is the sentence that
+  /// says everything is kept on this iPhone (S9a step 4), tested above.
+  func testEveryPausedCaptionOpensBySayingTheDataIsSafe() {
     let modes: [StorageMode] = [
-      .localOnly(reason: "boom"),
       .cloudKitPaused(.noAccount),
       .cloudKitPaused(.restricted),
       .cloudKitPaused(.temporarilyUnavailable),
@@ -257,11 +174,59 @@ final class SettingsLogicTests: XCTestCase {
     }
   }
 
-  // MARK: - ST: Not matched disclosure and the mail attention row
+  // MARK: - S9a step 2: the rows' words
 
-  func testNotMatchedTitleCarriesTheCount() {
-    XCTAssertEqual(SettingsLogic.notMatchedTitle(count: 2), "Not matched (2)")
-    XCTAssertEqual(SettingsLogic.notMatchedTitle(count: 1), "Not matched (1)")
+  func testCategoriesCountIsPluralised() {
+    XCTAssertEqual(SettingsLogic.categoriesText(count: 1), "1 category")
+    XCTAssertEqual(SettingsLogic.categoriesText(count: 14), "14 categories")
+  }
+
+  /// Auto-categorise counts the rules that are on and that the user made. System
+  /// rules and switched-off rules do not count as merchants remembered.
+  func testMerchantsRememberedCountsEnabledNonSystemRules() {
+    let rules: [(isSystem: Bool, isEnabled: Bool)] = [
+      (false, true), (true, true), (false, false), (false, true),
+    ]
+    XCTAssertEqual(SettingsLogic.merchantsRemembered(rules), 2)
+    XCTAssertEqual(SettingsLogic.merchantsRememberedText(count: 1), "1 merchant remembered")
+    XCTAssertEqual(SettingsLogic.merchantsRememberedText(count: 23), "23 merchants remembered")
+  }
+
+  func testAccountsCaptionIsCountAndEstimatedTotal() {
+    XCTAssertEqual(SettingsLogic.accountsText(count: 1, totalMinor: 100_000), "1 account · ₹1,000.00 estimated")
+    XCTAssertEqual(SettingsLogic.accountsText(count: 3, totalMinor: 11_848_100), "3 accounts · ₹1,18,481.00 estimated")
+  }
+
+  /// The tracked total can be negative (an overdrawn account or a card owed), so the
+  /// sign has to show. `TrackedBalanceText` owns that rule and this text reuses it.
+  func testAccountsCaptionKeepsANegativeTotalsSign() {
+    XCTAssertEqual(SettingsLogic.accountsText(count: 2, totalMinor: -5_000), "2 accounts · -\u{2060}₹50.00 estimated")
+  }
+
+  // MARK: - ST: the mail attention row
+
+  func testMailAlertsCaptionForConnectedNamesTheAddressAndWhenItWasChecked() {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    XCTAssertEqual(
+      SettingsLogic.mailAlertsCaption(for: .connected(address: "you@gmail.com", lastSync: now), now: now),
+      "you@gmail.com · checked just now")
+    XCTAssertEqual(
+      SettingsLogic.mailAlertsCaption(for: .connected(address: "you@gmail.com", lastSync: nil), now: now),
+      "you@gmail.com · not checked yet")
+  }
+
+  func testMailAlertsCaptionForANotConnectedStateIsTheAttentionTitle() {
+    let now = Date()
+    XCTAssertEqual(SettingsLogic.mailAlertsCaption(for: .disconnected, now: now), "Mail disconnected")
+    XCTAssertEqual(SettingsLogic.mailAlertsCaption(for: .connecting, now: now), "Connecting…")
+    XCTAssertEqual(SettingsLogic.mailAlertsCaption(for: .failed(.connectionFailed), now: now), "Couldn’t reach your mail")
+  }
+
+  func testOnlyAConnectedMailStateReadsOn() {
+    XCTAssertTrue(SettingsLogic.mailIsOn(.connected(address: "a@example.com", lastSync: nil)))
+    XCTAssertFalse(SettingsLogic.mailIsOn(.disconnected))
+    XCTAssertFalse(SettingsLogic.mailIsOn(.connecting))
+    XCTAssertFalse(SettingsLogic.mailIsOn(.failed(.connectionFailed)))
   }
 
   func testAttentionTitleForEachNotConnectedState() {
@@ -276,7 +241,7 @@ final class SettingsLogicTests: XCTestCase {
   }
 }
 
-// MARK: - ST / A-07: the About privacy statement
+// MARK: - About privacy statement
 
 final class AboutPrivacyTextTests: XCTestCase {
   /// DEC-07 (nomi-ios-decisions.md), verbatim. A change to `AboutScreen.privacyText`
@@ -310,45 +275,7 @@ final class AboutPrivacyTextTests: XCTestCase {
   }
 }
 
-// MARK: - R13b / Y10: no Settings alert shows localizedDescription
-
-final class SettingsAlertTextTests: XCTestCase {
-  /// A struct whose framework description is "The operation couldn't be
-  /// completed. (NomiUITests.SettingsAlertTextTests.E error 1.)": the very
-  /// string Y10 forbids on screen.
-  private struct E: Error {}
-
-  func testACancelledScanShowsNoAlert() {
-    XCTAssertNil(SettingsActions.alertText(for: CancellationError()))
-  }
-
-  func testAuthenticationFailureUsesTheExistingMailCopy() {
-    XCTAssertEqual(
-      SettingsActions.alertText(for: MailError.authenticationFailed),
-      "That address or password wasn't accepted. Double-check the app password and try again.")
-  }
-
-  func testAnUnknownMailErrorWithNoDetailUsesTheGenericConnectCopy() {
-    XCTAssertEqual(
-      SettingsActions.alertText(for: MailError.unknown("")),
-      "Something went wrong connecting to mail.")
-  }
-
-  func testAnArbitraryErrorGetsTheGenericScanCopy() {
-    XCTAssertEqual(
-      SettingsActions.alertText(for: E()),
-      "Couldn’t finish the scan. Check your connection and try again.")
-  }
-
-  func testAnArbitraryErrorNeverLeaksItsTypeNameOrFrameworkDescription() throws {
-    let text = try XCTUnwrap(SettingsActions.alertText(for: E()))
-    XCTAssertFalse(text.contains("E"), "the type name must not appear: \(text)")
-    XCTAssertFalse(text.contains("operation"), "framework text must not appear: \(text)")
-    XCTAssertFalse(text.contains("error"), "framework text must not appear: \(text)")
-  }
-}
-
-// MARK: - R13b / R7 notice: Settings says a store was moved aside, once
+// MARK: - R7 notice: Settings says a store was moved aside, once
 
 final class StoreRecoveryDisplayTests: XCTestCase {
   /// 14 Nov 2026 at noon in the device's zone, built in the same zone the

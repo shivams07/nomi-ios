@@ -417,10 +417,9 @@ struct RootView: View {
             notificationSettings: environment.notificationSettings.binding,
             storageMode: environment.storageMode,
             accounts: accounts,
-            // The Budgets row under Organize needs both stores; without them SettingsScreen
-            // shows no row.
-            budgetStore: environment.budgetStore,
             insightsStore: environment.insightsStore,
+            eraser: environment.eraser,
+            isRequestingNotificationPermission: notificationSettings.isRequestingPermission,
             refreshToken: tokens.settings
           )
         case .connectMail:
@@ -432,7 +431,9 @@ struct RootView: View {
           AccountsScreen(
             accountStore: environment.accountStore,
             insightsStore: environment.insightsStore,
-            refreshToken: tokens.plan
+            refreshToken: tokens.plan,
+            // Assign-it on an unassigned note needs the transaction store (S8, S9a wiring).
+            transactionStore: environment.transactionStore
           )
         case .importStatement:
           ImportEntryView(fileImportService: environment.fileImportService)
