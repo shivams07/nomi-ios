@@ -3,18 +3,24 @@ import NomiCore
 import SwiftData
 import SwiftUI
 
-/// The Insights page (the approved Insights artboard; the Reports screen before
-/// the restyle). The period pill sits in the nav row's trailing slot. Below the
-/// large title: the Spent / Received card, the day bars (or the month bars on
-/// the financial-year basis), the category donut, top merchants, and one Export
-/// row whose menu holds the two CSV actions. The screen's figures all come from
-/// `ReportsViewModel`.
+/// The `.task(id:)` identity of Insights' load (S6). A change of period, of the
+/// cache generation or of the retry token reloads both reads once.
+private struct ReportsLoadKey: Hashable {
+  let period: InsightPeriod
+  let refreshToken: Int
+  let retryToken: Int
+}
+
+/// The Insights tab (the approved Insights artboard; S6). A page header with the
+/// period pill, then Spent and Income, Kept, Last 6 months, By category, Top
+/// merchants and the CSV export. The screen reads and drives `ReportsModel`,
+/// which holds the period state and both reads. Its figures are derived by
+/// `ReportsViewModelBuilder`.
 ///
 /// Archived accounts are never excluded here (unlike the dashboard's accounts
-/// card) — `insightsStore.insights(for:)`/`.transactions(in:)` don't filter
-/// by account at all, so this AC ("archiving must not change a number on
-/// Reports") holds by construction: this screen simply never calls
-/// `accountSummaries(includeArchived:)`.
+/// card). `insightsStore.insights(for:)`/`.transactions(in:)` don't filter by
+/// account at all, so this AC ("archiving must not change a number on Reports")
+/// holds by construction: this screen never calls `accountSummaries(includeArchived:)`.
 public struct ReportsScreen: View {
   public let insightsStore: InsightsStore
 
@@ -29,17 +35,16 @@ public struct ReportsScreen: View {
   @Query(sort: \NomiCore.Category.sortIndex) private var categories: [NomiCore.Category]
   @Query(sort: \NomiCore.Account.displayName) private var accounts: [NomiCore.Account]
 
-  @State private var basis: PeriodBasis
-  @State private var anchor: Date
-  /// `true` until the user picks a period, and again when a picked period
-  /// contains today. Decides whether a refresh moves `anchor` to now (R12b, Y1).
-  @State private var followsToday = true
+  /// The period, its basis and anchor, the follow-today rule, the bars' kind and
+  /// both reads. The screen holds none of that itself (T2a note).
+  @State private var model: ReportsModel
   /// The CSV the export menu just wrote. Presented once, then removed when the
   /// share sheet closes (by the state's setter, not an `onDismiss`).
   @State private var share = ReportsShareState()
   @State private var exportError = false
-  /// Bumped by a load-failed card's Retry, so the body reads the store again.
-  @State private var retryToken = 0
+
+  /// The bottom reserve for the Insights tab (F3b). 0 on a pushed screen.
+  @Environment(\.nomiTabBarReserve) private var tabBarReserve
 
   public init(
     insightsStore: InsightsStore,
@@ -49,29 +54,30 @@ public struct ReportsScreen: View {
   ) {
     self.insightsStore = insightsStore
     self.refreshToken = refreshToken
-    _basis = State(initialValue: initialBasis)
-    _anchor = State(initialValue: initialAnchor)
+    _model = State(initialValue: ReportsModel(
+      insightsStore: insightsStore,
+      basis: initialBasis,
+      anchor: initialAnchor
+    ))
   }
 
   private var period: InsightPeriod {
-    ReportsPeriod.period(basis: basis, anchor: anchor)
+    model.period
   }
 
-  /// `nil` means `insightsStore.insights(for:)` threw — a real fetch error,
-  /// not "no transactions this period" (that case still comes back as a
-  /// successful, all-zero `PeriodInsights`). The body shows a load-failed card
-  /// for that case, never the empty state.
-  private var viewModel: ReportsViewModel? {
-    _ = retryToken
-    guard let insights = try? insightsStore.insights(for: period) else { return nil }
-    return ReportsViewModelBuilder.make(period: period, insights: insights, trend: [])
+  private var basis: PeriodBasis {
+    model.basis
   }
 
-  /// The financial-year basis draws one bar per month of the selected year
-  /// (`InsightsStore.monthlyTrend(for:)`, zero-filled, R12b Y2). A calendar
-  /// month draws its daily bars from the period itself, so it never reads the
-  /// monthly series. A read that failed is not a read that found nothing, so
-  /// `.failed` is its own case.
+  /// Read by `monthlyTrend`. The count lives on the model now.
+  private var retryToken: Int {
+    model.retryToken
+  }
+
+  /// The financial-year read that T2a's wiring tests pin. It reads the same
+  /// store method as `ReportsModel.trend`, which is what the bars draw.
+  /// `nil` on the calendar basis, which reads no monthly series. A read that
+  /// failed is not a read that found nothing, so `.failed` is its own case.
   var monthlyTrend: DashboardWiring.Load<[MonthBucket]>? {
     _ = retryToken
     guard basis == .financialYear else { return nil }
@@ -95,75 +101,168 @@ public struct ReportsScreen: View {
     Dictionary(accounts.map { ($0.id, $0.displayName) }, uniquingKeysWith: { first, _ in first })
   }
 
-  /// The bottom reserve for the Insights tab (F3b). 0 on a pushed screen.
-  @Environment(\.nomiTabBarReserve) private var tabBarReserve
-
   public var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: NomiSpacing.xs) {
-        switch ReportsBodyPlan.make(basis: basis, transactionCount: viewModel?.transactionCount) {
-        case .loadFailed:
-          NomiLoadFailedCard(message: "Insights didn’t load.") {
-            retryToken += 1
-          }
-        case .empty:
-          emptyState
-        case .content:
-          if let viewModel {
-            summaryCard(viewModel)
-            barsCard(viewModel)
-            ReportsCategoryBreakdownCard(slices: viewModel.categories)
-            TopMerchantsCard(merchants: viewModel.topMerchants)
-          }
-        }
-        // Independent of `viewModel`/`period` on purpose — a one-off,
-        // user-initiated whole-ledger read through `.allTime` (acceptable
-        // unlike the dashboard's per-render one, F2) works whether or not
-        // the current period's figures loaded.
+      VStack(alignment: .leading, spacing: NomiSpacing.sm) {
+        header
+        cards
         exportRow
       }
       .padding(.horizontal, NomiSpacing.screenGutter)
       .padding(.top, NomiSpacing.xs)
       .padding(.bottom, NomiSpacing.sm)
     }
-    // The Export row clears the floating tab bar in both orientations (Andrews, PR #194).
+    // The last row clears the floating tab bar (F3b). A pushed screen gets 0.
     .contentMargins(.bottom, tabBarReserve, for: .scrollContent)
     .background(NomiColor.ground)
-    .navigationTitle("Insights")
+    // The title is the page header in the content (artboard Insights), so the bar goes.
     #if os(iOS)
-    .navigationBarTitleDisplayMode(.large)
+      .toolbar(.hidden, for: .navigationBar)
     #endif
-    .toolbar {
-      ToolbarItem(placement: .primaryAction) {
-        periodPill
-      }
-    }
     .alert("Could not export CSV", isPresented: $exportError) {
       Button("OK", role: .cancel) {}
     }
     .sheet(item: $share.item) { item in
       ReportsShareSheet(url: item.url)
     }
+    .task(id: ReportsLoadKey(period: period, refreshToken: refreshToken, retryToken: model.retryToken)) {
+      model.load()
+    }
     .onChange(of: refreshToken) { _, _ in
-      anchor = PeriodAnchorPolicy.anchorAfterRefresh(current: anchor, followsToday: followsToday, now: Date())
+      model.dayChanged(now: Date())
     }
   }
 
-  /// The period pill's menu: the basis, then the recent periods on that basis
-  /// (12 months or 3 financial years, from `ReportsPeriod.recentAnchors`).
-  private var periodPill: some View {
-    NomiPeriodPill(title: ReportsPeriod.label(for: period), style: .onGround) {
-      Picker("Period basis", selection: $basis) {
-        Text("Calendar month").tag(PeriodBasis.calendarMonth)
-        Text("Financial year").tag(PeriodBasis.financialYear)
+  // MARK: - Header
+
+  /// The page header (artboard Insights): "Insights" on the left, the period pill
+  /// on the right. The pill's menu is Home's shape: a basis picker, a divider,
+  /// then the recent periods.
+  private var header: some View {
+    NomiPageHeader("Insights") {
+      NomiPeriodPill(title: ReportsPeriod.label(for: period, calendar: model.calendar), style: .onGround) {
+        periodMenu
       }
-      Divider()
-      ForEach(ReportsPeriod.recentAnchors(basis: basis, now: Date()), id: \.self) { candidate in
-        Button(ReportsPeriod.label(for: ReportsPeriod.period(basis: basis, anchor: candidate))) {
-          anchor = candidate
-          followsToday = PeriodAnchorPolicy.followsToday(afterPicking: candidate, basis: basis, now: Date(), calendar: .current)
+    }
+  }
+
+  @ViewBuilder
+  private var periodMenu: some View {
+    Picker("Period basis", selection: basisBinding) {
+      Text("Calendar month").tag(PeriodBasis.calendarMonth)
+      Text("Financial year").tag(PeriodBasis.financialYear)
+    }
+    Divider()
+    ForEach(ReportsPeriod.recentAnchors(basis: basis, now: Date(), calendar: model.calendar), id: \.self) { candidate in
+      Button(ReportsPeriod.label(for: ReportsPeriod.period(basis: basis, anchor: candidate, calendar: model.calendar), calendar: model.calendar)) {
+        model.pickAnchor(candidate, now: Date())
+      }
+    }
+  }
+
+  /// Changing the basis goes through the model, which follows today again.
+  private var basisBinding: Binding<PeriodBasis> {
+    Binding(
+      get: { model.basis },
+      set: { model.setBasis($0, now: Date()) }
+    )
+  }
+
+  // MARK: - Cards
+
+  /// The cards under the header, in the artboard's order. Each read has its own
+  /// failure: the insights read fails its four cards, the monthly read fails the
+  /// bars card alone. An empty period keeps the empty state.
+  @ViewBuilder
+  private var cards: some View {
+    if let insights = model.insights {
+      VStack(alignment: .leading, spacing: NomiSpacing.sm) {
+        switch ReportsBodyPlan.make(basis: basis, transactionCount: insights.loadedValue?.transactionCount) {
+        case .loadFailed:
+          failedCard("Spent and income didn’t load.")
+          failedCard("Kept didn’t load.")
+          trendCard
+          failedCard("By category didn’t load.")
+          failedCard("Top merchants didn’t load.")
+        case .empty:
+          emptyState
+        case .content:
+          if let figures = insights.loadedValue {
+            populatedCards(ReportsViewModelBuilder.make(period: period, insights: figures, calendar: model.calendar))
+          }
         }
       }
+    }
+  }
+
+  private func failedCard(_ message: String) -> some View {
+    NomiLoadFailedCard(message: message) {
+      model.retry()
+    }
+  }
+
+  private func populatedCards(_ figures: ReportsViewModel) -> some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.sm) {
+      HStack(alignment: .top, spacing: NomiSpacing.xs) {
+        figureTile(label: "Spent", minor: figures.debitMinor, comparison: figures.debitComparison)
+        figureTile(label: "Income", minor: figures.creditMinor, comparison: figures.creditComparison)
+      }
+      ReportsKeptCard(
+        isMonth: basis == .calendarMonth,
+        keptMinor: ReportsKept.minor(creditMinor: figures.creditMinor, debitMinor: figures.debitMinor),
+        creditMinor: figures.creditMinor
+      )
+      trendCard
+      ReportsCategoryBreakdownCard(breakdown: figures.categories, uncategorizedCount: figures.uncategorizedCount)
+      ReportsMerchantsCard(merchants: figures.topMerchants)
+    }
+  }
+
+  /// A total and the comparison line under it. The line is a tag when it fits;
+  /// when it does not (the empty-prior copy is long), it wraps as text instead
+  /// of truncating. `comparison` is `nil` with no prior period, so no line.
+  private func figureTile(label: LocalizedStringKey, minor: Int, comparison: String?) -> some View {
+    VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
+      Text(label, bundle: .module)
+        .nomiTextStyle(.subhead)
+        .foregroundStyle(NomiColor.inkSecondary)
+      NomiAmountText(minor: minor, style: .summaryValue)
+      if let comparison {
+        ViewThatFits(in: .horizontal) {
+          NomiTag(comparison)
+          Text(verbatim: comparison)
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.inkSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .nomiCard(padding: EdgeInsets(top: NomiSpacing.sm, leading: NomiSpacing.sm, bottom: NomiSpacing.sm, trailing: NomiSpacing.sm))
+    .accessibilityElement(children: .combine)
+  }
+
+  /// The bars for the selected period: the six months to the period's month on
+  /// the calendar basis, or the financial year's twelve. Tapping a bar opens that
+  /// month. The caption is for the current month only.
+  @ViewBuilder
+  private var trendCard: some View {
+    switch model.trend {
+    case nil:
+      EmptyView()
+    case .loaded(let buckets)?:
+      ReportsTrendCard(
+        title: basis == .calendarMonth ? "Last 6 months" : "This financial year",
+        buckets: buckets,
+        kind: $model.kind,
+        selectedMonth: model.anchor,
+        calendar: model.calendar,
+        caption: ReportsBars.caption(anchor: model.anchor, now: Date(), calendar: model.calendar)
+      ) { bucket in
+        model.selectMonth(bucket, now: Date())
+      }
+    case .failed?:
+      failedCard("Monthly figures didn’t load.")
     }
   }
 
@@ -177,85 +276,13 @@ public struct ReportsScreen: View {
     .padding(.vertical, NomiSpacing.lg)
   }
 
-  /// Spent and Received side by side, each with its figure and the change
-  /// against the prior period. The figures are `NomiAmountText`, one accessibility
-  /// element each. The change line says so when there is no prior period.
-  private func summaryCard(_ model: ReportsViewModel) -> some View {
-    HStack(alignment: .top, spacing: NomiSpacing.sm) {
-      summaryFigure(label: "Spent", minor: model.debitMinor, change: model.debitChangeCopy)
-      Rectangle()
-        .fill(NomiColor.secondaryFill)
-        .frame(width: 1)
-      summaryFigure(label: "Received", minor: model.creditMinor, change: model.creditChangeCopy)
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .frame(minHeight: 116, alignment: .topLeading)
-    .nomiCard(padding: EdgeInsets(top: NomiSpacing.sm, leading: NomiSpacing.sm, bottom: NomiSpacing.sm, trailing: NomiSpacing.sm))
-  }
-
-  private func summaryFigure(label: String, minor: Int, change: String?) -> some View {
-    VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
-      Text(label)
-        .nomiTextStyle(.subhead)
-        .foregroundStyle(NomiColor.inkSecondary)
-      NomiAmountText(minor: minor, style: .summaryValue)
-      Text(change ?? "No prior period to compare")
-        .nomiTextStyle(.footnote)
-        .foregroundStyle(NomiColor.inkSecondary)
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .accessibilityElement(children: .combine)
-  }
-
-  /// Daily bars on the calendar basis; monthly bars on the financial-year basis,
-  /// or a load-failed card when the trend did not load.
-  @ViewBuilder
-  private func barsCard(_ model: ReportsViewModel) -> some View {
-    if let daily = model.dailyDebitMinor {
-      let highlight = ReportsSpendSeries.highlightIndex(
-        count: daily.count,
-        todayIndex: ReportsSpendSeries.todayIndex(period: period, now: Date())
-      )
-      ReportsTrendCard(
-        title: "Daily spend",
-        values: daily,
-        highlightIndex: highlight,
-        startLabel: "1",
-        endLabel: "\(daily.count)",
-        spokenValue: ReportsSpendSeries.peakDescription(values: daily) { "on day \($0 + 1)" }
-      )
-    } else if let monthlyTrend {
-      switch monthlyTrend {
-      case .loaded(let buckets):
-        let values = buckets.map(\.debitMinor)
-        ReportsTrendCard(
-          title: "Monthly spend",
-          values: values,
-          highlightIndex: ReportsSpendSeries.highlightIndex(count: values.count, todayIndex: nil),
-          startLabel: buckets.first.map { shortMonth($0.id) } ?? "",
-          endLabel: buckets.last.map { shortMonth($0.id) } ?? "",
-          spokenValue: ReportsSpendSeries.peakDescription(values: values) { "in \(monthName(buckets[$0].id))" }
-        )
-      case .failed:
-        NomiLoadFailedCard(message: "Monthly spend didn’t load.") {
-          retryToken += 1
-        }
-      }
-    }
-  }
-
-  private func shortMonth(_ date: Date) -> String {
-    date.formatted(.dateTime.month(.abbreviated).year(.twoDigits).locale(Locale(identifier: "en_IN")))
-  }
-
-  private func monthName(_ date: Date) -> String {
-    date.formatted(.dateTime.month(.wide).year().locale(Locale(identifier: "en_IN")))
-  }
+  // MARK: - Export
 
   /// One control, two actions. Each tap writes a fresh CSV and opens the share
   /// sheet for it at once (R12b, Y1).
   private var exportRow: some View {
-    Menu {
+    let name = ReportsPeriod.exportName(for: period, calendar: model.calendar)
+    return Menu {
       Button("This period") {
         share(period)
       }
@@ -264,13 +291,10 @@ public struct ReportsScreen: View {
       }
     } label: {
       HStack(spacing: NomiSpacing.xs) {
-        Text("Export")
+        Text(verbatim: String(localized: "Export \(name) as CSV", bundle: .module))
           .nomiTextStyle(.rowTitle)
           .foregroundStyle(NomiColor.navy)
         Spacer(minLength: NomiSpacing.xs)
-        Text("This period")
-          .nomiTextStyle(.subhead)
-          .foregroundStyle(NomiColor.inkSecondary)
         Image(systemName: "chevron.down")
           .resizable()
           .scaledToFit()
@@ -281,7 +305,6 @@ public struct ReportsScreen: View {
       .frame(maxWidth: .infinity, minHeight: NomiSpacing.minTarget)
       .nomiCard(padding: EdgeInsets())
     }
-    .accessibilityLabel("Export")
   }
 
   /// Writes the CSV for `exportPeriod` and opens the share sheet on it. A read
@@ -293,7 +316,7 @@ public struct ReportsScreen: View {
     }
     let names = CSVNameMaps(categories: categoryNames, accounts: accountNames)
     do {
-      let url = try ReportsCSVExport.write(transactions, names: names, periodLabel: ReportsPeriod.label(for: exportPeriod))
+      let url = try ReportsCSVExport.write(transactions, names: names, periodLabel: ReportsPeriod.label(for: exportPeriod, calendar: model.calendar))
       share.item = ReportsShareItem(url: url)
     } catch {
       exportError = true

@@ -93,6 +93,29 @@
         }
       }
     },
+    "%lld more categories" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more category"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more categories"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld payment has no account. Assign it so balances stay right." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -109,6 +132,29 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld payments have no account. Assign them so balances stay right."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld payments" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld payment"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld payments"
                 }
               }
             }
