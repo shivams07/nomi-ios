@@ -154,6 +154,19 @@ final class DevLaunchRouteTests: XCTestCase {
     XCTAssertEqual(first, "#if DEBUG && (targetEnvironment(simulator) || os(macOS))")
   }
 
+  /// The Bring in your data step is asked on first appearance and on every route
+  /// change, so a route that reaches Welcome after the first look still steps on.
+  /// The view wiring is not reachable from `swift test`, so this pins its source.
+  /// The decision itself is pinned by `DevLaunchOnboardingStepTests`.
+  func testTheBringDataStepIsAskedOnFirstAppearanceAndOnEveryRouteChange() throws {
+    let scene = try source("Composition/NomiAppScene.swift")
+    XCTAssertTrue(scene.contains(".onChange(of: firstRun.route)"), "the step is asked on each route change")
+    XCTAssertTrue(scene.contains("devOnboardingStep.shouldStepOn(for: firstRun.route)"))
+    XCTAssertTrue(
+      scene.contains("@State private var devOnboardingStep = DevLaunchOnboardingStep(launch: DevLaunchRoute.launch)"))
+    XCTAssertTrue(scene.contains(".task {\n      applyOnboardingLaunchRoute()"), "and on first appearance")
+  }
+
   private func source(_ relative: String) throws -> String {
     // This file is Packages/NomiApp/Tests/NomiAppTests/<name>.swift.
     let package = URL(fileURLWithPath: #filePath)
@@ -162,6 +175,81 @@ final class DevLaunchRouteTests: XCTestCase {
       .deletingLastPathComponent()  // NomiApp
     return try String(
       contentsOf: package.appendingPathComponent("Sources/NomiApp/\(relative)"), encoding: .utf8)
+  }
+}
+
+/// `NOMI_START_ROUTE=bringData` steps Bring in your data on from Welcome. These
+/// drive a real `FirstRunGate`, so the route transitions are the ones the app makes.
+@MainActor
+final class DevLaunchOnboardingStepTests: XCTestCase {
+
+  /// The step is taken when first run is already at Welcome on first appearance.
+  func testBringDataStepsOnWhenFirstRunIsAlreadyAtWelcome() {
+    let gate = FirstRunGate(store: InMemoryKeyValueStore())
+    var step = DevLaunchOnboardingStep(launch: .bringData)
+    XCTAssertTrue(step.shouldStepOn(for: gate.route))
+    gate.start()
+    XCTAssertEqual(gate.route, .onboarding(.bringData))
+  }
+
+  /// The step is taken when first run reaches Welcome after the first look. Before
+  /// that, a shell route is on screen and nothing steps. Then the route changes to
+  /// Welcome and the step is taken.
+  func testBringDataStepsOnWhenFirstRunSettlesToWelcomeLater() {
+    let store = InMemoryKeyValueStore()
+    store.set(true, forKey: PreferenceKey.hasCompletedFirstRun)
+    let gate = FirstRunGate(store: store)
+    XCTAssertEqual(gate.route, .main)
+
+    var step = DevLaunchOnboardingStep(launch: .bringData)
+    XCTAssertFalse(step.shouldStepOn(for: gate.route), "first run is done: nothing to step on")
+    XCTAssertTrue(step.isPending, "the step is still owed when first run later reaches Welcome")
+
+    gate.restartAfterErase()
+    XCTAssertEqual(gate.route, .onboarding(.welcome))
+    XCTAssertTrue(step.shouldStepOn(for: gate.route))
+    gate.start()
+    XCTAssertEqual(gate.route, .onboarding(.bringData))
+  }
+
+  /// Once taken, the step is not taken again. A Back from Bring in your data to
+  /// Welcome is then not stepped forward.
+  func testTheStepIsTakenOnlyOnce() {
+    let gate = FirstRunGate(store: InMemoryKeyValueStore())
+    var step = DevLaunchOnboardingStep(launch: .bringData)
+    XCTAssertTrue(step.shouldStepOn(for: gate.route))
+    gate.start()
+    gate.back()
+    XCTAssertEqual(gate.route, .onboarding(.welcome))
+    XCTAssertFalse(step.shouldStepOn(for: gate.route))
+    XCTAssertFalse(step.isPending)
+  }
+
+  /// Only the Bring in your data route owes the step. Every other launch, and every
+  /// other route, leaves the gate alone.
+  func testNothingElseStepsOn() {
+    let gate = FirstRunGate(store: InMemoryKeyValueStore())
+    for launch in DevLaunchRoute.allCases where launch != .bringData {
+      var step = DevLaunchOnboardingStep(launch: launch)
+      XCTAssertFalse(step.isPending, launch.rawValue)
+      XCTAssertFalse(step.shouldStepOn(for: gate.route), launch.rawValue)
+    }
+    var none = DevLaunchOnboardingStep(launch: nil)
+    XCTAssertFalse(none.shouldStepOn(for: gate.route))
+  }
+
+  /// Only Welcome is a step-on point. Bring in your data, the mail steps and the
+  /// shell do not trigger it.
+  func testOnlyWelcomeTriggersTheStep() {
+    let routes: [AppRoute] = [
+      .main, .onboarding(.bringData), .onboarding(.connectMail),
+      .onboarding(.importStatement), .onboarding(.backfill),
+    ]
+    for route in routes {
+      var step = DevLaunchOnboardingStep(launch: .bringData)
+      XCTAssertFalse(step.shouldStepOn(for: route), "\(route)")
+      XCTAssertTrue(step.isPending, "\(route) must not consume the step")
+    }
   }
 }
 

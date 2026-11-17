@@ -139,6 +139,31 @@ enum DevLaunchStage: Equatable, Sendable {
   case shellRoute(DevLaunchRoute)
 }
 
+/// The one step `NOMI_START_ROUTE=bringData` takes: Welcome's "Get started", once.
+///
+/// It answers for any route the first-run gate reports, at any time, so the caller
+/// can ask on first appearance and again on every route change. The answer is
+/// yes at most once per launch. A Back from Bring in your data to Welcome is then
+/// left alone, rather than stepped forward again. Pure, so a test can drive it
+/// with a real `FirstRunGate` through any sequence of routes.
+struct DevLaunchOnboardingStep: Equatable, Sendable {
+  /// True until the step has been taken, and false for every launch that did not
+  /// name `bringData`.
+  private(set) var isPending: Bool
+
+  init(launch: DevLaunchRoute?) {
+    isPending = launch == .bringData
+  }
+
+  /// Whether to call `FirstRunGate.start()` for `route` now. True only when the
+  /// step is pending and first run is at Welcome, and it clears the pending step.
+  mutating func shouldStepOn(for route: AppRoute) -> Bool {
+    guard isPending, case .onboarding(.welcome) = route else { return false }
+    isPending = false
+    return true
+  }
+}
+
 /// A pushed screen with no `HomeRoute` case. About and Licences are inline links
 /// in Settings, so the launch route pushes them by value on Home's stack. Back
 /// then returns through Settings as it does after a tap.

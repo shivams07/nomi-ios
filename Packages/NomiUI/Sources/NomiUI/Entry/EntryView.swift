@@ -421,7 +421,7 @@ private struct EntryForm: View {
       }
       .buttonStyle(NomiPrimaryButtonStyle(height: 54))
       .disabled(!model.canSave)
-      if let openImport {
+      if EntryImportLink.isDrawn(for: openImport) {
         // S5 follow-up. The one thing the link does is call the shell's import action.
         Button {
           EntryImportLink.activate(openImport)
@@ -454,6 +454,12 @@ private struct EntryForm: View {
 /// import action once. A test passes a spy as the action.
 enum EntryImportLink {
   static let title = "Import a bank statement instead"
+
+  /// The link is drawn only when a shell provides the import action. A preview or a
+  /// sheet with no shell has none, and shows no link.
+  static func isDrawn(for action: NomiShellAction?) -> Bool {
+    action != nil
+  }
 
   @MainActor
   static func activate(_ action: NomiShellAction?) {

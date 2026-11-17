@@ -26,6 +26,16 @@ final class EntryImportLinkTests: XCTestCase {
     EntryImportLink.activate(nil)
   }
 
+  /// The decision the view makes: the link is drawn exactly when a shell provides
+  /// the import action. A preview or a sheet with no shell gets no link.
+  func testWithNoShellTheLinkIsNotDrawn() {
+    XCTAssertFalse(EntryImportLink.isDrawn(for: nil))
+  }
+
+  func testWithAShellActionTheLinkIsDrawn() {
+    XCTAssertTrue(EntryImportLink.isDrawn(for: NomiShellAction {}))
+  }
+
   func testTheLinkTitleIsTheArtboardCopy() {
     XCTAssertEqual(EntryImportLink.title, "Import a bank statement instead")
   }
@@ -38,7 +48,7 @@ final class EntryImportLinkTests: XCTestCase {
     let link = try XCTUnwrap(text.range(of: "EntryImportLink.activate(openImport)"))
     XCTAssertLessThan(save.upperBound, link.lowerBound, "the link is drawn below Save")
     XCTAssertTrue(text.contains("@Environment(\\.nomiOpenImport) private var openImport"))
-    XCTAssertTrue(text.contains("if let openImport {"), "no shell, no link")
+    XCTAssertTrue(text.contains("if EntryImportLink.isDrawn(for: openImport) {"), "no shell, no link")
   }
 
   private func entryView() throws -> String {

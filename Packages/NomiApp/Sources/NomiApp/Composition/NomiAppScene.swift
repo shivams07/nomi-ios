@@ -279,6 +279,11 @@ public struct NomiAppScene: Scene {
 struct RootContainerView: View {
   @ObservedObject var environment: AppEnvironment
   @ObservedObject private var firstRun: FirstRunGate
+  #if DEBUG && targetEnvironment(simulator)
+    /// The launch's Bring in your data step, taken at most once. See
+    /// `applyOnboardingLaunchRoute`.
+    @State private var devOnboardingStep = DevLaunchOnboardingStep(launch: DevLaunchRoute.launch)
+  #endif
 
   /// `@MainActor` because it reads `environment.firstRun`, and `AppEnvironment`
   /// is main-actor isolated. Constructed from `NomiAppScene.body`, which is too.
@@ -317,6 +322,11 @@ struct RootContainerView: View {
     .task {
       applyOnboardingLaunchRoute()
     }
+    // First run can reach Welcome after this view first appears, so the step is
+    // asked again on every route change. It answers once per launch.
+    .onChange(of: firstRun.route) { _, _ in
+      applyOnboardingLaunchRoute()
+    }
     #endif
     .task {
       await observeRemoteChanges()
@@ -331,12 +341,13 @@ struct RootContainerView: View {
 
   #if DEBUG && targetEnvironment(simulator)
     /// `NOMI_START_ROUTE=bringData` opens Bring in your data. From Welcome, that is
-    /// one step on. Welcome itself needs nothing, and the shell routes are applied
-    /// by `RootView` once it appears.
+    /// one step on. It is asked on first appearance and on every route change, so
+    /// it takes effect whenever first run reaches Welcome. The step itself is
+    /// `DevLaunchOnboardingStep`, which answers once. Welcome needs nothing, and
+    /// the shell routes are applied by `RootView` once it appears.
     @MainActor
     private func applyOnboardingLaunchRoute() {
-      guard DevLaunchRoute.launch == .bringData else { return }
-      if case .onboarding(.welcome) = firstRun.route {
+      if devOnboardingStep.shouldStepOn(for: firstRun.route) {
         firstRun.start()
       }
     }
