@@ -19,9 +19,14 @@ public enum EraseError: Error, Sendable, Equatable {
   case unavailable(reason: String)
   /// A sync did not stop within 30 s. Nothing was erased.
   case busy
-  /// Some data could not be removed. Every other step still ran and the gate is
-  /// open. Retrying is safe. It covers a store save that failed, a reseed that
-  /// failed, and a mail credential that could not be deleted.
+  /// Some step did not finish. Every other step still ran and the gate is open,
+  /// and retrying is safe. Which step failed decides what is left:
+  /// - Rows remain: a delete or the store save failed. A later save in the same
+  ///   erase can commit some of those deletes, so some rows may already be gone.
+  /// - Default categories and rules may be missing: a reseed failed. When that is
+  ///   the only failure, no user data remains. A retry, or the next launch,
+  ///   restores the defaults.
+  /// - A mail credential is still on this device: its delete failed.
   case incomplete
 }
 

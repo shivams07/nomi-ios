@@ -6,10 +6,11 @@ import SwiftData
 /// I-13 Amendment 1, B5. Erases everything the app holds, in the order below.
 ///
 /// The gate is closed first and reopened on every exit, with the token that
-/// closed it. A failure that leaves data behind (a store save, a reseed, a
-/// credential delete) is remembered and reported last as `.incomplete`, so the
-/// rest of the erase still runs. Nothing here is undone: the order is the
-/// safety property. Once a step is done it is not done again by a later one.
+/// closed it. A failure that leaves rows, defaults or a credential behind (a
+/// delete, a store save, a reseed, a credential delete) is remembered and
+/// reported last as `.incomplete`, so the rest of the erase still runs. Nothing
+/// here is undone: the order is the safety property. Once a step is done it is
+/// not done again by a later one.
 @MainActor
 final class DataEraser: DataErasing {
   private let container: ModelContainer
@@ -27,13 +28,18 @@ final class DataEraser: DataErasing {
   private let storeDirectory: URL
   private let tempDirectory: URL
   private let disconnectTimeout: TimeInterval
+  private let deleteRows: @MainActor (any PersistentModel.Type, ModelContext) throws -> Void
   private let saveStore: @MainActor (ModelContext) throws -> Void
+  private let dropCaches: @MainActor () -> Void
+  private let reopenGate: @MainActor (EraseToken) async -> Void
 
   /// `storageMode` is read at each call, so the scope a Settings row shows and the
   /// scope an erase acts on are the same answer.
   ///
-  /// `disconnectTimeout` and `saveStore` exist for tests. Production takes the
-  /// defaults: 10 s for the mail disconnect, and a plain `save()`.
+  /// `disconnectTimeout`, `deleteRows`, `saveStore`, `dropCaches` and `reopenGate`
+  /// exist for tests. Production takes the defaults: 10 s for the mail disconnect,
+  /// a plain `delete(model:)` per model, a plain `save()`, the write coordinator's
+  /// cache drop, and the sync coordinator's `endErase`.
   init(
     container: ModelContainer,
     storageMode: @escaping @MainActor () -> StorageMode,
@@ -50,7 +56,12 @@ final class DataEraser: DataErasing {
     storeDirectory: URL = NomiModelContainer.defaultStoreURL.deletingLastPathComponent(),
     tempDirectory: URL = FileManager.default.temporaryDirectory,
     disconnectTimeout: TimeInterval = 10,
-    saveStore: @escaping @MainActor (ModelContext) throws -> Void = { try $0.save() }
+    deleteRows: @escaping @MainActor (any PersistentModel.Type, ModelContext) throws -> Void = { model, context in
+      try context.delete(model: model)
+    },
+    saveStore: @escaping @MainActor (ModelContext) throws -> Void = { try $0.save() },
+    dropCaches: (@MainActor () -> Void)? = nil,
+    reopenGate: (@MainActor (EraseToken) async -> Void)? = nil
   ) {
     self.container = container
     self.storageModeProvider = storageMode
@@ -67,7 +78,10 @@ final class DataEraser: DataErasing {
     self.storeDirectory = storeDirectory
     self.tempDirectory = tempDirectory
     self.disconnectTimeout = disconnectTimeout
+    self.deleteRows = deleteRows
     self.saveStore = saveStore
+    self.dropCaches = dropCaches ?? { writes.didWrite(affectedCategoryIDs: []) }
+    self.reopenGate = reopenGate ?? { token in await sync.endErase(token) }
   }
 
   var scope: EraseScope {
@@ -151,13 +165,13 @@ final class DataEraser: DataErasing {
     }
 
     // i. Every cache drops. No observer runs: there are no budgets left to evaluate.
-    writes.didWrite(affectedCategoryIDs: [])
+    dropCaches()
 
     // j. First run starts again from Welcome (G10).
     firstRun.restartAfterErase()
 
     // k. Reopen the gate. Only the holder's token can do this.
-    await sync.endErase(token)
+    await reopenGate(token)
 
     // l. Reported last, so every other step has already run. Covers a failed
     // credential delete, a failed store save and a failed reseed.
@@ -194,12 +208,19 @@ final class DataEraser: DataErasing {
   }
 
   /// Deletes every row of every model in `NomiSchemaV1.models` and saves once.
-  /// Returns `false` if the delete or the save threw. Rows may remain then.
+  /// Returns `false` if a delete or the save threw.
+  ///
+  /// A delete that throws part-way stops the loop, and nothing here saves what
+  /// came before it. Those deletes stay pending in the context, and the reseed's
+  /// own save (inside `DefaultCategorySeed.apply`) commits them. So the models
+  /// before the failure end up empty and the rest keep their rows until a retry.
+  /// A failed save here can be committed by that same later save. Both cases are
+  /// reported as `.incomplete`.
   private func deleteEveryRow() -> Bool {
     let context = container.mainContext
     do {
       for model in NomiSchemaV1.models {
-        try deleteAll(model, in: context)
+        try deleteRows(model, context)
       }
       try saveStore(context)
       return true
@@ -209,12 +230,14 @@ final class DataEraser: DataErasing {
     }
   }
 
-  private func deleteAll<Model: PersistentModel>(_ model: Model.Type, in context: ModelContext) throws {
-    try context.delete(model: model)
-  }
-
   /// The same two calls `AppEnvironment.bootstrap` makes, then one save. Returns
-  /// `false` on any failure, which means the seeds are not back until next launch.
+  /// `false` on any failure.
+  ///
+  /// Each seed call saves on its own when it inserts something, so by the time
+  /// the save here runs, the seeds are normally already on disk. A failure here
+  /// is reported even though the seeds may be present. A failure inside a seed
+  /// call is the case where they are missing. Either way a retry restores them,
+  /// and so does the next launch, because bootstrap runs the same calls.
   private func reseedDefaults() -> Bool {
     let context = container.mainContext
     do {
