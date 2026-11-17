@@ -61,6 +61,10 @@ public struct NomiPeriodPill<MenuContent: View>: View {
       }
       .contentShape(Capsule())
     }
+    // A wrapped title needs the label's full height. A Menu's label is otherwise
+    // given its single-line height, so the second line falls outside the capsule
+    // (PR 233, Lim, AX5). Off for every other caller, so their layout is unchanged.
+    .fixedSize(horizontal: false, vertical: wrapsTitle)
     .accessibilityLabel("Choose period, \(title)")
   }
 
