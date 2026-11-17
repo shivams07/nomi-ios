@@ -153,3 +153,59 @@ final class SyncStatusRowTests: XCTestCase {
     }
   }
 }
+
+/// S1b step 7. The mail line at the bottom of Home, and the one row that may sit
+/// at the top. Failed, and disconnected after connecting, go to the top. A user
+/// who never connected gets the attention row at the bottom, in place of the
+/// healthy line.
+final class HomeMailLineTests: XCTestCase {
+  private let now = Date(timeIntervalSince1970: 1_000_000)
+  private let neverConnected = MailConnectionHistory.never
+  private let connectedBefore = MailConnectionHistory(hasEverConnected: true, lastSync: nil)
+
+  func testConnectedWithALastSyncReadsMailChecked() {
+    let lastSync = now.addingTimeInterval(-300)
+    let line = SyncStatusRow.bottomLine(
+      for: .connected(address: "a@b.com", lastSync: lastSync), history: connectedBefore, now: now)
+    XCTAssertEqual(line, .healthy("Mail checked " + SyncStatusRow.relativeSyncPhrase(lastSync, now: now)))
+  }
+
+  /// Ruling 4: a connection with no sync yet reads the existing status copy, with
+  /// an em dash, and carries no attention row.
+  func testConnectedWithNoLastSyncReadsNotYetSynced() {
+    let line = SyncStatusRow.bottomLine(
+      for: .connected(address: "a@b.com", lastSync: nil), history: connectedBefore, now: now)
+    XCTAssertEqual(line, .healthy("Connected — not yet synced"))
+  }
+
+  func testConnectingReadsConnectingInTheHealthyPosition() {
+    XCTAssertEqual(
+      SyncStatusRow.bottomLine(for: .connecting, history: neverConnected, now: now),
+      .healthy("Connecting…")
+    )
+  }
+
+  /// A user who never connected sees the attention row at the bottom, opening Connect mail.
+  func testNeverConnectedAttentionRowSitsAtTheBottom() {
+    let line = SyncStatusRow.bottomLine(for: .disconnected, history: neverConnected, now: now)
+    guard case .attention(let attention)? = line else {
+      return XCTFail("expected the attention row, got \(String(describing: line))")
+    }
+    XCTAssertEqual(attention.title, "Mail not connected")
+  }
+
+  /// Failed and disconnected-after-connecting are at the top, so the bottom has no line for them.
+  func testFailedAndDisconnectedAfterConnectingHaveNoBottomLine() {
+    XCTAssertNil(SyncStatusRow.bottomLine(for: .failed(.connectionFailed), history: connectedBefore, now: now))
+    XCTAssertNil(SyncStatusRow.bottomLine(for: .disconnected, history: connectedBefore, now: now))
+  }
+
+  /// The healthy copy and the Connect mail card's `statusText` are separate
+  /// strings. Changing one must not change the other.
+  func testHomeLineDoesNotChangeTheConnectMailStatusCopy() {
+    XCTAssertEqual(
+      SyncStatusRow.statusText(for: .connected(address: "a@b.com", lastSync: nil)),
+      "Connected — not yet synced"
+    )
+  }
+}

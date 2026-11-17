@@ -10,10 +10,11 @@ import XCTest
 /// `RecentRows.mostRecent`) is tested straightforwardly.
 final class UpcomingCardTests: XCTestCase {
 
-  func testCapsAtFiveEvenWithMoreSeriesAvailable() {
+  /// S1b step 5: Home shows at most two upcoming series.
+  func testCapsAtTwoEvenWithMoreSeriesAvailable() {
     let allSeries = (0..<8).map { makeSeries(id: "S\($0)", daysFromNow: $0) }
 
-    XCTAssertEqual(UpcomingRows.soonest(allSeries).count, 5)
+    XCTAssertEqual(UpcomingRows.soonest(allSeries).count, 2)
   }
 
   func testOrdersByNextExpectedAscendingRegardlessOfInputOrder() {
@@ -24,17 +25,17 @@ final class UpcomingCardTests: XCTestCase {
 
     let result = UpcomingRows.soonest([later, latest, soon, soonest])
 
-    XCTAssertEqual(result.map { $0.id }, ["SOONEST", "SOON", "LATER", "LATEST"])
+    XCTAssertEqual(result.map { $0.id }, ["SOONEST", "SOON"])
   }
 
-  func testCapKeepsTheFiveSoonestNotTheFirstFiveInInputOrder() {
+  func testCapKeepsTheTwoSoonestNotTheFirstTwoInInputOrder() {
     // Deliberately fed latest-first, so a cap that truncated before sorting
-    // would keep the wrong five.
+    // would keep the wrong two.
     let allSeries = (0..<8).map { makeSeries(id: "S\($0)", daysFromNow: 7 - $0) }
 
     let result = UpcomingRows.soonest(allSeries)
 
-    XCTAssertEqual(result.map { $0.id }, ["S7", "S6", "S5", "S4", "S3"])
+    XCTAssertEqual(result.map { $0.id }, ["S7", "S6"])
   }
 
   func testEmptyInputProducesEmptyOutput() {
@@ -51,10 +52,10 @@ final class UpcomingCardTests: XCTestCase {
     XCTAssertEqual(SubscriptionBadge.resolve(series), .monogram("N"))
   }
 
-  /// HM2. The Main artboard words each row "Netflix · renews 12 Nov". The day
-  /// comes from the device calendar, the same one `NomiFormatters.dayMonth` uses,
-  /// so the date is built in that calendar and the test is zone-safe.
-  func testRowLineNamesTheSeriesAndItsRenewalDay() {
+  /// S1b step 5. Each row's second line is "Next 12 Nov · monthly". The Due or
+  /// Renews verb arrives with X1. The day comes from the device calendar, the
+  /// one `NomiFormatters.dayMonth` uses, so the date is zone-safe.
+  func testRowSubtitleNamesTheNextDateAndCadence() {
     var components = DateComponents()
     components.year = 2026
     components.month = 11
@@ -70,7 +71,7 @@ final class UpcomingCardTests: XCTestCase {
       nextExpected: renewal
     )
 
-    XCTAssertEqual(UpcomingRows.line(for: series), "Netflix · renews 12 Nov")
+    XCTAssertEqual(UpcomingRows.subtitle(for: series), "Next 12 Nov · monthly")
   }
 
   // MARK: -

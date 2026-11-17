@@ -24,18 +24,35 @@ import Observation
     case loaded(DashboardWiring.Load<[RecurringSeries]>)
   }
 
+  /// The Review card's read (S1b). `absent` is a model with no transaction store:
+  /// the card is not built, and nothing is read.
+  enum ReviewRead {
+    case absent
+    case loaded(DashboardWiring.Load<ReviewCounts>)
+  }
+
   @ObservationIgnored private let insightsStore: InsightsStore
   @ObservationIgnored private let recurringStore: RecurringInsightsStore?
+  @ObservationIgnored private let transactionStore: TransactionStore?
 
   private(set) var insights: DashboardWiring.Load<PeriodInsights>?
   private(set) var recentTransactions: DashboardWiring.Load<[NomiCore.Transaction]>?
   private(set) var needsReview: DashboardWiring.Load<Int>?
   private(set) var budgets: BudgetRead?
   private(set) var upcoming: UpcomingRead?
+  private(set) var review: ReviewRead?
+  /// Account names by id, for the Recent rows. Archived accounts are included, so
+  /// a row from one still reads its name.
+  private(set) var accountNames: DashboardWiring.Load<[UUID: String]>?
 
-  init(insightsStore: InsightsStore, recurringStore: RecurringInsightsStore?) {
+  init(
+    insightsStore: InsightsStore,
+    recurringStore: RecurringInsightsStore?,
+    transactionStore: TransactionStore? = nil
+  ) {
     self.insightsStore = insightsStore
     self.recurringStore = recurringStore
+    self.transactionStore = transactionStore
   }
 
   /// One read per store call. Called once per load key (period, refresh token,
@@ -46,6 +63,8 @@ import Observation
     needsReview = DashboardWiring.needsReviewAllTime(from: insightsStore)
     budgets = budgetRead(for: period)
     upcoming = recurringStore.map { UpcomingRead.loaded(DashboardWiring.recurringSeries(from: $0)) } ?? .absent
+    review = transactionStore.map { ReviewRead.loaded(DashboardWiring.reviewCount(from: $0, insightsStore: insightsStore, now: Date())) } ?? .absent
+    accountNames = DashboardWiring.accountNames(from: insightsStore)
   }
 
   /// Monthly budgets are read for a calendar month only.

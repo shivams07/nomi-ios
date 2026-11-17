@@ -378,6 +378,7 @@ struct RootView: View {
         // `SwiftDataInsightsStore` and `SwiftDataRecurringStore` already share
         // `environment.cache`, so constructing this here costs nothing beyond the call.
         recurringStore: recurringStore,
+        transactionStore: environment.transactionStore,
         // Stored and never read by the screen — see `DashboardView`'s note. It is what
         // makes SwiftUI re-invoke `body` after a write, and it is only doing that job
         // because it *changes*: passing a literal here would compile and fix nothing.

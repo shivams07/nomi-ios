@@ -17,34 +17,6 @@ struct DashboardCard<Content: View>: View {
   }
 }
 
-/// A signed amount drawn in a colour the caller chooses. `NomiAmountText` draws
-/// its primary in `ink` and has no colour parameter, so the rows that need
-/// DEC-03's credit colour, and the over-budget figure that needs `error`, draw
-/// through this view. Sign and decimal split come from `NomiAmountFormat`, so
-/// the typesetting matches every other amount, and the decimals are dimmed the
-/// same way (`decimalOpacityGround`).
-struct DashboardAmountText: View {
-  let minor: Int
-  var currencyCode: String = "INR"
-  var showPlus: Bool = false
-  let style: NomiTextStyle
-  let colour: Color
-
-  var body: some View {
-    let parts = NomiAmountFormat.parts(minor: minor, currencyCode: currencyCode, showPlus: showPlus)
-    (Text(parts.sign + parts.integer)
-      .font(style.font)
-      .tracking(style.tracking)
-      .foregroundStyle(colour)
-      + Text(parts.decimals)
-      .font(style.font)
-      .tracking(style.tracking)
-      .foregroundStyle(colour.opacity(NomiColor.decimalOpacityGround)))
-      .lineLimit(1)
-      .minimumScaleFactor(0.5)
-  }
-}
-
 #Preview("Dashboard card · default") {
   DashboardCard {
     Text("Card content")

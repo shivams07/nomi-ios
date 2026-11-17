@@ -734,6 +734,208 @@
           }
         }
       }
+    },
+    "Left to spend" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left to spend"
+          }
+        }
+      }
+    },
+    "Where it went" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Where it went"
+          }
+        }
+      }
+    },
+    "Coming up" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coming up"
+          }
+        }
+      }
+    },
+    "See all" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "See all"
+          }
+        }
+      }
+    },
+    "Mail checked %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mail checked %@"
+          }
+        }
+      }
+    },
+    "Next %@ · monthly" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Next %@ · monthly"
+          }
+        }
+      }
+    },
+    "Over budget" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Over budget"
+          }
+        }
+      }
+    },
+    "%lld%% of budget used" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld%% of budget used"
+          }
+        }
+      }
+    },
+    "%lld%% of spending" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld%% of spending"
+          }
+        }
+      }
+    },
+    "%@ over %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ over %@"
+          }
+        }
+      }
+    },
+    "%@ left of %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ left of %@"
+          }
+        }
+      }
+    },
+    "%@ spent of %@ budgeted across %lld categories" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%@ spent of %@ budgeted across %lld category"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%@ spent of %@ budgeted across %lld categories"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld days left · %@ a day" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld day left · %@ a day"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld days left · %@ a day"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld uncategorised" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld uncategorised"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld uncategorised"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld unsure matches" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld unsure match"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld unsure matches"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

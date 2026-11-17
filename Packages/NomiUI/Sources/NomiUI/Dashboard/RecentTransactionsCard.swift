@@ -29,64 +29,35 @@ enum RecentBadges {
   }
 }
 
-/// The text and the signed figure of one Recent row, pure so the tests can
-/// reach them.
-enum RecentRowText {
-  /// Merchant, then a non-blank description, then the category, then "Manual
-  /// entry". The same order `TransactionRow.title` uses.
-  static func title(merchantName: String?, descriptionText: String, categoryName: String?) -> String {
-    if let merchantName, !merchantName.isEmpty { return merchantName }
-    if !descriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return descriptionText }
-    if let categoryName, !categoryName.isEmpty { return categoryName }
-    return "Manual entry"
-  }
-
-  /// The category, or "Uncategorized". The account name is not on this card's
-  /// init, so it is not shown here.
-  static func subtitle(categoryName: String?) -> String {
-    categoryName ?? "Uncategorized"
-  }
-
-  /// DEC-03 and A-03: a debit is built from a negative minor, so its "−" always
-  /// prints. A credit stays positive and takes "+" from `showPlus`. The
-  /// magnitude comes from `amountMinor`, and the direction decides the sign,
-  /// the same as `TransactionRow.amountText`.
-  static func signedMinor(amountMinor: Int, direction: Direction) -> Int {
-    direction == .credit ? abs(amountMinor) : -abs(amountMinor)
-  }
-
-  /// A-03 item 3: the spoken label carries the direction word, so the sign and
-  /// the colour are never the only signal.
-  static func accessibilityLabel(
-    title: String,
-    direction: Direction,
-    amountMinor: Int,
-    currencyCode: String,
-    categoryName: String?
-  ) -> String {
-    let word = direction == .credit ? "credit" : "debit"
-    let amount = NomiFormatters.amountString(minor: abs(amountMinor), currencyCode: currencyCode)
-    return "\(title), \(word) \(amount), \(subtitle(categoryName: categoryName))"
-  }
-}
-
-/// Card 7 (HM2, Main artboard): the five most recent transactions across all
-/// accounts, newest first. Each 64 pt row opens the Detail sheet through
-/// `onSelect`. The "Recent" header is drawn by `DashboardView`, so the card has
-/// no title of its own.
+/// S1b step 6. The most recent transactions on Home, each drawn with F2b's
+/// `TransactionRow`, so a Home row reads like a Ledger row. Each row opens the
+/// Detail sheet through `onSelect`. The "Recent" header is drawn by
+/// `DashboardView`, so the card has no title of its own.
 public struct RecentTransactionsCard: View {
+  /// Home shows four rows. The read takes five (`DashboardWiring`), and the card
+  /// keeps four.
+  public static let rowLimit = 4
+
   public let transactions: [NomiCore.Transaction]
   public let badges: [UUID: CategoryBadge]
+  /// Account names by id. A row whose account is not here reads "Unassigned".
+  public let accountNames: [UUID: String]
   public let onSelect: ((UUID) -> Void)?
 
-  public init(transactions: [NomiCore.Transaction], badges: [UUID: CategoryBadge] = [:], onSelect: ((UUID) -> Void)? = nil) {
+  public init(
+    transactions: [NomiCore.Transaction],
+    badges: [UUID: CategoryBadge] = [:],
+    accountNames: [UUID: String] = [:],
+    onSelect: ((UUID) -> Void)? = nil
+  ) {
     self.transactions = transactions
     self.badges = badges
+    self.accountNames = accountNames
     self.onSelect = onSelect
   }
 
   private var recent: [NomiCore.Transaction] {
-    RecentRows.mostRecent(transactions, limit: 5)
+    RecentRows.mostRecent(transactions, limit: Self.rowLimit)
   }
 
   public var body: some View {
@@ -107,47 +78,21 @@ public struct RecentTransactionsCard: View {
     }
   }
 
-  /// A 64 pt row. The 1 pt divider is an overlay on the row's bottom edge, so
-  /// the row stays 64 pt with or without it, as on the artboard.
+  /// One `TransactionRow`, as a button. The 1 pt divider is an overlay on the
+  /// row's bottom edge, so the row keeps its height with or without it.
   private func row(for transaction: NomiCore.Transaction, showsDivider: Bool) -> some View {
     let badge = transaction.categoryID.flatMap { badges[$0] }
-    let categoryName = badge?.name
-    let title = RecentRowText.title(
-      merchantName: transaction.merchantName,
-      descriptionText: transaction.descriptionText,
-      categoryName: categoryName
-    )
-    let isCredit = transaction.direction == .credit
+    let accountName = transaction.accountID.flatMap { accountNames[$0] }
     return Button {
       onSelect?(transaction.id)
     } label: {
-      HStack(alignment: .center, spacing: 12) {
-        NomiCategoryBadge(
-          symbolName: badge?.symbolName ?? "questionmark",
-          paletteSlot: nil,
-          size: 40,
-          style: .neutral
-        )
-        VStack(alignment: .leading, spacing: 2) {
-          Text(title)
-            .nomiTextStyle(.rowTitle)
-            .foregroundStyle(NomiColor.ink)
-            .lineLimit(1)
-          Text(RecentRowText.subtitle(categoryName: categoryName))
-            .nomiTextStyle(.footnote)
-            .foregroundStyle(NomiColor.inkSecondary)
-            .lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        DashboardAmountText(
-          minor: RecentRowText.signedMinor(amountMinor: transaction.amountMinor, direction: transaction.direction),
-          currencyCode: transaction.currencyCode,
-          showPlus: isCredit,
-          style: isCredit ? .amountStrong : .amount,
-          colour: isCredit ? NomiColor.inkDeep : NomiColor.ink
-        )
-      }
-      .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+      TransactionRow(
+        transaction: transaction,
+        categoryName: badge?.name,
+        accountName: accountName,
+        categorySymbolName: badge?.symbolName,
+        categoryPaletteSlot: badge?.paletteSlot
+      )
       .overlay(alignment: .bottom) {
         if showsDivider {
           Rectangle()
@@ -156,16 +101,6 @@ public struct RecentTransactionsCard: View {
         }
       }
       .contentShape(Rectangle())
-      .accessibilityElement(children: .ignore)
-      .accessibilityLabel(
-        RecentRowText.accessibilityLabel(
-          title: title,
-          direction: transaction.direction,
-          amountMinor: transaction.amountMinor,
-          currencyCode: transaction.currencyCode,
-          categoryName: categoryName
-        )
-      )
     }
     .buttonStyle(.plain)
   }

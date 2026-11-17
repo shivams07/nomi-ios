@@ -11,16 +11,20 @@ import SwiftUI
 /// `InsightsStore.recentTransactions`, and the one this unit's own tests
 /// pin down.
 enum UpcomingRows {
-  static let limit = 5
+  /// S1b step 5: Home shows at most two series. The Plan tab has the rest.
+  static let limit = 2
 
   static func soonest(_ series: [RecurringSeries]) -> [RecurringSeries] {
     Array(series.sorted { $0.nextExpected < $1.nextExpected }.prefix(limit))
   }
 
-  /// "Netflix · renews 12 Nov" — the row's name and its renewal day, as the
-  /// Main artboard words it.
-  static func line(for series: RecurringSeries) -> String {
-    "\(series.label) · renews \(NomiFormatters.dayMonth.string(from: series.nextExpected))"
+  /// "Next 12 Nov · monthly", the row's second line. The Due and Renews verb
+  /// arrives with X1, which moves this card onto S7's `RecurringCopy`.
+  static func subtitle(for series: RecurringSeries) -> String {
+    String(
+      localized: "Next \(NomiFormatters.dayMonth.string(from: series.nextExpected)) · monthly",
+      bundle: .module
+    )
   }
 }
 
@@ -30,18 +34,18 @@ enum UpcomingRows {
 /// `DashboardView`'s `recurringStore`), so every value this type receives
 /// already came from a successful read.
 ///
-/// HM2: the Main artboard draws each upcoming series as a plain line with its
-/// amount, and no badge. The whole card is a NavigationLink to Subscriptions
-/// (`DashboardView`), so the chevron is the affordance.
-///
-/// Every row is a debit by construction (`RecurrenceDetector` only ever
-/// groups debits), and the artboard prints its amount with no sign, so the
-/// amount takes the default ink.
+/// S1b step 5: two rows, each a label, "Next <d MMM> · monthly" and the amount.
+/// "See all" opens the Plan tab through `onSeeAll`. Every row is a debit by
+/// construction (`RecurrenceDetector` only ever groups debits), so the amount
+/// takes the default ink.
 public struct UpcomingCard: View {
   public let series: [RecurringSeries]
+  /// Opens the Plan tab (`nomiShowPlan`). `nil` hides "See all".
+  public let onSeeAll: (() -> Void)?
 
-  public init(series: [RecurringSeries]) {
+  public init(series: [RecurringSeries], onSeeAll: (() -> Void)? = nil) {
     self.series = series
+    self.onSeeAll = onSeeAll
   }
 
   private var upcoming: [RecurringSeries] {
@@ -51,18 +55,7 @@ public struct UpcomingCard: View {
   public var body: some View {
     DashboardCard {
       VStack(alignment: .leading, spacing: NomiSpacing.xs) {
-        HStack(spacing: NomiSpacing.xs) {
-          Text("Upcoming")
-            .nomiTextStyle(.label)
-            .foregroundStyle(NomiColor.dayHeader)
-          Spacer(minLength: 0)
-          Image(systemName: "chevron.right")
-            .resizable()
-            .scaledToFit()
-            .frame(width: 16, height: 16)
-            .foregroundStyle(NomiColor.inkSecondary)
-            .accessibilityHidden(true)
-        }
+        header
         if upcoming.isEmpty {
           Text("Nothing recurring yet")
             .nomiTextStyle(.footnote)
@@ -78,13 +71,39 @@ public struct UpcomingCard: View {
     }
   }
 
+  private var header: some View {
+    HStack(alignment: .center, spacing: NomiSpacing.xs) {
+      Text("Coming up", bundle: .module)
+        .nomiTextStyle(.headline)
+        .foregroundStyle(NomiColor.ink)
+        .accessibilityAddTraits(.isHeader)
+      Spacer(minLength: NomiSpacing.xs)
+      if let onSeeAll {
+        Button(action: onSeeAll) {
+          Text("See all", bundle: .module)
+            .nomiTextStyle(.chip)
+            .foregroundStyle(NomiColor.navy)
+            .frame(minWidth: NomiSpacing.minTarget, minHeight: NomiSpacing.minTarget, alignment: .trailing)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+      }
+    }
+  }
+
   private func row(for item: RecurringSeries) -> some View {
     HStack(alignment: .firstTextBaseline, spacing: NomiSpacing.xs) {
-      Text(UpcomingRows.line(for: item))
-        .nomiTextStyle(.rowBody)
-        .foregroundStyle(NomiColor.ink)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(item.label)
+          .nomiTextStyle(.rowTitle)
+          .foregroundStyle(NomiColor.ink)
+          .lineLimit(1)
+        Text(UpcomingRows.subtitle(for: item))
+          .nomiTextStyle(.footnote)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .lineLimit(1)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
       NomiAmountText(minor: item.amountMinor, style: .amount)
     }
     .accessibilityElement(children: .combine)
@@ -92,21 +111,21 @@ public struct UpcomingCard: View {
 }
 
 #Preview("Upcoming · default") {
-  UpcomingCard(series: FakeRecurringStore.sampleSeries)
+  UpcomingCard(series: FakeRecurringStore.sampleSeries, onSeeAll: {})
     .padding()
     .background(NomiColor.ground)
     .preferredColorScheme(.light)
 }
 
 #Preview("Upcoming · empty") {
-  UpcomingCard(series: [])
+  UpcomingCard(series: [], onSeeAll: {})
     .padding()
     .background(NomiColor.ground)
     .preferredColorScheme(.light)
 }
 
 #Preview("Upcoming · accessibility 3") {
-  UpcomingCard(series: FakeRecurringStore.sampleSeries)
+  UpcomingCard(series: FakeRecurringStore.sampleSeries, onSeeAll: {})
     .padding()
     .background(NomiColor.ground)
     .environment(\.dynamicTypeSize, .accessibility3)

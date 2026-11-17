@@ -69,7 +69,15 @@ struct HeroTotalCard: View {
   @Binding var kind: NomiComparisonCopy.Kind
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @State private var displayedMinor = 0
+
+  /// S1b step 6. At accessibility sizes the comparison chip goes under its label,
+  /// so the chip's words wrap rather than truncate (PR 213: "↑ ₹4,804 more…"). At
+  /// the standard sizes the two share a row, as on the artboard.
+  static func labelRowStacks(_ size: DynamicTypeSize) -> Bool {
+    size.isAccessibilitySize
+  }
 
   init(figures: Figures, period: InsightPeriod, kind: Binding<NomiComparisonCopy.Kind>) {
     self.figures = figures
@@ -178,13 +186,26 @@ struct HeroTotalCard: View {
   }
 
   private func labelRow(chip: HeroComparison.Chip?) -> some View {
-    HStack(alignment: .center, spacing: 8) {
-      Text(Self.label(kind: kind, period: period))
-        .nomiTextStyle(.chip)
-        .lineLimit(1)
-        .minimumScaleFactor(0.75)
-      if let chip {
-        HeroComparisonChip(chip: chip)
+    let wraps = Self.labelRowStacks(dynamicTypeSize)
+    let label = Text(Self.label(kind: kind, period: period))
+      .nomiTextStyle(.chip)
+      .lineLimit(1)
+      .minimumScaleFactor(0.75)
+    return Group {
+      if wraps {
+        VStack(alignment: .leading, spacing: 8) {
+          label
+          if let chip {
+            HeroComparisonChip(chip: chip, wraps: true)
+          }
+        }
+      } else {
+        HStack(alignment: .center, spacing: 8) {
+          label
+          if let chip {
+            HeroComparisonChip(chip: chip, wraps: false)
+          }
+        }
       }
     }
     .foregroundStyle(NomiColor.heroText)
@@ -273,6 +294,9 @@ enum HeroCountUp {
 /// is text, not a button, and has no chevron. The arrow shows the direction.
 private struct HeroComparisonChip: View {
   let chip: HeroComparison.Chip
+  /// At accessibility sizes (S1b step 6) the words wrap onto as many lines as they
+  /// need, and nothing is cut. At the standard sizes the chip stays one line.
+  var wraps: Bool = false
 
   var body: some View {
     HStack(spacing: 6) {
@@ -285,10 +309,11 @@ private struct HeroComparisonChip: View {
       }
       Text(chip.text)
         .nomiTextStyle(.heroChip)
+        .fixedSize(horizontal: false, vertical: wraps)
     }
     .foregroundStyle(NomiColor.heroText)
-    .lineLimit(1)
-    .minimumScaleFactor(0.75)
+    .lineLimit(wraps ? nil : 1)
+    .minimumScaleFactor(wraps ? 1 : 0.75)
     .padding(.horizontal, 10)
     .frame(minHeight: 26)
     .nomiGlass(.heroControl, in: Capsule())

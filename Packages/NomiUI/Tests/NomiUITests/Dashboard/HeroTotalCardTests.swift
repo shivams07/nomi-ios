@@ -133,4 +133,16 @@ final class HeroTotalCardTests: XCTestCase {
   func testMotionEnabledStartsFromZeroForCountUp() {
     XCTAssertEqual(HeroCountUp.initialDisplayValue(target: 42_318_00, reduceMotion: false), 0)
   }
+
+  // MARK: - S1b step 6: the chip wraps at accessibility sizes
+
+  /// At the standard sizes the label and the chip share a row, as on the artboard.
+  /// At accessibility sizes the chip goes under its label, so the chip's words
+  /// wrap instead of truncating (PR 213, Lim: "↑ ₹4,804 more…").
+  func testLabelRowStacksOnlyAtAccessibilitySizes() {
+    XCTAssertFalse(HeroTotalCard.labelRowStacks(.large))
+    XCTAssertFalse(HeroTotalCard.labelRowStacks(.xxxLarge))
+    XCTAssertTrue(HeroTotalCard.labelRowStacks(.accessibility1))
+    XCTAssertTrue(HeroTotalCard.labelRowStacks(.accessibility3))
+  }
 }

@@ -117,6 +117,38 @@ public struct SyncStatusRow: View {
     guard now.timeIntervalSince(lastSync) >= 1 else { return "just now" }
     return NomiFormatters.relativeTime.localizedString(for: lastSync, relativeTo: now)
   }
+
+  /// What the bottom of Home says about mail (S1b step 7). A healthy connection
+  /// reads as a caption. A user who never connected gets the attention row, which
+  /// opens Connect mail.
+  static func bottomLine(
+    for state: MailConnectionState,
+    history: MailConnectionHistory,
+    now: Date = Date()
+  ) -> HomeMailLine? {
+    switch state {
+    case .connected(_, let lastSync):
+      guard let lastSync else { return .healthy("Connected — not yet synced") }
+      return .healthy(String(localized: "Mail checked \(relativeSyncPhrase(lastSync, now: now))", bundle: .module))
+    case .connecting:
+      return .healthy("Connecting…")
+    case .disconnected:
+      // A user who has connected before is at the top of the sheet instead.
+      guard !history.hasEverConnected, let attention = attention(for: .disconnected, history: history) else {
+        return nil
+      }
+      return .attention(attention)
+    case .failed:
+      return nil
+    }
+  }
+}
+
+/// The line at the bottom of Home (S1b). `healthy` is a caption with the envelope
+/// glyph. `attention` is the attention row, which opens Connect mail.
+enum HomeMailLine: Equatable {
+  case healthy(String)
+  case attention(SyncAttention)
 }
 
 #Preview("Sync status · disconnected, never connected") {
