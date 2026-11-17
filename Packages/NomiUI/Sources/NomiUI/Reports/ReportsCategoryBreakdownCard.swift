@@ -2,111 +2,155 @@ import Foundation
 import NomiCore
 import SwiftUI
 
-/// "Spending by category" on Insights: the donut beside a legend of the
-/// folded slices with their shares. At accessibility text sizes the legend
-/// stacks under the donut. It reads the shared `PeriodInsights.byCategory`
-/// through `ReportsCategoryFold`, so Other is folded the same way as before.
-public struct ReportsCategoryBreakdownCard: View {
-  public let slices: [CategorySlice]
+/// "By category" on Insights (S6): a 14 pt stacked bar with 2 pt gaps, then one
+/// row per `ReportsCategoryFold.Row`. A category row drills into Activity for
+/// that category. The Uncategorised row drills into Activity's uncategorised
+/// list, and its "Fix <n>" tag opens the Review queue. The folded row has no
+/// drill-down: it is a group, not one category.
+struct ReportsCategoryBreakdownCard: View {
+  let breakdown: ReportsCategoryFold.Breakdown
+  let uncategorizedCount: Int
 
-  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @Environment(\.nomiShowLedger) private var showLedger
+  @Environment(\.nomiOpenReview) private var openReview
 
-  public init(slices: [CategorySlice]) {
-    self.slices = slices
+  init(breakdown: ReportsCategoryFold.Breakdown, uncategorizedCount: Int) {
+    self.breakdown = breakdown
+    self.uncategorizedCount = uncategorizedCount
   }
 
-  private var folded: [CategorySlice] {
-    ReportsCategoryFold.foldToSevenSlots(slices)
-  }
-
-  /// What the ring and legend show: at most four slices (decisions Amendment 2, R3).
-  private var shown: [CategorySlice] {
-    ReportsDonut.displaySlices(folded)
-  }
-
-  private var total: Int {
-    shown.reduce(0) { $0 + $1.totalMinor }
-  }
-
-  public var body: some View {
+  var body: some View {
     VStack(alignment: .leading, spacing: NomiSpacing.xs) {
-      Text("Spending by category")
-        .nomiTextStyle(.headline)
-        .foregroundStyle(NomiColor.ink)
-      if shown.isEmpty || total <= 0 {
-        Text("No categorized spend this period")
+      HStack(alignment: .firstTextBaseline, spacing: NomiSpacing.xs) {
+        Text("By category", bundle: .module)
+          .nomiTextStyle(.headline)
+          .foregroundStyle(NomiColor.ink)
+        Spacer(minLength: NomiSpacing.xs)
+        Text("Tap to see transactions", bundle: .module)
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+      }
+      if breakdown.rows.isEmpty {
+        Text("No categorised spend this period", bundle: .module)
           .nomiTextStyle(.caption)
           .foregroundStyle(NomiColor.inkSecondary)
       } else {
-        breakdown
+        stackedBar
+        VStack(spacing: 0) {
+          ForEach(breakdown.rows) { row in
+            rowView(row)
+          }
+        }
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .frame(minHeight: 140, alignment: .topLeading)
     .nomiCard(padding: EdgeInsets(top: NomiSpacing.sm, leading: NomiSpacing.sm, bottom: NomiSpacing.sm, trailing: NomiSpacing.sm))
   }
 
-  @ViewBuilder
-  private var breakdown: some View {
-    let layout: AnyLayout = dynamicTypeSize.isAccessibilitySize
-      ? AnyLayout(VStackLayout(alignment: .leading, spacing: NomiSpacing.sm))
-      : AnyLayout(HStackLayout(alignment: .center, spacing: NomiSpacing.sm))
-    layout {
-      ReportsDonut(slices: shown)
-      legend
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-  }
-
-  private var legend: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      let percents = ReportsDonut.percentages(shown)
-      ForEach(Array(shown.enumerated()), id: \.element.id) { index, slice in
-        HStack(spacing: 10) {
-          Circle()
-            .fill(ReportsDonut.color(at: index))
-            .frame(width: 10, height: 10)
-          Text(slice.name)
-            .nomiTextStyle(.caption)
-            .foregroundStyle(NomiColor.ink)
-            .lineLimit(1)
-          Spacer(minLength: NomiSpacing.xs)
-          Text("\(percents[index])%")
-            .nomiTextStyle(.label)
-            .foregroundStyle(NomiColor.ink)
+  private var stackedBar: some View {
+    GeometryReader { proxy in
+      let gaps = CGFloat(max(0, breakdown.rows.count - 1)) * 2
+      let usable = max(0, proxy.size.width - gaps)
+      HStack(spacing: 2) {
+        ForEach(breakdown.rows) { row in
+          Rectangle()
+            .fill(ReportsCategoryFold.colour(for: row.kind))
+            .frame(width: usable * CGFloat(row.share))
         }
-        .accessibilityElement(children: .combine)
       }
     }
+    .frame(height: 14)
+    .clipShape(Capsule())
+    .accessibilityHidden(true)
   }
-}
 
-#Preview("Category breakdown · default") {
-  ReportsCategoryBreakdownCard(slices: [
-    CategorySlice(id: UUID(), name: "Food & Dining", paletteSlot: 0, totalMinor: 25_900_00, share: 0.4),
-    CategorySlice(id: UUID(), name: "Shopping", paletteSlot: 1, totalMinor: 15_500_00, share: 0.24),
-    CategorySlice(id: UUID(), name: "Transport", paletteSlot: 2, totalMinor: 10_300_00, share: 0.16),
-    CategorySlice(id: UUID(), name: "Other", paletteSlot: 3, totalMinor: 13_100_00, share: 0.2),
-  ])
-  .padding(20)
-  .background(NomiColor.ground)
-  .preferredColorScheme(.light)
-}
+  @ViewBuilder
+  private func rowView(_ row: ReportsCategoryFold.Row) -> some View {
+    switch row.kind {
+    case .category:
+      Button {
+        showLedger?(.category(row.id))
+      } label: {
+        HStack(spacing: NomiSpacing.xs) {
+          nameLine(row)
+          Text(verbatim: "\(ReportsCategoryFold.percent(row.share))%")
+            .nomiTextStyle(.caption)
+            .foregroundStyle(NomiColor.inkSecondary)
+          amountText(row)
+        }
+        .frame(minHeight: NomiSpacing.rowMinHeight)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+    case .uncategorised:
+      HStack(spacing: NomiSpacing.xs) {
+        Button {
+          showLedger?(.uncategorized)
+        } label: {
+          nameLine(row)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        Button {
+          openReview?()
+        } label: {
+          NomiTag(String(localized: "Fix \(uncategorizedCount)", bundle: .module), tone: .warning)
+        }
+        .buttonStyle(.plain)
+        Button {
+          showLedger?(.uncategorized)
+        } label: {
+          amountText(row)
+        }
+        .buttonStyle(.plain)
+      }
+      .frame(minHeight: NomiSpacing.rowMinHeight)
+    case .folded:
+      HStack(spacing: NomiSpacing.xs) {
+        nameLine(row)
+        Text(verbatim: "\(ReportsCategoryFold.percent(row.share))%")
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+        amountText(row)
+      }
+      .frame(minHeight: NomiSpacing.rowMinHeight)
+    }
+  }
 
-#Preview("Category breakdown · empty") {
-  ReportsCategoryBreakdownCard(slices: [])
-    .padding(20)
-    .background(NomiColor.ground)
-    .preferredColorScheme(.light)
-}
+  /// The row's dot and name. The name is the category's own, or the localised
+  /// label for the uncategorised and folded rows.
+  private func nameLine(_ row: ReportsCategoryFold.Row) -> some View {
+    HStack(spacing: NomiSpacing.xs) {
+      Circle()
+        .fill(ReportsCategoryFold.colour(for: row.kind))
+        .frame(width: 12, height: 12)
+        .accessibilityHidden(true)
+      nameText(row)
+        .nomiTextStyle(.rowTitle)
+        .foregroundStyle(NomiColor.ink)
+        .lineLimit(1)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
 
-#Preview("Category breakdown · AX3") {
-  ReportsCategoryBreakdownCard(slices: [
-    CategorySlice(id: UUID(), name: "Food & Dining", paletteSlot: 0, totalMinor: 25_900_00, share: 0.4),
-    CategorySlice(id: UUID(), name: "Shopping", paletteSlot: 1, totalMinor: 15_500_00, share: 0.24),
-  ])
-  .padding(20)
-  .background(NomiColor.ground)
-  .environment(\.dynamicTypeSize, .accessibility3)
-  .preferredColorScheme(.light)
+  @ViewBuilder
+  private func nameText(_ row: ReportsCategoryFold.Row) -> some View {
+    switch row.kind {
+    case .category:
+      Text(verbatim: row.categoryName)
+    case .uncategorised:
+      Text("Uncategorised", bundle: .module)
+    case .folded(let count):
+      Text("\(count) more categories", bundle: .module)
+    }
+  }
+
+  private func amountText(_ row: ReportsCategoryFold.Row) -> some View {
+    Text(verbatim: ReportsRupees.whole(minor: row.totalMinor))
+      .nomiTextStyle(.amount)
+      .foregroundStyle(NomiColor.ink)
+      .lineLimit(1)
+      .minimumScaleFactor(0.6)
+      .frame(minWidth: 88, alignment: .trailing)
+  }
 }

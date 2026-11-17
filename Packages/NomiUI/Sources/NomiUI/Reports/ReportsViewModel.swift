@@ -1,71 +1,66 @@
 import Foundation
 import NomiCore
 
-/// Every figure the Reports screen renders, derived once from a period's
-/// `PeriodInsights` plus its trend buckets. Kept as a single `Equatable`
-/// value — not scattered computed properties on the screen — specifically so
-/// "switching basis recomputes every figure on screen" is assertable by
-/// comparing two of these, not by eyeballing a rendered view (design's own
-/// done-when wording).
+/// Every figure the Insights screen renders for one period, derived from its
+/// `PeriodInsights`. Kept as one `Equatable` value so "switching basis
+/// recomputes every figure" is assertable by comparing two of these (R12b).
 struct ReportsViewModel: Equatable {
   let period: InsightPeriod
-  let periodLabel: String
   let debitMinor: Int
   let creditMinor: Int
-  let netMinor: Int
-  let debitDelta: ReportsDelta.Result?
-  let creditDelta: ReportsDelta.Result?
-  let categories: [CategorySlice]
-  let trend: [MonthBucket]
+  let priorDebitMinor: Int?
+  let priorCreditMinor: Int?
+  /// "₹14,855 less than Oct", or "Nothing spent in Oct to compare" when the
+  /// prior period had none. `nil` with no prior period (F2a's copy).
+  let debitComparison: String?
+  let creditComparison: String?
+  let categories: ReportsCategoryFold.Breakdown
+  let uncategorizedCount: Int
   let transactionCount: Int
-  /// "up ₹6,420 vs last period" and its credit twin; `nil` with no prior period.
-  let debitChangeCopy: String?
-  let creditChangeCopy: String?
-  /// Day-of-month debit totals for a calendar-month period; `nil` otherwise.
-  let dailyDebitMinor: [Int]?
   let topMerchants: [MerchantTotal]
 
   static func == (lhs: ReportsViewModel, rhs: ReportsViewModel) -> Bool {
     lhs.period == rhs.period
-      && lhs.periodLabel == rhs.periodLabel
       && lhs.debitMinor == rhs.debitMinor
       && lhs.creditMinor == rhs.creditMinor
-      && lhs.netMinor == rhs.netMinor
-      && lhs.debitDelta == rhs.debitDelta
-      && lhs.creditDelta == rhs.creditDelta
-      && lhs.categories.map(\.id) == rhs.categories.map(\.id)
-      && lhs.categories.map(\.totalMinor) == rhs.categories.map(\.totalMinor)
-      && lhs.trend.map(\.id) == rhs.trend.map(\.id)
+      && lhs.priorDebitMinor == rhs.priorDebitMinor
+      && lhs.priorCreditMinor == rhs.priorCreditMinor
+      && lhs.debitComparison == rhs.debitComparison
+      && lhs.creditComparison == rhs.creditComparison
+      && lhs.categories == rhs.categories
+      && lhs.uncategorizedCount == rhs.uncategorizedCount
       && lhs.transactionCount == rhs.transactionCount
-      && lhs.debitChangeCopy == rhs.debitChangeCopy
-      && lhs.creditChangeCopy == rhs.creditChangeCopy
-      && lhs.dailyDebitMinor == rhs.dailyDebitMinor
       && lhs.topMerchants.map(\.id) == rhs.topMerchants.map(\.id)
       && lhs.topMerchants.map(\.totalMinor) == rhs.topMerchants.map(\.totalMinor)
+      && lhs.topMerchants.map(\.count) == rhs.topMerchants.map(\.count)
   }
 }
 
 enum ReportsViewModelBuilder {
-  static func make(
-    period: InsightPeriod,
-    insights: PeriodInsights,
-    trend: [MonthBucket],
-    calendar: Calendar = .current
-  ) -> ReportsViewModel {
-    ReportsViewModel(
+  /// `calendar` names the prior month. The screen passes the India calendar.
+  static func make(period: InsightPeriod, insights: PeriodInsights, calendar: Calendar) -> ReportsViewModel {
+    let priorLabel = NomiComparisonCopy.priorLabel(period: period, short: true, calendar: calendar)
+    return ReportsViewModel(
       period: period,
-      periodLabel: ReportsPeriod.label(for: period, calendar: calendar),
       debitMinor: insights.debitMinor,
       creditMinor: insights.creditMinor,
-      netMinor: insights.netMinor,
-      debitDelta: ReportsDelta.compute(current: insights.debitMinor, prior: insights.priorDebitMinor),
-      creditDelta: ReportsDelta.compute(current: insights.creditMinor, prior: insights.priorCreditMinor),
-      categories: ReportsCategoryFold.foldToSevenSlots(insights.byCategory),
-      trend: trend,
+      priorDebitMinor: insights.priorDebitMinor,
+      priorCreditMinor: insights.priorCreditMinor,
+      debitComparison: NomiComparisonCopy.line(
+        kind: .spent,
+        currentMinor: insights.debitMinor,
+        priorMinor: insights.priorDebitMinor,
+        priorLabel: priorLabel
+      ),
+      creditComparison: NomiComparisonCopy.line(
+        kind: .income,
+        currentMinor: insights.creditMinor,
+        priorMinor: insights.priorCreditMinor,
+        priorLabel: priorLabel
+      ),
+      categories: ReportsCategoryFold.breakdown(insights.byCategory),
+      uncategorizedCount: insights.uncategorizedCount,
       transactionCount: insights.transactionCount,
-      debitChangeCopy: ReportsPeriod.changeCopy(current: insights.debitMinor, prior: insights.priorDebitMinor),
-      creditChangeCopy: ReportsPeriod.changeCopy(current: insights.creditMinor, prior: insights.priorCreditMinor),
-      dailyDebitMinor: ReportsSpendSeries.dailyDebit(period: period, byDay: insights.byDay, calendar: calendar),
       topMerchants: insights.topMerchants
     )
   }

@@ -109,8 +109,11 @@ enum ReportsPeriod {
       components.month = month
       components.day = 1
       let date = calendar.date(from: components) ?? Date()
+      // Read back in the calendar's own zone, or a zone west of it names the month before.
       let formatter = DateFormatter()
       formatter.locale = Locale(identifier: "en_IN")
+      formatter.calendar = calendar
+      formatter.timeZone = calendar.timeZone
       formatter.dateFormat = "MMMM yyyy"
       return formatter.string(from: date)
     case .financialYear(let startingYear):
@@ -119,6 +122,37 @@ enum ReportsPeriod {
       return "Last \(months) months"
     case .allTime:
       return "All time"
+    }
+  }
+
+  /// The full month name of `date` in `calendar`'s zone: "November".
+  static func monthName(for date: Date, calendar: Calendar) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_IN")
+    formatter.calendar = calendar
+    formatter.timeZone = calendar.timeZone
+    formatter.dateFormat = "MMMM"
+    return formatter.string(from: date)
+  }
+
+  /// The three-letter month for a bar's label, "Sep" (the artboard's form). A
+  /// fixed table, because en_IN's ICU gives "Sept", which the artboard does not use.
+  static func shortMonthName(_ month: Int) -> String {
+    let names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    return names[min(max(month, 1), 12) - 1]
+  }
+
+  /// The period's name for the export button: "November" for a calendar month,
+  /// the label otherwise ("FY 2025–26").
+  static func exportName(for period: InsightPeriod, calendar: Calendar) -> String {
+    switch period {
+    case .month(let year, let month):
+      guard let date = calendar.date(from: DateComponents(year: year, month: month, day: 1)) else {
+        return label(for: period, calendar: calendar)
+      }
+      return monthName(for: date, calendar: calendar)
+    case .financialYear, .trailingMonths, .allTime:
+      return label(for: period, calendar: calendar)
     }
   }
 }
