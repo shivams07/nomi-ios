@@ -313,6 +313,9 @@ public struct DashboardView: View {
   /// The Plan tab action (S1b). Left to spend and "Coming up" open the Plan tab.
   @Environment(\.nomiShowPlan) private var showPlan
 
+  /// The nav row's layout axis (HeroTotalCard.navRowStacks).
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
   public init(
     insightsStore: InsightsStore,
     mailConnectionService: MailConnectionService? = nil,
@@ -415,29 +418,53 @@ public struct DashboardView: View {
   /// apart. The pill's menu holds the basis picker and the recent periods. The
   /// search circle opens Activity with its search field (I-15); it is hidden
   /// while no root has wired `\.nomiShowLedger`.
+  /// At accessibility sizes (HeroTotalCard.navRowStacks) the pill takes a row of its
+  /// own and its title wraps; the circles sit on a trailing row beneath it, so the
+  /// title is not squeezed beside them ("Novemb…" at AX3, Lim PR 232).
   private var navRow: some View {
-    HStack(spacing: 0) {
-      NomiPeriodPill(title: DashboardPeriod.label(for: period), style: .onHero) {
-        periodMenu
-      }
-      Spacer(minLength: 12)
-      HStack(spacing: 8) {
-        if NomiShowLedgerLogic.showsControl(isWired: showLedger != nil), let showLedger {
-          Button {
-            showLedger(.search(""))
-          } label: {
-            NomiHeroIcon(systemName: "magnifyingglass")
+    Group {
+      if HeroTotalCard.navRowStacks(dynamicTypeSize) {
+        VStack(alignment: .leading, spacing: 8) {
+          navPill(wraps: true)
+          HStack(spacing: 8) {
+            Spacer(minLength: 0)
+            navCircles
           }
-          .buttonStyle(.plain)
-          .accessibilityLabel("Search")
         }
-        NavigationLink(value: HomeRoute.settings) {
-          NomiHeroIcon(systemName: "gearshape")
+      } else {
+        HStack(spacing: 0) {
+          navPill(wraps: false)
+          Spacer(minLength: 12)
+          HStack(spacing: 8) {
+            navCircles
+          }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Settings")
       }
     }
+  }
+
+  private func navPill(wraps: Bool) -> some View {
+    NomiPeriodPill(title: DashboardPeriod.label(for: period), style: .onHero, wrapsTitle: wraps) {
+      periodMenu
+    }
+  }
+
+  @ViewBuilder
+  private var navCircles: some View {
+    if NomiShowLedgerLogic.showsControl(isWired: showLedger != nil), let showLedger {
+      Button {
+        showLedger(.search(""))
+      } label: {
+        NomiHeroIcon(systemName: "magnifyingglass")
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Search")
+    }
+    NavigationLink(value: HomeRoute.settings) {
+      NomiHeroIcon(systemName: "gearshape")
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel("Settings")
   }
 
   @ViewBuilder

@@ -145,4 +145,40 @@ final class HeroTotalCardTests: XCTestCase {
     XCTAssertTrue(HeroTotalCard.labelRowStacks(.accessibility1))
     XCTAssertTrue(HeroTotalCard.labelRowStacks(.accessibility3))
   }
+
+  // MARK: - AX3 hero controls: the segmented control and the period pill
+
+  /// At the standard sizes the segments keep their arrows, as on the artboard.
+  /// At accessibility sizes the arrows go, so "Income" has the segment to itself
+  /// and no longer breaks mid-word ("Inco / me", Lim PR 232).
+  func testSegmentShowsIconsOnlyAtStandardSizes() {
+    XCTAssertTrue(HeroTotalCard.segmentShowsIcons(.large))
+    XCTAssertTrue(HeroTotalCard.segmentShowsIcons(.xxxLarge))
+    XCTAssertFalse(HeroTotalCard.segmentShowsIcons(.accessibility1))
+    XCTAssertFalse(HeroTotalCard.segmentShowsIcons(.accessibility3))
+  }
+
+  /// The words and their order never change with size; only the glyphs do.
+  func testSegmentOptionsKeepTitlesAndOrderAtEverySize() {
+    let standard = HeroTotalCard.options(for: .large)
+    XCTAssertEqual(standard.map { $0.title }, ["Spent", "Income"])
+    XCTAssertEqual(standard.map { $0.value }, [.spent, .income])
+    let standardImages: [String?] = standard.map { $0.systemImage }
+    XCTAssertEqual(standardImages, ["arrow.down", "arrow.up"])
+
+    let accessibility = HeroTotalCard.options(for: .accessibility3)
+    XCTAssertEqual(accessibility.map { $0.title }, ["Spent", "Income"])
+    XCTAssertEqual(accessibility.map { $0.value }, [.spent, .income])
+    let accessibilityImages: [String?] = accessibility.map { $0.systemImage }
+    XCTAssertEqual(accessibilityImages, [nil, nil])
+  }
+
+  /// The nav row stacks only at accessibility sizes. At the standard sizes the pill
+  /// and the two circles share one row, as on the artboard.
+  func testNavRowStacksOnlyAtAccessibilitySizes() {
+    XCTAssertFalse(HeroTotalCard.navRowStacks(.large))
+    XCTAssertFalse(HeroTotalCard.navRowStacks(.xxxLarge))
+    XCTAssertTrue(HeroTotalCard.navRowStacks(.accessibility1))
+    XCTAssertTrue(HeroTotalCard.navRowStacks(.accessibility3))
+  }
 }
