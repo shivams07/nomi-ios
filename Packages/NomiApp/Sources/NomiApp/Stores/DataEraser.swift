@@ -182,9 +182,14 @@ final class DataEraser: DataErasing {
 
   /// Bounded by `disconnectTimeout`. The disconnect runs in its own task, and a
   /// timer resumes the caller if it does not return in time. The task is left to
-  /// finish on its own, and nothing waits for it. Its late writes are benign: the
-  /// one it can make after the erase (the unfinished-backfill flag, set to false)
-  /// is the same value the erase writes.
+  /// finish on its own, and nothing waits for it. Its late writes are not only the
+  /// backfill flag. When the mailbox layer's disconnect returns, it removes the
+  /// stored password and publishes `.disconnected`, but only while no connect has
+  /// begun since that disconnect did (`IMAPMailConnectionService`). A mailbox
+  /// connected after this erase keeps its password. The mail stack then clears the
+  /// unfinished-backfill flag, but only if no backfill has started since
+  /// (`CursorPersistingMailConnectionService`). Both guards are tested in
+  /// `IMAPMailDisconnectRaceTests` and `MailDisconnectMarkerTests`.
   private func disconnectMailBestEffort() async {
     let service = mail
     let nanoseconds = UInt64(max(0, disconnectTimeout) * 1_000_000_000)

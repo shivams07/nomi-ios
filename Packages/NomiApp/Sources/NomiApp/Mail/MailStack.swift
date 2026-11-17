@@ -154,14 +154,20 @@ public actor MailStack {
 /// leave the unpersisting service reachable underneath, which is the bug this
 /// type exists to close.
 ///
-/// Not an actor, and it now holds no mutable state of its own at all: the cursor
-/// is `MailSyncEngine`'s and the unfinished-backfill marker is `preferences`'.
+/// Not an actor. The cursor is `MailSyncEngine`'s and the unfinished-backfill
+/// marker is `preferences`'. The one piece of its own state is a count of backfill
+/// starts, which only `disconnect`'s late clear of the marker reads (see there).
 /// An actor here would add a hop to every sync in order to serialise nothing.
 final class CursorPersistingMailConnectionService: MailConnectionService, @unchecked Sendable {
   private let upstream: any MailConnectionService
   private let engine: MailSyncEngine
   private let preferences: any KeyValueStoring
   private let now: @Sendable () -> Date
+
+  /// Advanced by `startBackfill` under `markerLock`, at the moment it sets the
+  /// marker. Guards `disconnect`'s clear, which can run after a newer backfill.
+  private let markerLock = NSLock()
+  private var backfillStarts = 0
 
   init(
     upstream: any MailConnectionService,
@@ -216,9 +222,16 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   /// — that is `IMAPMailConnectionService.disconnect`'s acceptance criterion and
   /// is unaffected. It leaves `history` alone too: the mailbox was connected,
   /// and turning collection off does not make that untrue.
+  ///
+  /// **The clear applies only if no backfill has started since this disconnect
+  /// began.** The erase path abandons a disconnect that has not returned in 10 s,
+  /// so it can return after a new backfill has set the marker. That marker is for
+  /// a session this disconnect does not belong to, and clearing it would hide an
+  /// interrupted scan that is running now.
   func disconnect() async throws {
+    let startsBefore = currentBackfillStarts()
     try await upstream.disconnect()
-    setUnfinishedBackfill(false)
+    clearUnfinishedBackfill(ifNoBackfillStartedSince: startsBefore)
   }
 
   /// The cursor is saved **after** the call whether it threw or not, and that is
@@ -267,7 +280,7 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   @discardableResult
   func startBackfill(months: Int) async throws -> SyncSummary {
     let wasUnfinished = backfillIsUnfinished
-    setUnfinishedBackfill(true)
+    markBackfillStarted()
     do {
       let summary = try await upstream.startBackfill(months: months)
       await persistCursor()
@@ -308,6 +321,30 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
 
   private func setUnfinishedBackfill(_ value: Bool) {
     preferences.set(value, forKey: PreferenceKey.mailBackfillUnfinished)
+  }
+
+  private func currentBackfillStarts() -> Int {
+    markerLock.lock()
+    defer { markerLock.unlock() }
+    return backfillStarts
+  }
+
+  /// Counts the start and sets the marker in one critical section, so a
+  /// disconnect that checks the count cannot see the new count without also
+  /// seeing the marker it guards.
+  private func markBackfillStarted() {
+    markerLock.lock()
+    defer { markerLock.unlock() }
+    backfillStarts += 1
+    setUnfinishedBackfill(true)
+  }
+
+  /// Clears the marker unless a backfill has started since `startsBefore`.
+  private func clearUnfinishedBackfill(ifNoBackfillStartedSince startsBefore: Int) {
+    markerLock.lock()
+    defer { markerLock.unlock() }
+    guard backfillStarts == startsBefore else { return }
+    setUnfinishedBackfill(false)
   }
 
   /// Called only on success. A failed sync leaves the earlier value standing,

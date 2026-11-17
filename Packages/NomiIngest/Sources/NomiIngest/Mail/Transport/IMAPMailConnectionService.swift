@@ -27,6 +27,14 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
   private var connectedAddress: String?
   private var lastSync: Date?
 
+  /// Advanced by every `connect` and every `disconnect`, under `lock`. Each of
+  /// them takes the value it advanced to and applies its credential write and
+  /// its state change only while that value is still the newest. A connect or a
+  /// disconnect that has been overtaken publishes nothing, so the newest one owns
+  /// the stored password and the connection state, and nothing that began earlier
+  /// can change either. See `connect` and `disconnect`.
+  private var generation = 0
+
   public init(
     fetcher: any MailFetching,
     engine: MailSyncEngine,
@@ -78,27 +86,23 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
   /// was down, silently erased the saved password. A transport failure says
   /// nothing about the password, so the stored one stays. See
   /// `meansThePasswordIsBad`.
+  ///
+  /// **A connect that a later connect or disconnect overtakes publishes nothing
+  /// and throws `CancellationError`.** Its password is not saved, or is not
+  /// removed, and no state is published, because the newer call owns both. The
+  /// rejected-password removal is the same rule: a password the server refused
+  /// is removed only if nothing newer has been saved since. See `generation`.
   public func connect(_ credentials: IMAPCredentials) async throws {
-    stateContinuation.yield(.connecting)
+    let (session, saveFailure) = beginConnect(saving: credentials)
 
     do {
-      try self.credentials.save(credentials)
+      if let saveFailure { throw saveFailure }
       try await fetcher.connect(credentials)
     } catch {
-      if Self.meansThePasswordIsBad(error) {
-        do {
-          try self.credentials.delete()
-        } catch {
-          NomiLog.sync.error("rejected credential delete failed: \(NomiLog.describe(error), privacy: .public)")
-        }
-      }
-      setConnected(nil)
-      stateContinuation.yield(.failed(mailError(from: error)))
-      throw error
+      throw finishFailedConnect(error, session: session)
     }
 
-    setConnected(credentials.address)
-    stateContinuation.yield(.connected(address: credentials.address, lastSync: currentLastSync()))
+    try finishConnect(credentials, session: session)
   }
 
   /// Whether a password is saved on this device. A Keychain that cannot be read
@@ -137,13 +141,20 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
   /// It does remove the stored password, because leaving a live mailbox
   /// credential in the Keychain for an account the user just disconnected is not
   /// what "disconnect" means to anyone.
+  ///
+  /// **Only for the connection it was started for.** The network side can take
+  /// longer than the caller will wait (the erase path gives up after 10 s and
+  /// carries on), so this can return after a newer `connect` has begun. If one
+  /// has, the stored password belongs to that connection, and the state does
+  /// too, so this leaves both alone. The check and the delete happen under
+  /// `lock`, and `connect` advances `generation` under the same lock before it
+  /// saves, so a delete that sees the old generation runs before any save that
+  /// belongs to the new one.
   public func disconnect() async throws {
-    defer {
-      setConnected(nil)
-      stateContinuation.yield(.disconnected)
-    }
+    let session = beginDisconnect()
+    defer { finishDisconnect(session: session) }
     try await fetcher.disconnect()
-    try credentials.delete()
+    try deleteCredential(session: session)
   }
 
   // MARK: - Sync
@@ -294,10 +305,79 @@ public final class IMAPMailConnectionService: MailConnectionService, @unchecked 
     return connectedAddress
   }
 
-  private func setConnected(_ address: String?) {
+  // MARK: - Generation (see `connect` and `disconnect`)
+
+  /// Starts a connect: advances `generation`, publishes `.connecting`, and saves
+  /// the password, all under `lock`. The save happens inside the same critical
+  /// section as the advance, so a disconnect cannot overtake a connect between
+  /// the two. A save that throws is returned rather than thrown, so the caller
+  /// still holds the session to report the failure against.
+  private func beginConnect(saving credentials: IMAPCredentials) -> (Int, Error?) {
     lock.lock()
-    connectedAddress = address
-    lock.unlock()
+    defer { lock.unlock() }
+    generation += 1
+    stateContinuation.yield(.connecting)
+    do {
+      try self.credentials.save(credentials)
+      return (generation, nil)
+    } catch {
+      return (generation, error)
+    }
+  }
+
+  /// Publishes a successful connect, unless it has been overtaken.
+  private func finishConnect(_ credentials: IMAPCredentials, session: Int) throws {
+    lock.lock()
+    defer { lock.unlock() }
+    guard generation == session else { throw CancellationError() }
+    connectedAddress = credentials.address
+    stateContinuation.yield(.connected(address: credentials.address, lastSync: lastSync))
+  }
+
+  /// Settles a failed connect and returns the error to throw. An overtaken
+  /// connect returns `CancellationError` and changes nothing. A current one
+  /// removes the password only if the server rejected it, and publishes `.failed`.
+  private func finishFailedConnect(_ error: Error, session: Int) -> Error {
+    lock.lock()
+    defer { lock.unlock() }
+    guard generation == session else { return CancellationError() }
+    if Self.meansThePasswordIsBad(error) {
+      do {
+        try self.credentials.delete()
+      } catch {
+        NomiLog.sync.error("rejected credential delete failed: \(NomiLog.describe(error), privacy: .public)")
+      }
+    }
+    connectedAddress = nil
+    stateContinuation.yield(.failed(mailError(from: error)))
+    return error
+  }
+
+  /// Starts a disconnect: advances `generation`, so any connect that began before
+  /// it is overtaken, and returns the generation it took.
+  private func beginDisconnect() -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    generation += 1
+    return generation
+  }
+
+  /// Removes the stored password, unless the disconnect has been overtaken.
+  private func deleteCredential(session: Int) throws {
+    lock.lock()
+    defer { lock.unlock() }
+    guard generation == session else { return }
+    try credentials.delete()
+  }
+
+  /// Publishes `.disconnected`, unless the disconnect has been overtaken. Runs on
+  /// the throwing path too, as the `defer` always did.
+  private func finishDisconnect(session: Int) {
+    lock.lock()
+    defer { lock.unlock() }
+    guard generation == session else { return }
+    connectedAddress = nil
+    stateContinuation.yield(.disconnected)
   }
 
   private func recordSync(at date: Date) {
