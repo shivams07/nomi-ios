@@ -17,6 +17,12 @@ struct NomiTagTests {
     #expect(NomiContrast.ratio(NomiHex.warning, NomiHex.warningTint) >= 4.5)
   }
 
+  /// Truncation is the default; wrapping is an explicit opt-in.
+  @Test func tagTruncatesToOneLineUnlessWrapsIsSet() {
+    #expect(NomiTag("90% of budget used").wrapsText == false)
+    #expect(NomiTag("90% of budget used", tone: .warning, wrapsText: true).wrapsText == true)
+  }
+
   @Test func tonesUseTheirTokens() {
     #expect(NomiTag.Tone.neutral.fillHex == NomiHex.iconTile)
     #expect(NomiTag.Tone.neutral.textHex == NomiHex.navy)
