@@ -7,6 +7,7 @@ import SwiftUI
 /// that resolves this route are `ui-root-wiring`'s (M6) job — until that
 /// merges, `NavigationLink(value:)` sites built from this render disabled on
 /// device, which is why every preview below wraps in a `NavigationStack`.
+/// S1b no longer links to either; X1 deletes the enum.
 public enum DashboardRoute: Hashable, Sendable {
   case budgets
   case subscriptions
@@ -35,10 +36,10 @@ enum DashboardWiring {
     return .remaining(totals)
   }
 
-  /// `RecentTransactionsCard` shows five rows and trims to five itself; the
-  /// dashboard used to hand it `transactions(in: .allTime)`, so every write
-  /// materialised the whole ledger to render those five (F2). This is here
-  /// rather than inline in `body` so a test can hold it to that - `body`
+  /// The read takes five recent rows, and `RecentTransactionsCard` shows four of
+  /// them (S1b). The dashboard used to hand it `transactions(in: .allTime)`, so
+  /// every write materialised the whole ledger to render those rows (F2). This is
+  /// here rather than inline in `body` so a test can hold it to that - `body`
   /// itself is not reachable from `swift test`.
   static let recentTransactionLimit = 5
 
@@ -70,9 +71,10 @@ enum DashboardWiring {
     return (year, month)
   }
 
-  /// M9: `NeedsYouCard` is tappable exactly when it has something to show —
-  /// the same condition its own `isCaughtUp` uses, mirrored here as a pure
-  /// rule so a test can hold it without going through the view.
+  /// M9: the Needs-you card is tappable exactly when it has something to show.
+  /// S1b retired that card on Home, replacing it with the Review card, which opens
+  /// through `nomiOpenReview`. These rules stay here until X1, because
+  /// `DashboardWiringTests` holds them.
   static func needsYouIsTappable(needsReviewCount: Int, uncategorizedCount: Int) -> Bool {
     needsReviewCount > 0 || uncategorizedCount > 0
   }
@@ -142,6 +144,38 @@ enum DashboardWiring {
     )
   }
 
+  // MARK: - S1b: the Review card's counts and the Recent rows' account names
+
+  /// The Review card's counts (S1b, ruling 1). The queue is `reviewQueue()`, and
+  /// the rows are this calendar month's in NomiCalendar.india, which are the same
+  /// inputs `ReviewQueueModel.load` reads, so the card and the queue agree. A
+  /// failed read is `.failed`, and the card draws nothing rather than a wrong number.
+  @MainActor
+  static func reviewCount(from store: TransactionStore, insightsStore: InsightsStore, now: Date) -> Load<ReviewCounts> {
+    do {
+      let calendar = NomiCalendar.india
+      let flagged = try store.reviewQueue()
+      let parts = calendar.dateComponents([.year, .month], from: now)
+      let monthRows = try insightsStore.transactions(in: .month(year: parts.year ?? 0, month: parts.month ?? 0))
+      let items = ReviewQueueLogic.items(flagged: flagged, monthRows: monthRows, now: now, calendar: calendar)
+      return .loaded(ReviewCounts(items: items))
+    } catch {
+      return .failed
+    }
+  }
+
+  /// Account names by id, for the Recent rows. Archived accounts are included, so
+  /// a row from one still reads its name, not "Unassigned".
+  @MainActor
+  static func accountNames(from store: InsightsStore) -> Load<[UUID: String]> {
+    do {
+      let accounts = try store.accountSummaries(includeArchived: true)
+      return .loaded(Dictionary(accounts.map { ($0.id, $0.displayName) }, uniquingKeysWith: { first, _ in first }))
+    } catch {
+      return .failed
+    }
+  }
+
   // MARK: - F3: the rest of the dashboard's reads, pulled out of `body` for
   // the same reason `recentTransactions(from:)` above already is — `swift
   // test` cannot reach `DashboardView.body` or its private computed
@@ -204,13 +238,13 @@ private struct HomeLoadKey: Hashable {
   let retryToken: Int
 }
 
-/// The home screen (U9; v5 `nomi-ui-refresh` §Home, M2; HM1 `home-hero`).
-/// The approved Main artboard: a gradient hero with the period pill and
-/// Settings gear, the spent figure, one delta chip and the sparkline, over a
-/// flat sheet with the Needs-you card, remaining budget, Recent and Upcoming.
-/// Reads only through `InsightsStore` and `MailConnectionService` — never
-/// `NomiIngest`, which `NomiUI` cannot import at all (enforced by the package
-/// graph, not by discipline).
+/// The home screen (U9; v5 `nomi-ui-refresh` §Home, M2; HM1 `home-hero`; S1b
+/// `home-cards`). The Moss Home artboard: a gradient hero with the period pill and
+/// Settings gear, the spent figure, one delta chip and the sparkline, over a flat
+/// sheet with Left to spend, the Review card, "Where it went", Coming up, Recent,
+/// and the mail line. Reads only through `InsightsStore`, `TransactionStore` and
+/// `MailConnectionService`, never `NomiIngest`, which `NomiUI` cannot import at all
+/// (enforced by the package graph, not by discipline).
 public struct DashboardView: View {
   public let insightsStore: InsightsStore
   public let mailConnectionService: MailConnectionService?
@@ -220,6 +254,11 @@ public struct DashboardView: View {
   /// module's zero-items case: never constructed, not hidden.
   public let recurringStore: RecurringInsightsStore?
 
+  /// S1b ruling 1. The Review card's read (`reviewQueue()`). `nil` — the default, so
+  /// every existing call site keeps compiling — means the card is absent, never
+  /// constructed. RootView passes the app's store.
+  public let transactionStore: TransactionStore?
+
   /// Never read. `InsightsCache` lives in `NomiApp`, which `NomiUI` cannot
   /// depend on, so the composition root republishes its generation as this
   /// plain `Int` and passes a new value in on every write. SwiftUI
@@ -228,17 +267,13 @@ public struct DashboardView: View {
   /// not a coincidence of it being unused. Do not delete it for looking dead.
   public let refreshToken: Int
 
-  /// M9. `nil` — the default, so every existing preview/test call site keeps
-  /// compiling — leaves `NeedsYouCard` non-interactive, same "absent
-  /// affordance, not a disabled one" rule the rest of this file already
-  /// applies to modules. `root-banner-and-review-route` is what actually
-  /// supplies this from `RootView`.
+  /// Retained for RootView's call. S1b's Review card opens the queue through
+  /// `\.nomiOpenReview`, so this closure is no longer read. X1 removes it with the
+  /// rest of the Needs-you wiring.
   public let onOpenReviewQueue: (() -> Void)?
 
-  /// G1. Opens the Ledger's Uncategorized chip. The Needs-you card calls it
-  /// when its only count is uncategorized rows (review count zero), because
-  /// the Needs review chip is empty in that state. `nil` leaves the card
-  /// non-interactive in that state, as `onOpenReviewQueue` does.
+  /// Retained for RootView's call, and unread for the same reason as
+  /// `onOpenReviewQueue`. X1 removes it.
   public let onOpenUncategorized: (() -> Void)?
 
   /// v5 (`nomi-ui-refresh`, M2). `nil` — same default-so-every-call-site-
@@ -267,14 +302,22 @@ public struct DashboardView: View {
   /// the second first-run card's button is hidden while it is nil.
   @Environment(\.nomiAddTransaction) private var addTransaction
 
-  /// The "show the Ledger" action (FU-1). `nil` until RootView sets it, and the
-  /// Recent header's "See all" is hidden while it is nil.
+  /// The "show the Ledger" action (FU-1). `nil` until RootView sets it. The search
+  /// circle and each Ledger tile are hidden or inert while it is nil.
   @Environment(\.nomiShowLedger) private var showLedger
+
+  /// The Review queue action (S4, S1b). `nil` until RootView sets it, and the
+  /// Review card's button is hidden while it is nil.
+  @Environment(\.nomiOpenReview) private var openReview
+
+  /// The Plan tab action (S1b). Left to spend and "Coming up" open the Plan tab.
+  @Environment(\.nomiShowPlan) private var showPlan
 
   public init(
     insightsStore: InsightsStore,
     mailConnectionService: MailConnectionService? = nil,
     recurringStore: RecurringInsightsStore? = nil,
+    transactionStore: TransactionStore? = nil,
     refreshToken: Int = 0,
     onOpenReviewQueue: (() -> Void)? = nil,
     onOpenUncategorized: (() -> Void)? = nil,
@@ -285,13 +328,18 @@ public struct DashboardView: View {
     self.insightsStore = insightsStore
     self.mailConnectionService = mailConnectionService
     self.recurringStore = recurringStore
+    self.transactionStore = transactionStore
     self.refreshToken = refreshToken
     self.onOpenReviewQueue = onOpenReviewQueue
     self.onOpenUncategorized = onOpenUncategorized
     self.onSelectTransaction = onSelectTransaction
     _basis = State(initialValue: basis)
     _anchor = State(initialValue: anchor)
-    _model = State(initialValue: HomeModel(insightsStore: insightsStore, recurringStore: recurringStore))
+    _model = State(initialValue: HomeModel(
+      insightsStore: insightsStore,
+      recurringStore: recurringStore,
+      transactionStore: transactionStore
+    ))
   }
 
   private var period: InsightPeriod {
@@ -340,23 +388,22 @@ public struct DashboardView: View {
     }
   }
 
-  /// The sheet in its state. Nothing is drawn until the transactions, the period
-  /// and the review count have loaded, since the first-run rule needs the first.
+  /// The sheet in its state. Nothing is drawn until the transactions and the period
+  /// have loaded, since the first-run rule needs the first. The other reads each
+  /// draw their own card, so a late or failed one does not hold the sheet.
   @ViewBuilder
   private var sheetContent: some View {
     if let transactions = model.recentTransactions,
-       let insights = model.insights,
-       let needsReview = model.needsReview {
-      switch HomeLayout.mode(mail: mailState, hasAnyTransaction: hasAnyTransaction(transactions)) {
+       let insights = model.insights {
+      switch HomeLayout.mode(
+        mail: mailState,
+        history: mailHistory,
+        hasAnyTransaction: hasAnyTransaction(transactions)
+      ) {
       case .firstRun:
         firstRunCards
       case .normal(let showAttention):
-        homeSheet(
-          showAttention: showAttention,
-          insights: insights,
-          needsReview: needsReview,
-          transactions: transactions
-        )
+        homeSheet(showAttention: showAttention, insights: insights, transactions: transactions)
       }
     }
   }
@@ -429,93 +476,134 @@ public struct DashboardView: View {
 
   // MARK: - Sheet
 
-  /// The Home sheet in its normal state, in artboard order: the sync banner
-  /// (only when mail needs attention), Needs you, Remaining budget, Recent and
-  /// Upcoming. Every module is its own read, so each failure is its own card
-  /// with its own retry.
+  /// The Home sheet in its normal state. The order is `HomeLayout.sections`: the
+  /// attention row when it applies, Left to spend, the Review card, Where it went,
+  /// Coming up, Recent, and the mail line. Every module is its own read, so each
+  /// failure is its own card with its own retry.
   private func homeSheet(
     showAttention: Bool,
     insights: DashboardWiring.Load<PeriodInsights>,
-    needsReview: DashboardWiring.Load<Int>,
     transactions: DashboardWiring.Load<[NomiCore.Transaction]>
   ) -> some View {
-    let categories: [CategoryBadge]
-    if case .loaded(let loaded) = insights {
-      categories = loaded.categories
-    } else {
-      categories = []
-    }
-    return VStack(alignment: .leading, spacing: NomiSpacing.cardGap) {
-      if showAttention {
-        syncBanner
+    VStack(alignment: .leading, spacing: NomiSpacing.cardGap) {
+      ForEach(HomeLayout.sections(showAttention: showAttention), id: \.self) { section in
+        sectionView(section, insights: insights, transactions: transactions)
       }
-      needsYouModule(insights, needsReview: needsReview)
-      budgetModule
-      recentModule(transactions, categories: categories)
-      upcomingModule
     }
   }
 
-  /// The mail banner, shown only while mail is disconnected or failed. Tapping
-  /// it opens Connect mail.
-  private var syncBanner: some View {
+  @ViewBuilder
+  private func sectionView(
+    _ section: HomeLayout.Section,
+    insights: DashboardWiring.Load<PeriodInsights>,
+    transactions: DashboardWiring.Load<[NomiCore.Transaction]>
+  ) -> some View {
+    switch section {
+    case .attention:
+      attentionLink
+    case .leftToSpend:
+      budgetModule
+    case .review:
+      reviewModule
+    case .whereItWent:
+      whereItWentModule(insights)
+    case .comingUp:
+      upcomingModule
+    case .recent:
+      recentModule(transactions, badges: RecentBadges.lookup(Self.categories(from: insights)))
+    case .mailStatus:
+      mailStatusLine
+    }
+  }
+
+  /// The category badges, from the insights read. Empty when that read failed.
+  private static func categories(from insights: DashboardWiring.Load<PeriodInsights>) -> [CategoryBadge] {
+    if case .loaded(let loaded) = insights {
+      return loaded.categories
+    }
+    return []
+  }
+
+  /// The monthly budgets the grid's captions read. Empty on a financial-year basis,
+  /// and while the budgets read has not finished.
+  private var budgetItems: [BudgetProgress] {
+    if case .monthly(.loaded(let items))? = model.budgets {
+      return items
+    }
+    return []
+  }
+
+  /// The mail row that links to Connect mail. It is used both at the top of the
+  /// sheet, for failed and for disconnected-after-connecting, and at the bottom,
+  /// for a user who never connected (S1b step 7). The whole row is the target, not
+  /// only the chevron (S12b follow-up, S1b ruling 3).
+  private var attentionLink: some View {
     NavigationLink(value: HomeRoute.connectMail) {
       SyncStatusRow(state: mailState, history: mailHistory)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
   }
 
+  /// The line at the bottom of the sheet (S1b step 7): an envelope and "Mail checked
+  /// <relative>" when mail is connected and healthy. A user who never connected gets
+  /// the attention row instead. Failed and disconnected-after-connecting show at the
+  /// top, so there is no line here for them.
   @ViewBuilder
-  private func needsYouModule(
-    _ result: DashboardWiring.Load<PeriodInsights>,
-    needsReview: DashboardWiring.Load<Int>
-  ) -> some View {
-    if let inputs = needsYouInputs(result, needsReview: needsReview) {
-      NeedsYouCard(
-        needsReviewCount: inputs.needsReviewCount,
-        uncategorizedCount: inputs.uncategorizedCount,
-        onTap: needsYouTap(for: inputs)
-      )
-    } else {
-      // The Needs-you counts come from the period read and the review read. A
-      // failure in either is not a zero, so without a card here a failed read
-      // would leave no retry on screen.
-      NomiLoadFailedCard(message: "Spending didn’t load.") { retryToken += 1 }
+  private var mailStatusLine: some View {
+    switch SyncStatusRow.bottomLine(for: mailState, history: mailHistory) {
+    case .healthy(let text)?:
+      HStack(spacing: NomiSpacing.xs) {
+        Image(systemName: "envelope")
+          .resizable()
+          .scaledToFit()
+          .frame(width: 16, height: 16)
+          .foregroundStyle(NomiColor.navy)
+          .accessibilityHidden(true)
+        Text(text)
+          .nomiTextStyle(.caption)
+          .foregroundStyle(NomiColor.inkSecondary)
+      }
+      .frame(maxWidth: .infinity, alignment: .center)
+      .padding(.vertical, NomiSpacing.xxs)
+    case .attention?:
+      attentionLink
+    case nil:
+      EmptyView()
     }
   }
 
-  /// The card's counts when both reads loaded, otherwise `nil`. D26 takes the
-  /// review count from the all-time read and the rest from the period.
-  private func needsYouInputs(
-    _ result: DashboardWiring.Load<PeriodInsights>,
-    needsReview: DashboardWiring.Load<Int>
-  ) -> DashboardWiring.NeedsYouInputs? {
-    guard case .loaded(let insights) = result, case .loaded(let reviewAllTime) = needsReview else {
-      return nil
-    }
-    return DashboardWiring.needsYouInputs(period: insights, needsReviewAllTime: reviewAllTime)
+  /// The action Left to spend and "Coming up" run. `nil` when no root has wired
+  /// `\.nomiShowPlan`, so the card is drawn without a tap.
+  private var planTap: (() -> Void)? {
+    guard let showPlan else { return nil }
+    return { showPlan() }
   }
 
-  /// The Needs-you tap for these counts (G1): review opens the review queue,
-  /// uncategorized-only opens the Uncategorized chip, and a card with nothing
-  /// to show has no tap.
-  private func needsYouTap(for inputs: DashboardWiring.NeedsYouInputs) -> (() -> Void)? {
-    DashboardWiring.needsYouHandler(
-      needsReviewCount: inputs.needsReviewCount,
-      uncategorizedCount: inputs.uncategorizedCount,
-      reviewQueue: onOpenReviewQueue,
-      uncategorized: onOpenUncategorized
-    )
+  /// The action the Review card runs. `nil` hides its button.
+  private var reviewTap: (() -> Void)? {
+    guard let openReview else { return nil }
+    return { openReview() }
+  }
+
+  /// The action the grid's tiles run, to open the Ledger filtered to a category.
+  /// `nil` draws the tiles as reads.
+  private var ledgerOpen: ((ActivityRequest) -> Void)? {
+    guard let showLedger else { return nil }
+    return { request in showLedger(request) }
   }
 
   @ViewBuilder
   private var budgetModule: some View {
     switch model.budgets {
     case .monthly(.loaded(let items))?:
-      NavigationLink(value: DashboardRoute.budgets) {
-        RemainingBudgetCard(state: DashboardWiring.budgetModule(items), referenceDate: anchor)
-      }
-      .buttonStyle(.plain)
+      RemainingBudgetCard(
+        state: DashboardWiring.budgetModule(items),
+        categoryCount: items.count,
+        referenceDate: anchor,
+        onTap: planTap
+      )
     case .monthly(.failed)?:
       NomiLoadFailedCard(message: "Budgets didn’t load.") { retryToken += 1 }
     case .notMonthly?:
@@ -527,6 +615,30 @@ public struct DashboardView: View {
     case nil:
       // Not loaded yet: the module is drawn once its read has finished.
       EmptyView()
+    }
+  }
+
+  /// The Review card (S1b step 3). It is absent until its read has loaded, when no
+  /// transaction store is wired, when the read failed, and when the queue is empty.
+  @ViewBuilder
+  private var reviewModule: some View {
+    if case .loaded(.loaded(let counts))? = model.review, counts.total > 0 {
+      NeedsYouCard(counts: counts, onReview: reviewTap)
+    }
+  }
+
+  /// "Where it went" (S1b step 4). The top categories by spend, drawn from the
+  /// period's insights. A failed read gets its own retry card.
+  @ViewBuilder
+  private func whereItWentModule(_ insights: DashboardWiring.Load<PeriodInsights>) -> some View {
+    switch insights {
+    case .loaded(let loaded):
+      CategoryGridCard(
+        tiles: CategoryGridLogic.tiles(slices: loaded.byCategory, budgets: budgetItems),
+        onOpen: ledgerOpen
+      )
+    case .failed:
+      NomiLoadFailedCard(message: "Spending didn’t load.") { retryToken += 1 }
     }
   }
 
@@ -561,17 +673,27 @@ public struct DashboardView: View {
   @ViewBuilder
   private func recentModule(
     _ result: DashboardWiring.Load<[NomiCore.Transaction]>,
-    categories: [CategoryBadge]
+    badges: [UUID: CategoryBadge]
   ) -> some View {
     VStack(alignment: .leading, spacing: 0) {
       recentHeader
       switch result {
       case .loaded(let transactions):
-        RecentTransactionsCard(
-          transactions: transactions,
-          badges: RecentBadges.lookup(categories),
-          onSelect: onSelectTransaction
-        )
+        // The rows' account names come from their own read. A failed names read
+        // would label every row "Unassigned", so it gets its own retry instead.
+        switch model.accountNames {
+        case .loaded(let names)?:
+          RecentTransactionsCard(
+            transactions: transactions,
+            badges: badges,
+            accountNames: names,
+            onSelect: onSelectTransaction
+          )
+        case .failed?:
+          NomiLoadFailedCard(message: "Recent transactions didn’t load.") { retryToken += 1 }
+        case nil:
+          EmptyView()
+        }
       case .failed:
         NomiLoadFailedCard(message: "Recent transactions didn’t load.") { retryToken += 1 }
       }
@@ -584,10 +706,7 @@ public struct DashboardView: View {
   private var upcomingModule: some View {
     switch model.upcoming {
     case .loaded(.loaded(let series))?:
-      NavigationLink(value: DashboardRoute.subscriptions) {
-        UpcomingCard(series: series)
-      }
-      .buttonStyle(.plain)
+      UpcomingCard(series: series, onSeeAll: planTap)
     case .loaded(.failed)?:
       NomiLoadFailedCard(message: "Upcoming didn’t load.") { retryToken += 1 }
     case .absent?, nil:
@@ -686,6 +805,7 @@ extension DashboardView: Equatable {
     lhs.insightsStore === rhs.insightsStore
       && lhs.mailConnectionService === rhs.mailConnectionService
       && lhs.recurringStore === rhs.recurringStore
+      && lhs.transactionStore === rhs.transactionStore
       && lhs.refreshToken == rhs.refreshToken
   }
 }
@@ -693,7 +813,11 @@ extension DashboardView: Equatable {
 #Preview("Dashboard · default") {
   NavigationStack {
     NomiTabShell {
-      DashboardView(insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService())
+      DashboardView(
+        insightsStore: FakeInsightsStore(),
+        mailConnectionService: FakeMailConnectionService(),
+        transactionStore: FakeTransactionStore()
+      )
     }
   }
   .preferredColorScheme(.light)
@@ -702,7 +826,11 @@ extension DashboardView: Equatable {
 #Preview("Dashboard · accessibility 3") {
   NavigationStack {
     NomiTabShell {
-      DashboardView(insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService())
+      DashboardView(
+        insightsStore: FakeInsightsStore(),
+        mailConnectionService: FakeMailConnectionService(),
+        transactionStore: FakeTransactionStore()
+      )
     }
   }
   .environment(\.dynamicTypeSize, .accessibility3)
@@ -721,24 +849,13 @@ extension DashboardView: Equatable {
   .preferredColorScheme(.light)
 }
 
-#Preview("Dashboard · needs-you card tappable") {
-  NavigationStack {
-    NomiTabShell {
-      DashboardView(
-        insightsStore: FakeInsightsStore(), mailConnectionService: FakeMailConnectionService(),
-        onOpenReviewQueue: {}
-      )
-    }
-  }
-  .preferredColorScheme(.light)
-}
-
 #Preview("Dashboard · thin state, under 10 transactions") {
   NavigationStack {
     NomiTabShell {
       DashboardView(
         insightsStore: FakeInsightsStore(transactions: Array(PreviewData.transactions.prefix(6)), budgets: []),
-        mailConnectionService: FakeMailConnectionService()
+        mailConnectionService: FakeMailConnectionService(),
+        transactionStore: FakeTransactionStore()
       )
     }
   }
