@@ -599,6 +599,73 @@ final class DataEraserTests: XCTestCase {
     withExtendedLifetime(reopenedContainer) {}
   }
 
+  /// The cache drop and the gate reopen are production defaults too. The fixtures
+  /// pass spies for both, and `testDefaultDeleteAndSaveEmptyARealStore` builds a
+  /// cache that nothing reads back, so a no-op default for either one passes every
+  /// test in this file. This erase takes both defaults on an on-disk store. The
+  /// cache is filled first, so an empty cache afterwards is what the erase did.
+  func testDefaultCacheDropAndGateReopenAfterARealErase() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("DataEraserDefaultSeams-\(UUID().uuidString)", isDirectory: true)
+    let storeDirectory = root.appendingPathComponent("store", isDirectory: true)
+    let tempDirectory = root.appendingPathComponent("temp", isDirectory: true)
+    try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let suiteName = "DataEraserDefaultSeams.\(UUID().uuidString)"
+    let suite = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { suite.removePersistentDomain(forName: suiteName) }
+
+    let container = try NomiModelContainer.makeLocal(at: storeDirectory.appendingPathComponent("default.store"))
+
+    let trace = EraseTrace()
+    let credentials = TracingCredentials(trace: trace)
+    let preferences = TracingPreferences(trace: trace)
+    let mailStack = MailStack(
+      fetcher: EraseFetcher(disconnect: .succeeds, trace: trace),
+      pipeline: SilentPipeline(),
+      credentials: credentials,
+      preferences: preferences
+    )
+    let pipeline = IngestPipeline(store: EmptyPipelineStore())
+    let sync = AppSyncCoordinator(
+      mail: mailStack, pipeline: pipeline, submitter: TracingSubmitter(trace: trace))
+    preferences.set(true, forKey: PreferenceKey.hasCompletedFirstRun)
+    let firstRun = FirstRunGate(store: preferences)
+    let service = await mailStack.service
+
+    let cache = InsightsCache()
+    _ = cache.value(for: .insights(.allTime)) { 1 }
+    XCTAssertFalse(cache.isEmpty, "the cache holds a value before the erase")
+    let before = cache.generation
+    let writes = WriteCoordinator(cache: cache)
+
+    let eraser = DataEraser(
+      container: container,
+      storageMode: { .cloudKit },
+      sync: sync,
+      pipeline: pipeline,
+      mail: service,
+      credentials: credentials,
+      notifications: TracingNotifications(trace: trace),
+      preferences: preferences,
+      standardDefaults: suite,
+      firstRun: firstRun,
+      writes: writes,
+      storeDirectory: storeDirectory,
+      tempDirectory: tempDirectory,
+      disconnectTimeout: 5
+    )
+
+    try await withTestTimeout(seconds: 30) { [eraser] in try await eraser.eraseEverything() }
+
+    XCTAssertGreaterThan(cache.generation, before, "the default cache drop invalidated the cache")
+    XCTAssertTrue(cache.isEmpty, "the default cache drop left nothing held")
+    let erasing = await sync.isErasing
+    XCTAssertFalse(erasing, "the default gate reopen ended the erase")
+    withExtendedLifetime(container) {}
+  }
+
   // MARK: - Fixtures
 
   private func makeFixture(
