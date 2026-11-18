@@ -57,9 +57,10 @@ enum BackfillActions {
   }
 }
 
-/// The app's first impression (U7 notes: "the hero screen"), redrawn as the
-/// full-bleed Backfill moment (DEC-09, `Backfill.dc.html`, `BackfillDone.dc.html`).
-/// A progress ring, a count, and one control per state: never two white primaries.
+/// The app's first impression, drawn as the full-bleed Backfill moment (I-9
+/// gradient, artboard "First scan", `Backfill.dc.html`). The address being read,
+/// the found count, a 10 pt bar, the caption and up to three glass rows per
+/// account; one control per state: never two white primaries.
 ///
 /// Cancelling pauses the scan (Resume picks it up); it is not destructive, so it
 /// is glass, not red. Leaving with "Done" while a scan runs does not stop it:
@@ -74,8 +75,16 @@ public struct BackfillScreen: View {
   public var onFinish: (() -> Void)?
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  /// The scan's state and actions (T2b). See `BackfillRun`.
+  @Environment(\.nomiInsightsStore) private var insightsStore
+  /// The scan's state and actions (T2b). See `BackfillRun`. It holds the service
+  /// the screen reads progress and the address from, so there is one source.
   @State private var run: BackfillRun
+  /// The address the mail is read from, for "Scanning <address>". Nil until the
+  /// connection reports it.
+  @State private var address: String?
+  /// The account rows and the Need-a-look row, read from the insights store on
+  /// each progress tick. Empty when there is no store, which hides them.
+  @State private var rows: [(title: String, detail: String)] = []
 
   public init(
     mailConnectionService: MailConnectionService,
@@ -89,35 +98,58 @@ public struct BackfillScreen: View {
   }
 
   public var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 0) {
-        navRow
-          .frame(height: NomiSpacing.navRowHeight)
-        heading
-          .padding(.top, 14)
-        ring
-          .padding(.top, 104)
-        countLine
-          .padding(.top, 24)
-        detail
-        controlsView
-          .padding(.top, 28)
+    GeometryReader { proxy in
+      ScrollView {
+        VStack(alignment: .leading, spacing: 0) {
+          navRow
+            .frame(height: NomiSpacing.navRowHeight)
+          scanningLine
+            .padding(.top, 14)
+          countLine
+            .padding(.top, 24)
+          if run.phase != .cancelled {
+            foundLine
+              .padding(.top, NomiSpacing.xxs)
+          }
+          bar
+            .padding(.top, 26)
+          caption
+            .padding(.top, NomiSpacing.xs)
+          accountRows
+            .padding(.top, 30)
+          Spacer(minLength: NomiSpacing.lg)
+          controlsView
+            .padding(.top, NomiSpacing.md)
+        }
+        .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .topLeading)
+        .padding(.horizontal, NomiSpacing.screenGutter)
+        .padding(.bottom, NomiSpacing.lg)
       }
-      .frame(maxWidth: .infinity)
-      .padding(.horizontal, NomiSpacing.screenGutter)
-      .padding(.bottom, NomiSpacing.lg)
     }
     .background(NomiHeroGradient.moment.ignoresSafeArea())
     .task {
       // Display only. Completion is whatever `startBackfill` returned, not a
       // guess made from the last tick: the stream is a progress bar, and the
       // scan itself is the thing that knows when it finished and what it found.
-      for await update in mailConnectionService.backfillProgress {
+      // Read from `run.service`, the same service the scan runs on (Lim, PR 199).
+      for await update in run.service.backfillProgress {
         run.receive(update)
+        refreshRows()
+      }
+    }
+    .task {
+      for await state in run.service.state {
+        if case .connected(let connected, _) = state {
+          address = connected
+        }
       }
     }
     .onAppear {
       run.appear()
+      refreshRows()
+    }
+    .onChange(of: run.phase) { _, _ in
+      refreshRows()
     }
     #if os(iOS)
     .toolbar(.hidden, for: .navigationBar)
@@ -142,67 +174,110 @@ public struct BackfillScreen: View {
     }
   }
 
-  private var heading: some View {
-    Text(titleText)
-      .nomiTextStyle(.heroTitle)
+  /// "Scanning <address>" at 14 Medium. The phase copy replaces it once the scan
+  /// stops, and the address is left out until the connection has named it.
+  private var scanningLine: some View {
+    Text(scanningText)
+      .nomiTextStyle(.chip)
       .foregroundStyle(NomiColor.heroText)
       .frame(maxWidth: .infinity, alignment: .leading)
       .fixedSize(horizontal: false, vertical: true)
   }
 
-  private var ring: some View {
-    BackfillRing(
-      fraction: ringFraction,
-      symbol: ringSymbol,
-      symbolColor: NomiColor.heroText,
-      animated: !reduceMotion
-    )
-    .accessibilityHidden(true)
-  }
-
+  /// The found count at 46 SemiBold, formatted with the locale's grouping.
   private var countLine: some View {
-    Text(countText)
-      .nomiTextStyle(.rowTitle)
+    Text(found, format: .number)
+      .nomiTextStyle(.heroAmount)
       .foregroundStyle(NomiColor.heroText)
-      .multilineTextAlignment(.center)
-      .frame(maxWidth: .infinity)
-      .contentTransition(.numericText(value: Double(countValue.found)))
-      .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: countValue.found)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .contentTransition(.numericText(value: Double(found)))
+      .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: found)
   }
 
+  private var foundLine: some View {
+    Text(BackfillDisplay.foundLine(created: found))
+      .nomiTextStyle(.body)
+      .foregroundStyle(NomiColor.heroText)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .fixedSize(horizontal: false, vertical: true)
+  }
+
+  /// 10 pt: the scanned share of the total. The completed frame is full.
+  private var bar: some View {
+    BackfillBar(fraction: BackfillMath.fraction(shownProgress), animated: !reduceMotion)
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel("Scanned")
+      .accessibilityValue("\(shownProgress.scanned) of \(shownProgress.total)")
+  }
+
+  /// The caption under the bar: what the scan is reading, or why it stopped, or
+  /// what the finished scan matched.
   @ViewBuilder
-  private var detail: some View {
+  private var caption: some View {
     switch run.phase {
+    case .notStarted, .running:
+      Text(BackfillDisplay.captionLine(months: months))
+        .nomiTextStyle(.subhead)
+        .foregroundStyle(NomiColor.heroTextSecondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+    case .cancelled:
+      Text(BackfillLifecycle.cancelledText(created: run.progress.created))
+        .nomiTextStyle(.subhead)
+        .foregroundStyle(NomiColor.heroTextSecondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+    case .failed:
+      Text("Something went wrong while reading your mail. Try again.")
+        .nomiTextStyle(.subhead)
+        .foregroundStyle(NomiColor.heroTextSecondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
     case .completed:
       if let completionSummary = run.completionSummary {
-        VStack(spacing: NomiSpacing.xxs) {
+        VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
           ForEach(BackfillCompletionSummary.detailLines(for: completionSummary), id: \.self) { line in
             Text(line)
               .nomiTextStyle(.caption)
               .foregroundStyle(NomiColor.heroTextSecondary)
-              .multilineTextAlignment(.center)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .fixedSize(horizontal: false, vertical: true)
           }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, NomiSpacing.xs)
       }
-    case .cancelled:
-      Text(BackfillLifecycle.cancelledText(created: run.progress.created))
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.heroTextSecondary)
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
-        .padding(.top, NomiSpacing.xs)
-    case .failed:
-      Text("Something went wrong while reading your mail. Try again.")
-        .nomiTextStyle(.caption)
-        .foregroundStyle(NomiColor.heroTextSecondary)
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
-        .padding(.top, NomiSpacing.xs)
-    case .notStarted, .running:
-      EmptyView()
     }
+  }
+
+  /// Up to three glass rows, one per account and then the Need-a-look row. Hidden
+  /// when there are none, which includes the case where the store is nil.
+  @ViewBuilder
+  private var accountRows: some View {
+    if !rows.isEmpty {
+      VStack(spacing: NomiSpacing.xs) {
+        ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+          accountRow(title: row.title, detail: row.detail)
+        }
+      }
+    }
+  }
+
+  private func accountRow(title: String, detail: String) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: NomiSpacing.xs) {
+      Text(title)
+        .nomiTextStyle(.chipSelected)
+        .foregroundStyle(NomiColor.heroText)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+      Text(detail)
+        .nomiTextStyle(.subhead)
+        .foregroundStyle(NomiColor.heroTextSecondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .padding(.horizontal, NomiSpacing.sm)
+    .padding(.vertical, 12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .nomiGlass(.heroControl, in: RoundedRectangle(cornerRadius: NomiRadius.inset, style: .continuous))
+    .accessibilityElement(children: .combine)
   }
 
   private var controlsView: some View {
@@ -223,7 +298,7 @@ public struct BackfillScreen: View {
     Button {
       if run.perform(control) == .finish { onFinish?() }
     } label: {
-      Text(control.title)
+      Text(title(for: control))
         .frame(maxWidth: .infinity)
     }
     .buttonStyle(NomiHeroButtonStyle(control.kind))
@@ -232,74 +307,72 @@ public struct BackfillScreen: View {
 
   // MARK: - Copy and values per phase
 
-  private var titleText: String {
+  /// The completed frame's white primary reads "Continue to Nomi" (artboard
+  /// "First scan"). It is the same `.done` control, so only its label changes here.
+  private func title(for control: BackfillControl) -> String {
+    if run.phase == .completed, control == .done {
+      return "Continue to Nomi"
+    }
+    return control.title
+  }
+
+  private var scanningText: String {
     switch run.phase {
-    case .notStarted, .running: return "Getting your transactions"
+    case .notStarted, .running:
+      guard let address else { return "Scanning your mail" }
+      return "Scanning \(address)"
     case .cancelled: return "Scan paused"
     case .completed: return "All caught up"
     case .failed: return "Couldn’t finish the scan"
     }
   }
 
-  private var ringFraction: Double {
-    switch run.phase {
-    case .completed: return 1
-    case .notStarted, .running, .cancelled, .failed: return BackfillMath.fraction(run.progress)
-    }
-  }
-
-  private var ringSymbol: String {
-    switch run.phase {
-    case .completed: return "checkmark"
-    case .failed: return "exclamationmark.circle"
-    case .notStarted, .running, .cancelled: return "envelope"
-    }
-  }
-
-  /// The count line reads from the completed summary once the scan returns, so
-  /// the Done frame matches what the scan reported, not the last stream tick.
-  private var countValue: (scanned: Int, total: Int, found: Int) {
+  /// The count and the bar read from the completed summary once the scan returns,
+  /// so the Done frame matches what the scan reported, not the last stream tick.
+  private var shownProgress: BackfillProgress {
     if let completionSummary = run.completionSummary {
-      return (completionSummary.scanned, completionSummary.scanned, completionSummary.created)
+      return BackfillProgress(
+        scanned: completionSummary.scanned,
+        total: completionSummary.scanned,
+        created: completionSummary.created
+      )
     }
-    return (run.progress.scanned, run.progress.total, run.progress.created)
+    return run.progress
   }
 
-  private var countText: String {
-    let value = countValue
-    return "\(value.scanned) of \(value.total) scanned — \(value.found) found"
-  }
+  private var found: Int { shownProgress.created }
 
+  /// Reads the account rows and the review count from the insights store. A read
+  /// that throws counts as nothing to show, so the screen never fails on it.
+  private func refreshRows() {
+    guard let insightsStore else {
+      rows = []
+      return
+    }
+    let summaries = (try? insightsStore.accountSummaries(includeArchived: false)) ?? []
+    let needsReview = (try? insightsStore.needsReviewCountAllTime()) ?? 0
+    rows = BackfillDisplay.rows(summaries: summaries, needsReview: needsReview)
+  }
 }
 
-/// The progress ring: a white track at 22% and a white arc, 12 pt stroke, with
-/// a glyph in the centre (`Backfill.dc.html` ring, `BackfillDone.dc.html`).
-/// Built here, not `NomiRingGauge`, which is navy and is for the light grounds.
-private struct BackfillRing: View {
+/// The scan's bar: a 10 pt capsule, white at 28% under a white fill (artboard
+/// "First scan"). The fill is the scanned share, clamped to the track.
+private struct BackfillBar: View {
   let fraction: Double
-  let symbol: String
-  let symbolColor: Color
   let animated: Bool
 
   var body: some View {
-    ZStack {
-      Circle()
-        .stroke(NomiColor.heroText.opacity(0.22), lineWidth: 12)
-        .padding(6)
-      Circle()
-        .trim(from: 0, to: min(max(fraction, 0), 1))
-        .stroke(NomiColor.heroText, style: StrokeStyle(lineWidth: 12, lineCap: .round))
-        .rotationEffect(.degrees(-90))
-        .padding(6)
-        .animation(animated ? .easeOut(duration: 0.3) : nil, value: fraction)
-      Image(systemName: symbol)
-        .resizable()
-        .scaledToFit()
-        .frame(width: 56, height: 56)
-        .foregroundStyle(symbolColor)
+    GeometryReader { proxy in
+      ZStack(alignment: .leading) {
+        Capsule()
+          .fill(NomiColor.heroText.opacity(0.28))
+        Capsule()
+          .fill(NomiColor.heroText)
+          .frame(width: proxy.size.width * min(max(fraction, 0), 1))
+      }
     }
-    .frame(width: 200, height: 200)
-    .frame(maxWidth: .infinity)
+    .frame(height: 10)
+    .animation(animated ? .easeOut(duration: 0.3) : nil, value: fraction)
   }
 }
 
@@ -309,10 +382,21 @@ private struct BackfillRing: View {
   ))
 }
 
+#Preview("Backfill — scanning with accounts") {
+  BackfillScreen(mailConnectionService: FixedBackfillFakeMailConnectionService(
+    progress: BackfillProgress(scanned: 340, total: 1200, created: 214)
+  ))
+  .environment(\.nomiInsightsStore, FakeInsightsStore())
+}
+
 #Preview("Backfill — complete") {
   BackfillScreen(mailConnectionService: FixedBackfillFakeMailConnectionService(
     progress: BackfillProgress(scanned: 1200, total: 1200, created: 91)
   ))
+}
+
+#Preview("Backfill — failed") {
+  BackfillScreen(mailConnectionService: AlwaysFailingMailConnectionService())
 }
 
 private struct BackfillStartFailure: Error {}
@@ -336,8 +420,4 @@ private actor AlwaysFailingMailConnectionService: MailConnectionService {
   @discardableResult func startBackfill(months: Int) async throws -> SyncSummary {
     throw BackfillStartFailure()
   }
-}
-
-#Preview("Backfill — failed") {
-  BackfillScreen(mailConnectionService: AlwaysFailingMailConnectionService())
 }
