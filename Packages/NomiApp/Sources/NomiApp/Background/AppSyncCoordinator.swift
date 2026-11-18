@@ -119,10 +119,12 @@ public actor AppSyncCoordinator {
   // MARK: - Erase (B5a)
 
   /// Closes the gate, cancels the foreground and remote-change tasks, and waits
-  /// until nothing can write behind it. The wait covers mail syncs and backfills
-  /// started from any screen, not only the work this coordinator starts: the mail
-  /// gate closes in the same step, and `MailWorkGate` counts what is still
-  /// running. Then cancels the pending background requests. The gate stays
+  /// until nothing can write behind it. The mail gate closes in the same step and
+  /// cancels any running backfill (a First scan), which stops at its next batch
+  /// boundary, so a scan does not hold the erase up. Mail syncs from any screen are
+  /// waited for, not cancelled, as is the coordinator's own work. A sync that does
+  /// not stop by the deadline makes the erase `busy`. Then cancels the pending
+  /// background requests. The gate stays
   /// closed on success until `endErase(_:)` is called with the returned token. A
   /// second call while one erase holds the gate throws `busy` and changes nothing.
   ///
@@ -146,8 +148,10 @@ public actor AppSyncCoordinator {
     eraseGate.set(true)
     // Closed in the same synchronous step as the gate above, so no sync or backfill
     // from any screen can start between the two. Whatever started before this
-    // point is counted in `mail.workGate`, and the loop below waits for it.
-    mail.workGate.close()
+    // point is counted in `mail.workGate`, and the loop below waits for it. Running
+    // backfills are cancelled here, so a First scan does not hold the erase up.
+    // Plain syncs are not cancelled.
+    mail.workGate.closeForErase()
 
     let inFlight = [foregroundTask, remoteChangeTask].compactMap { $0 }
     inFlight.forEach { $0.cancel() }

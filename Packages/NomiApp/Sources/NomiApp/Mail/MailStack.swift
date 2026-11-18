@@ -162,9 +162,11 @@ public actor MailStack {
 /// and whether it came from the coordinator or from a screen directly. So this is
 /// the one place the erase can see all of them.
 ///
-/// `enter` and `exit` bracket the whole call, including the cursor and marker
-/// writes after the upstream returns. `isBusy` therefore reads false only once
-/// nothing is left to write. The gate is closed and reopened only by
+/// `enter`/`exit` (syncs) and `enterBackfill`/`exitBackfill` (backfills) bracket
+/// the whole call, including the cursor and marker writes after the upstream
+/// returns. `isBusy` therefore reads false only once nothing is left to write.
+/// Erase closes the gate with `closeForErase`, which also cancels running
+/// backfills. Syncs are waited for. The gate is reopened only by
 /// `AppSyncCoordinator`, in the same steps that take and give up its own gate.
 ///
 /// A plain lock, not an actor. The coordinator reads `isBusy` in the same
@@ -173,8 +175,10 @@ final class MailWorkGate: @unchecked Sendable {
   private let lock = NSLock()
   private var closed = false
   private var running = 0
+  /// How to cancel each backfill that is running, by the id `enterBackfill` returned.
+  private var backfillCancels: [UUID: () -> Void] = [:]
 
-  /// Counts one sync or backfill in, or refuses it. A refused call throws
+  /// Counts one sync in, or refuses it. A refused call throws
   /// `CancellationError`, which is what a connect overtaken by a newer call
   /// throws, and it changes nothing.
   func enter() throws {
@@ -191,10 +195,48 @@ final class MailWorkGate: @unchecked Sendable {
     running -= 1
   }
 
-  func close() {
+  /// Counts one backfill in, or refuses it. Its own entry point, not `enter`,
+  /// because a backfill also registers how to cancel it (`registerCancel`).
+  func enterBackfill() throws -> UUID {
     lock.lock()
     defer { lock.unlock() }
+    guard !closed else { throw CancellationError() }
+    running += 1
+    return UUID()
+  }
+
+  /// Gives the backfill counted by `enterBackfill` a way to be cancelled. If an
+  /// erase closed the gate between the two calls, cancels it now, so the erase
+  /// cannot be overtaken by a backfill that registered late.
+  func registerCancel(for backfill: UUID, _ cancel: @escaping () -> Void) {
+    lock.lock()
+    if closed {
+      lock.unlock()
+      cancel()
+      return
+    }
+    backfillCancels[backfill] = cancel
+    lock.unlock()
+  }
+
+  /// Counts one backfill out and drops its cancel handle. Paired with
+  /// `enterBackfill` by a `defer`.
+  func exitBackfill(_ backfill: UUID) {
+    lock.lock()
+    defer { lock.unlock() }
+    running -= 1
+    backfillCancels[backfill] = nil
+  }
+
+  /// Erase's entry point. Closes the gate to new work, then cancels every
+  /// backfill that is running (a First scan stops at its next batch boundary,
+  /// R5a). Plain syncs are not cancelled: erase waits for them, as before.
+  func closeForErase() {
+    lock.lock()
     closed = true
+    let cancels = Array(backfillCancels.values)
+    lock.unlock()
+    cancels.forEach { $0() }
   }
 
   func reopen() {
@@ -361,16 +403,17 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   /// What it still does not do is tell a pause from an interruption; that
   /// needs a contract this unit does not have.
   ///
-  /// Counted by `workGate` and refused while an erase holds the gate, as
-  /// `syncNow` is. A refused backfill sets no marker.
+  /// Counted by `workGate` and refused while an erase holds the gate. A refused
+  /// backfill sets no marker. An erase does not wait for a running backfill: it
+  /// cancels it, through `runUpstreamBackfill`, and waits only for the stop.
   @discardableResult
   func startBackfill(months: Int) async throws -> SyncSummary {
-    try workGate.enter()
-    defer { workGate.exit() }
+    let backfill = try workGate.enterBackfill()
+    defer { workGate.exitBackfill(backfill) }
     let wasUnfinished = backfillIsUnfinished
     markBackfillStarted()
     do {
-      let summary = try await upstream.startBackfill(months: months)
+      let summary = try await runUpstreamBackfill(months: months, backfill: backfill)
       await persistCursor()
       setUnfinishedBackfill(false)
       recordLastSync()
@@ -392,6 +435,22 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
     } catch {
       await persistCursor()
       throw error
+    }
+  }
+
+  /// The upstream backfill, in its own task, so the gate can cancel it while an
+  /// erase waits. The caller's cancellation is forwarded to that task, which keeps
+  /// the behaviour of a direct await. The task is not left behind: the caller
+  /// waits for its value, so the gate's `exitBackfill` runs only after it has
+  /// finished.
+  private func runUpstreamBackfill(months: Int, backfill: UUID) async throws -> SyncSummary {
+    let upstream = self.upstream
+    let work = Task { try await upstream.startBackfill(months: months) }
+    workGate.registerCancel(for: backfill) { work.cancel() }
+    return try await withTaskCancellationHandler {
+      try await work.value
+    } onCancel: {
+      work.cancel()
     }
   }
 
