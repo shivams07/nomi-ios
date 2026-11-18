@@ -65,8 +65,10 @@ public actor AppSyncCoordinator {
   private let eraseGate = Flag()
   /// The one erase that holds the gate, if any. Only its token ends the gate.
   private var eraseHolder: EraseToken?
-  /// Reconciles, syncs, backfills and background runs in flight. `beginErase`
-  /// waits for it to reach zero, so an erase never overlaps one of them.
+  /// Reconciles, syncs, backfills and background runs this coordinator started.
+  /// `beginErase` waits for it to reach zero, so an erase never overlaps one of
+  /// them. Mail syncs and backfills started from a screen are counted by
+  /// `MailStack.workGate`, which `beginErase` waits on as well.
   private var activeWork = 0
   private(set) var foregroundTask: Task<Void, Never>?
   private(set) var remoteChangeTask: Task<Void, Never>?
@@ -116,8 +118,13 @@ public actor AppSyncCoordinator {
 
   // MARK: - Erase (B5a)
 
-  /// Closes the gate, stops what is running, and waits until nothing can write
-  /// behind it. Then cancels the pending background requests. The gate stays
+  /// Closes the gate, cancels the foreground and remote-change tasks, and waits
+  /// until nothing can write behind it. The mail gate closes in the same step and
+  /// cancels any running backfill (a First scan), which stops at its next batch
+  /// boundary, so a scan does not hold the erase up. Mail syncs from any screen are
+  /// waited for, not cancelled, as is the coordinator's own work. A sync that does
+  /// not stop by the deadline makes the erase `busy`. Then cancels the pending
+  /// background requests. The gate stays
   /// closed on success until `endErase(_:)` is called with the returned token. A
   /// second call while one erase holds the gate throws `busy` and changes nothing.
   ///
@@ -139,6 +146,12 @@ public actor AppSyncCoordinator {
     let token = EraseToken(id: UUID())
     eraseHolder = token
     eraseGate.set(true)
+    // Closed in the same synchronous step as the gate above, so no sync or backfill
+    // from any screen can start between the two. Whatever started before this
+    // point is counted in `mail.workGate`, and the loop below waits for it. Running
+    // backfills are cancelled here, so a First scan does not hold the erase up.
+    // Plain syncs are not cancelled.
+    mail.workGate.closeForErase()
 
     let inFlight = [foregroundTask, remoteChangeTask].compactMap { $0 }
     inFlight.forEach { $0.cancel() }
@@ -152,7 +165,7 @@ public actor AppSyncCoordinator {
     }
 
     var waited: TimeInterval = 0
-    while !joined.isSet || activeWork > 0 {
+    while !joined.isSet || activeWork > 0 || mail.workGate.isBusy {
       guard waited < timeout else {
         releaseErase(token)
         throw CoordinatorEraseError.busy
@@ -178,11 +191,13 @@ public actor AppSyncCoordinator {
     releaseErase(token)
   }
 
-  /// Gives the gate back, but only to the holder. Every exit from an erase goes through here.
+  /// Gives the gate back, but only to the holder. Every exit from an erase goes through here,
+  /// so the mail gate reopens on the busy and cancelled paths as well as on success.
   private func releaseErase(_ token: EraseToken) {
     guard eraseHolder == token else { return }
     eraseHolder = nil
     eraseGate.set(false)
+    mail.workGate.reopen()
   }
 
   /// Whether an erase currently holds the gate. Test visibility only.

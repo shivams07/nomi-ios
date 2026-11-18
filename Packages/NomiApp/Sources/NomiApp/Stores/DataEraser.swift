@@ -108,7 +108,9 @@ final class DataEraser: DataErasing {
       throw EraseError.unavailable(reason: reason)
     }
 
-    // b. Close the gate. A sync still running at the deadline means nothing was erased.
+    // b. Close the gate. That covers the coordinator's own work and every mail sync or
+    // backfill from any screen (`MailWorkGate`), and each one has returned by the time
+    // this step is past. Work still running at the deadline means nothing was erased.
     let token: EraseToken
     do {
       token = try await sync.beginErase()
