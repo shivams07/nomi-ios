@@ -79,8 +79,11 @@ public struct NomiHeroScaffold<NavRow: View, Hero: View, Sheet: View>: View {
   /// block's measured height without any state.
   private func heroBlock(safeTop: CGFloat) -> some View {
     VStack(spacing: 0) {
+      // A minimum, not a fixed height: the Home nav row grows at accessibility sizes
+      // when its period title wraps and its circles stack (HeroTotalCard.navRowStacks).
+      // Every row that fits in one line is still exactly navRowHeight.
       navRow
-        .frame(height: NomiSpacing.navRowHeight)
+        .frame(minHeight: NomiSpacing.navRowHeight)
         .padding(.horizontal, NomiSpacing.screenGutter)
       hero
         .padding(.horizontal, NomiSpacing.screenGutter)

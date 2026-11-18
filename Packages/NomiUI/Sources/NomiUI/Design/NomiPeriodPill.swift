@@ -14,11 +14,21 @@ public struct NomiPeriodPill<MenuContent: View>: View {
 
   public let title: String
   public let style: Style
+  /// `false` (the default, every existing call site) keeps the title on one line.
+  /// `true` lets the title wrap onto as many lines as it needs, so no word is cut.
+  /// The Home hero sets it at accessibility sizes (HeroTotalCard.navRowStacks).
+  public let wrapsTitle: Bool
   public let menu: MenuContent
 
-  public init(title: String, style: Style, @ViewBuilder menu: () -> MenuContent) {
+  public init(
+    title: String,
+    style: Style,
+    wrapsTitle: Bool = false,
+    @ViewBuilder menu: () -> MenuContent
+  ) {
     self.title = title
     self.style = style
+    self.wrapsTitle = wrapsTitle
     self.menu = menu()
   }
 
@@ -36,8 +46,7 @@ public struct NomiPeriodPill<MenuContent: View>: View {
       menu
     } label: {
       HStack(spacing: 6) {
-        Text(title)
-          .nomiTextStyle(.rowTitle)
+        titleText
         Image(systemName: "chevron.down")
           .resizable()
           .scaledToFit()
@@ -52,7 +61,25 @@ public struct NomiPeriodPill<MenuContent: View>: View {
       }
       .contentShape(Capsule())
     }
+    // A wrapped title needs the label's full height. A Menu's label is otherwise
+    // given its single-line height, so the second line falls outside the capsule
+    // (PR 233, Lim, AX5). Off for every other caller, so their layout is unchanged.
+    .fixedSize(horizontal: false, vertical: wrapsTitle)
     .accessibilityLabel("Choose period, \(title)")
+  }
+
+  @ViewBuilder
+  private var titleText: some View {
+    if wrapsTitle {
+      Text(title)
+        .nomiTextStyle(.rowTitle)
+        .lineLimit(nil)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+    } else {
+      Text(title)
+        .nomiTextStyle(.rowTitle)
+    }
   }
 
   @ViewBuilder

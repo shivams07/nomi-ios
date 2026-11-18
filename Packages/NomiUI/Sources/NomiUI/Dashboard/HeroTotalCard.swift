@@ -107,11 +107,28 @@ struct HeroTotalCard: View {
     }
   }
 
-  private static var options: [(value: NomiComparisonCopy.Kind, title: String, systemImage: String?)] {
-    [
-      (value: .spent, title: "Spent", systemImage: "arrow.down"),
-      (value: .income, title: "Income", systemImage: "arrow.up"),
+  /// The Spent or Income control. At accessibility sizes the arrow glyphs go:
+  /// they take the width the words need, and at AX3 "Income" broke mid-word
+  /// ("Inco / me"). The words stay; only the decoration drops.
+  static func options(for size: DynamicTypeSize) -> [(value: NomiComparisonCopy.Kind, title: String, systemImage: String?)] {
+    let showsIcons = segmentShowsIcons(size)
+    return [
+      (value: .spent, title: "Spent", systemImage: showsIcons ? "arrow.down" : nil),
+      (value: .income, title: "Income", systemImage: showsIcons ? "arrow.up" : nil),
     ]
+  }
+
+  /// Whether the segments draw their arrow glyphs. Standard sizes keep them, as on
+  /// the artboard; accessibility sizes drop them so each word has the whole segment.
+  static func segmentShowsIcons(_ size: DynamicTypeSize) -> Bool {
+    !size.isAccessibilitySize
+  }
+
+  /// Whether the nav row stacks: at accessibility sizes the period pill takes a row
+  /// of its own, so its title wraps onto lines instead of truncating ("Novemb…"),
+  /// and the Search and Settings circles move to a trailing row beneath it.
+  static func navRowStacks(_ size: DynamicTypeSize) -> Bool {
+    size.isAccessibilitySize
   }
 
   private var targetMinor: Int {
@@ -121,7 +138,7 @@ struct HeroTotalCard: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      NomiSegmented(Self.options, selection: $kind, style: .onHero)
+      NomiSegmented(Self.options(for: dynamicTypeSize), selection: $kind, style: .onHero)
         .padding(.top, 6)
       switch figures {
       case .loaded(let insights):
