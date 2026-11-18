@@ -35,6 +35,11 @@ public actor MailStack {
   /// forwards to it rather than reimplementing anything.
   public let service: BroadcastingMailConnectionService
 
+  /// Admits or refuses every sync and backfill, from any screen. Erase closes it
+  /// and waits for what is running (`AppSyncCoordinator.beginErase`). Read
+  /// synchronously there, which is why it is `nonisolated`. See `MailWorkGate`.
+  nonisolated let workGate: MailWorkGate
+
   private let persisting: CursorPersistingMailConnectionService
 
   /// `bindings` is what closes C4's loop on the ingest side: the extractor asks
@@ -78,10 +83,14 @@ public actor MailStack {
       now: now
     )
 
+    let workGate = MailWorkGate()
+    self.workGate = workGate
+
     let persisting = CursorPersistingMailConnectionService(
       upstream: connectionService,
       engine: engine,
       preferences: preferences,
+      workGate: workGate,
       now: now
     )
     self.persisting = persisting
@@ -146,6 +155,69 @@ public actor MailStack {
   }
 }
 
+/// Counts the syncs and backfills inside `CursorPersistingMailConnectionService`
+/// and refuses new ones once an erase has closed it.
+///
+/// Every sync and backfill goes through that wrapper, whichever screen started it
+/// and whether it came from the coordinator or from a screen directly. So this is
+/// the one place the erase can see all of them.
+///
+/// `enter` and `exit` bracket the whole call, including the cursor and marker
+/// writes after the upstream returns. `isBusy` therefore reads false only once
+/// nothing is left to write. The gate is closed and reopened only by
+/// `AppSyncCoordinator`, in the same steps that take and give up its own gate.
+///
+/// A plain lock, not an actor. The coordinator reads `isBusy` in the same
+/// synchronous step that closes its own gate, so nothing can slip between the two.
+final class MailWorkGate: @unchecked Sendable {
+  private let lock = NSLock()
+  private var closed = false
+  private var running = 0
+
+  /// Counts one sync or backfill in, or refuses it. A refused call throws
+  /// `CancellationError`, which is what a connect overtaken by a newer call
+  /// throws, and it changes nothing.
+  func enter() throws {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !closed else { throw CancellationError() }
+    running += 1
+  }
+
+  /// Counts one out. Paired with `enter` by a `defer`, so it runs on every exit.
+  func exit() {
+    lock.lock()
+    defer { lock.unlock() }
+    running -= 1
+  }
+
+  func close() {
+    lock.lock()
+    defer { lock.unlock() }
+    closed = true
+  }
+
+  func reopen() {
+    lock.lock()
+    defer { lock.unlock() }
+    closed = false
+  }
+
+  /// Whether any sync or backfill is still inside its call.
+  var isBusy: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return running > 0
+  }
+
+  /// Whether an erase has closed the gate. Test visibility only.
+  var isClosed: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return closed
+  }
+}
+
 /// Forwards to the real connection service and writes the engine's cursor down
 /// afterwards, so that persisting it is not something a caller has to remember.
 ///
@@ -162,6 +234,7 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   private let upstream: any MailConnectionService
   private let engine: MailSyncEngine
   private let preferences: any KeyValueStoring
+  private let workGate: MailWorkGate
   private let now: @Sendable () -> Date
 
   /// Advanced by `startBackfill` under `markerLock`, at the moment it sets the
@@ -169,15 +242,19 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   private let markerLock = NSLock()
   private var backfillStarts = 0
 
+  /// `workGate` defaults to a gate of its own, so a test that builds this wrapper
+  /// directly needs no change. `MailStack` passes the one erase closes.
   init(
     upstream: any MailConnectionService,
     engine: MailSyncEngine,
     preferences: any KeyValueStoring,
+    workGate: MailWorkGate = MailWorkGate(),
     now: @escaping @Sendable () -> Date = { Date() }
   ) {
     self.upstream = upstream
     self.engine = engine
     self.preferences = preferences
+    self.workGate = workGate
     self.now = now
   }
 
@@ -245,8 +322,14 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   /// detached task that outlived the call: `syncNow()` returned, and the write
   /// landed at some later unordered moment. Nothing ever waited for it — not the
   /// caller, and not a test.
+  ///
+  /// Counted by `workGate` for the whole call, including the writes after the
+  /// upstream returns, so an erase that waits on the gate waits for those too.
+  /// Refused with `CancellationError` while an erase holds the gate.
   @discardableResult
   func syncNow() async throws -> SyncSummary {
+    try workGate.enter()
+    defer { workGate.exit() }
     do {
       let summary = try await upstream.syncNow()
       await persistCursor()
@@ -277,8 +360,13 @@ final class CursorPersistingMailConnectionService: MailConnectionService, @unche
   /// fetch), so pressing Cancel no longer keeps fetching in the background.
   /// What it still does not do is tell a pause from an interruption; that
   /// needs a contract this unit does not have.
+  ///
+  /// Counted by `workGate` and refused while an erase holds the gate, as
+  /// `syncNow` is. A refused backfill sets no marker.
   @discardableResult
   func startBackfill(months: Int) async throws -> SyncSummary {
+    try workGate.enter()
+    defer { workGate.exit() }
     let wasUnfinished = backfillIsUnfinished
     markBackfillStarted()
     do {
