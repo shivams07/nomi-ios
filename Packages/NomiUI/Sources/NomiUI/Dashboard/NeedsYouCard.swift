@@ -35,44 +35,78 @@ struct NeedsYouCard: View {
   /// Opens the Review queue. `nil` hides the button, and the card stays a read.
   let onReview: (() -> Void)?
 
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+  /// At accessibility sizes the Review button moves under the copy, at the leading
+  /// edge, so the copy has the card's width and its words wrap instead of being
+  /// squeezed beside the button. At the standard sizes the button shares the row,
+  /// as on main.
+  static func reviewButtonStacks(_ size: DynamicTypeSize) -> Bool {
+    size.isAccessibilitySize
+  }
+
   var body: some View {
     if counts.total > 0 {
       DashboardCard {
-        HStack(alignment: .center, spacing: 12) {
-          Image(systemName: "checkmark.circle")
-            .resizable()
-            .scaledToFit()
-            .frame(width: 20, height: 20)
-            .foregroundStyle(NomiColor.card)
-            .frame(width: 40, height: 40)
-            .background(Circle().fill(NomiColor.navy))
-            .accessibilityHidden(true)
-          VStack(alignment: .leading, spacing: 2) {
-            Text(ReviewCountsText.title(total: counts.total))
-              .nomiTextStyle(.rowTitle)
-              .foregroundStyle(NomiColor.ink)
-              .fixedSize(horizontal: false, vertical: true)
-            if let caption = ReviewCountsText.caption(uncategorised: counts.uncategorised, unsure: counts.unsure) {
-              Text(caption)
-                .nomiTextStyle(.footnote)
-                .foregroundStyle(NomiColor.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+        if Self.reviewButtonStacks(dynamicTypeSize) {
+          VStack(alignment: .leading, spacing: NomiSpacing.xs) {
+            HStack(alignment: .center, spacing: 12) {
+              iconTile
+              copyColumn
+            }
+            if let onReview {
+              reviewButton(onReview)
             }
           }
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .accessibilityElement(children: .combine)
-          if let onReview {
-            Button(action: onReview) {
-              Text("Review", bundle: .module)
-                .padding(.horizontal, NomiSpacing.sm)
+        } else {
+          HStack(alignment: .center, spacing: 12) {
+            iconTile
+            copyColumn
+            if let onReview {
+              reviewButton(onReview)
             }
-            .buttonStyle(NomiPrimaryButtonStyle(height: 36))
-            .fixedSize()
           }
+          .frame(minHeight: NomiSpacing.minTarget, alignment: .leading)
         }
-        .frame(minHeight: NomiSpacing.minTarget, alignment: .leading)
       }
     }
+  }
+
+  private var iconTile: some View {
+    Image(systemName: "checkmark.circle")
+      .resizable()
+      .scaledToFit()
+      .frame(width: 20, height: 20)
+      .foregroundStyle(NomiColor.card)
+      .frame(width: 40, height: 40)
+      .background(Circle().fill(NomiColor.navy))
+      .accessibilityHidden(true)
+  }
+
+  private var copyColumn: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text(ReviewCountsText.title(total: counts.total))
+        .nomiTextStyle(.rowTitle)
+        .foregroundStyle(NomiColor.ink)
+        .fixedSize(horizontal: false, vertical: true)
+      if let caption = ReviewCountsText.caption(uncategorised: counts.uncategorised, unsure: counts.unsure) {
+        Text(caption)
+          .nomiTextStyle(.footnote)
+          .foregroundStyle(NomiColor.inkSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .accessibilityElement(children: .combine)
+  }
+
+  private func reviewButton(_ action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Text("Review", bundle: .module)
+        .padding(.horizontal, NomiSpacing.sm)
+    }
+    .buttonStyle(NomiPrimaryButtonStyle(height: 36))
+    .fixedSize()
   }
 }
 
