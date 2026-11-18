@@ -66,15 +66,14 @@ struct RemainingBudgetCard: View {
     let caption = RemainingBudgetText.caption(
       spentMinor: totals.spentMinor, budgetMinor: totals.budgetMinor, categoryCount: categoryCount)
     return VStack(alignment: .leading, spacing: NomiSpacing.xs) {
-      // At accessibility sizes the tag goes under its label, so its words are not cut.
-      let stacksTag = dynamicTypeSize.isAccessibilitySize
-      if stacksTag {
+      // At accessibility sizes the tag goes under its label and wraps, so its words are not cut.
+      if Self.tagStacksUnderLabel(dynamicTypeSize) {
         VStack(alignment: .leading, spacing: NomiSpacing.xxs) {
           Text("Left to spend", bundle: .module)
             .nomiTextStyle(.label)
             .foregroundStyle(NomiColor.dayHeader)
           if let tag {
-            NomiTag(tag.text, tone: tag.tone)
+            NomiTag(tag.text, tone: tag.tone, wrapsText: true)
           }
         }
       } else {
@@ -88,13 +87,26 @@ struct RemainingBudgetCard: View {
           }
         }
       }
-      HStack(alignment: .lastTextBaseline, spacing: NomiSpacing.xs) {
+      // At accessibility sizes the pace caption goes under the amount, full width, so
+      // its words wrap instead of being squeezed beside the figure.
+      if Self.paceStacksUnderAmount(dynamicTypeSize) {
         NomiAmountText(minor: left, style: .displayValue)
-        Spacer(minLength: NomiSpacing.xs)
         if let pace {
           Text(pace)
             .nomiTextStyle(.caption)
             .foregroundStyle(NomiColor.inkSecondary)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      } else {
+        HStack(alignment: .lastTextBaseline, spacing: NomiSpacing.xs) {
+          NomiAmountText(minor: left, style: .displayValue)
+          Spacer(minLength: NomiSpacing.xs)
+          if let pace {
+            Text(pace)
+              .nomiTextStyle(.caption)
+              .foregroundStyle(NomiColor.inkSecondary)
+          }
         }
       }
       NomiProgressBar(
@@ -135,6 +147,22 @@ struct RemainingBudgetCard: View {
         .accessibilityHidden(true)
     }
     .accessibilityElement(children: .combine)
+  }
+
+  // MARK: - Layout
+
+  /// At accessibility sizes the state tag sits under "Left to spend" and wraps,
+  /// rather than sharing the row and truncating ("90% of budge…"). At the
+  /// standard sizes the two share a row, as on main.
+  static func tagStacksUnderLabel(_ size: DynamicTypeSize) -> Bool {
+    size.isAccessibilitySize
+  }
+
+  /// At accessibility sizes the pace caption goes under the amount, full width,
+  /// instead of sharing the amount's row where it wraps word by word. At the
+  /// standard sizes they share a row, as on main.
+  static func paceStacksUnderAmount(_ size: DynamicTypeSize) -> Bool {
+    size.isAccessibilitySize
   }
 
   // MARK: - Pace
@@ -290,5 +318,18 @@ enum RemainingBudgetText {
   .padding()
   .background(NomiColor.ground)
   .environment(\.dynamicTypeSize, .accessibility3)
+  .preferredColorScheme(.light)
+}
+
+#Preview("Left to spend · accessibility 5") {
+  RemainingBudgetCard(
+    state: .remaining(
+      BudgetTotals.Totals(budgetMinor: 13600_00, spentMinor: 12279_00, remainingMinor: 1321_00, fraction: 0.9029)
+    ),
+    categoryCount: 4
+  )
+  .padding()
+  .background(NomiColor.ground)
+  .environment(\.dynamicTypeSize, .accessibility5)
   .preferredColorScheme(.light)
 }

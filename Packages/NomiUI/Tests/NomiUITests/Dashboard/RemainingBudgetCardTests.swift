@@ -1,5 +1,6 @@
 import Foundation
 import NomiCore
+import SwiftUI
 import XCTest
 @testable import NomiUI
 
@@ -119,6 +120,28 @@ final class RemainingBudgetCardTests: XCTestCase {
       RemainingBudgetCard.periodEnd(for: day(14, month: 11), calendar: calendar),
       day(30, month: 11)
     )
+  }
+
+  // MARK: - Layout at Dynamic Type sizes
+
+  /// The tag stays on the label's row at the standard sizes and drops under the
+  /// label at accessibility sizes, where it wraps rather than truncating.
+  func testTagStacksUnderLabelOnlyAtAccessibilitySizes() {
+    XCTAssertFalse(RemainingBudgetCard.tagStacksUnderLabel(.large))
+    XCTAssertFalse(RemainingBudgetCard.tagStacksUnderLabel(.xxxLarge))
+    XCTAssertTrue(RemainingBudgetCard.tagStacksUnderLabel(.accessibility1))
+    XCTAssertTrue(RemainingBudgetCard.tagStacksUnderLabel(.accessibility3))
+    XCTAssertTrue(RemainingBudgetCard.tagStacksUnderLabel(.accessibility5))
+  }
+
+  /// The pace caption shares the amount's row at the standard sizes and moves
+  /// under the amount at accessibility sizes.
+  func testPaceStacksUnderAmountOnlyAtAccessibilitySizes() {
+    XCTAssertFalse(RemainingBudgetCard.paceStacksUnderAmount(.large))
+    XCTAssertFalse(RemainingBudgetCard.paceStacksUnderAmount(.xxxLarge))
+    XCTAssertTrue(RemainingBudgetCard.paceStacksUnderAmount(.accessibility1))
+    XCTAssertTrue(RemainingBudgetCard.paceStacksUnderAmount(.accessibility3))
+    XCTAssertTrue(RemainingBudgetCard.paceStacksUnderAmount(.accessibility5))
   }
 
   // MARK: - Needs-you line (PluralCopyTests reads these)

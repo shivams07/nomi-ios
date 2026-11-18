@@ -34,10 +34,15 @@ public struct NomiTag: View {
 
   public let text: String
   public let tone: Tone
+  /// Off by default: one line, truncated. On, the word wraps onto more lines
+  /// instead of truncating. Used where a tag must never cut its copy at
+  /// accessibility sizes (RemainingBudgetCard).
+  public let wrapsText: Bool
 
-  public init(_ text: String, tone: Tone = .neutral) {
+  public init(_ text: String, tone: Tone = .neutral, wrapsText: Bool = false) {
     self.text = text
     self.tone = tone
+    self.wrapsText = wrapsText
   }
 
   private var fill: Color {
@@ -60,7 +65,8 @@ public struct NomiTag: View {
     Text(text)
       .font(.custom(NomiFont.interSemiBold, size: 11, relativeTo: .caption2))
       .foregroundStyle(textColor)
-      .lineLimit(1)
+      .lineLimit(wrapsText ? nil : 1)
+      .fixedSize(horizontal: false, vertical: wrapsText)
       .padding(.horizontal, 8)
       .frame(minHeight: 22)
       .background(Capsule().fill(fill))
