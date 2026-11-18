@@ -2,17 +2,6 @@ import NomiCore
 import NomiPreview
 import SwiftUI
 
-/// The two destinations Home's own cards link to. The screens themselves
-/// (`BudgetsScreen`, `SubscriptionsScreen`) and the `navigationDestination`
-/// that resolves this route are `ui-root-wiring`'s (M6) job — until that
-/// merges, `NavigationLink(value:)` sites built from this render disabled on
-/// device, which is why every preview below wraps in a `NavigationStack`.
-/// S1b no longer links to either; X1 deletes the enum.
-public enum DashboardRoute: Hashable, Sendable {
-  case budgets
-  case subscriptions
-}
-
 /// Small, testable wiring rules that would otherwise be buried inside
 /// `DashboardView.body` where XCTest cannot reach them. Kept together so the
 /// AC-mandated behaviour (archived exclusion, budget-module state) reads as

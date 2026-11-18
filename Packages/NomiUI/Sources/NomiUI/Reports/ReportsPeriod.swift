@@ -9,7 +9,7 @@ import NomiCore
 /// unit's file boundary excludes `Dashboard/**`, and prior units (Accounts,
 /// Budgets) established the pattern of not depending on another unit's
 /// still-owned directory even where the type would be technically
-/// accessible — see `BudgetRowSummary`'s note in `Budgets/BudgetsScreen.swift`.
+/// accessible.
 /// The one thing that must NOT be duplicated is period-*boundary*
 /// resolution itself (`NomiCore.dateRange(for:calendar:)` stays the sole
 /// source of truth per design §2.3) — this type only decides which

@@ -380,8 +380,8 @@ struct RootView: View {
         homePath.append(DevLaunchScreen.about)
         homePath.append(DevLaunchScreen.licences)
       case .budgets:
-        show(.home)
-        homePath.append(DashboardRoute.budgets)
+        // Budgets lives on the Plan tab now (X1 retired the pushed Budgets screen).
+        show(.plan)
       case .accounts:
         show(.home)
         homePath.append(HomeRoute.accounts)
@@ -449,20 +449,6 @@ struct RootView: View {
       // The back button on a pushed screen reads this title, so Home keeps it even though
       // its own nav bar is hidden by the hero.
       .navigationTitle("Home")
-      .navigationDestination(for: DashboardRoute.self) { route in
-        switch route {
-        // G4. Both routes take the cache generation, so a pushed screen re-reads after a
-        // sync or a Siri write.
-        case .budgets:
-          BudgetsScreen(
-            budgetStore: environment.budgetStore,
-            insightsStore: environment.insightsStore,
-            refreshToken: tokens.budgets
-          )
-        case .subscriptions:
-          SubscriptionsScreen(recurringStore: recurringStore, refreshToken: tokens.subscriptions)
-        }
-      }
       // The gear (Settings), the mail banner or Connect mail button, Settings' Accounts
       // and Import rows, and the first scan.
       .navigationDestination(for: HomeRoute.self) { route in

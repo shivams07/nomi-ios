@@ -173,12 +173,17 @@ struct RemainingBudgetCard: View {
   /// Days left count today and the period's last day, both inclusive. Per day is
   /// the left money divided by those days, floored to whole rupees (₹77, not the
   /// canvas's ₹78; Corrections 10). Over budget reads "₹0 a day".
+  ///
+  /// Both numbers come from `PlanLogic` (S7), the one days-left and per-day rule
+  /// Home and Plan share. `PlanLogic.daysLeft` counts to the end of today's month.
+  /// Home's period picker offers only the current and past calendar months, so
+  /// that is `periodEnd`'s month whenever the caption is drawn.
   static func paceCaption(leftMinor: Int, today: Date, periodEnd: Date, calendar: Calendar) -> String? {
     let todayStart = calendar.startOfDay(for: today)
     let endStart = calendar.startOfDay(for: periodEnd)
     guard todayStart <= endStart else { return nil }
-    let days = (calendar.dateComponents([.day], from: todayStart, to: endStart).day ?? 0) + 1
-    let perDayRupees = leftMinor > 0 ? leftMinor / days / 100 : 0
+    let days = PlanLogic.daysLeft(today: today, calendar: calendar)
+    let perDayRupees = PlanLogic.perDay(remainingMinor: leftMinor, daysLeft: days)
     return String(
       localized: "\(days) days left · \(RemainingBudgetText.wholeRupees(perDayRupees)) a day",
       bundle: .module

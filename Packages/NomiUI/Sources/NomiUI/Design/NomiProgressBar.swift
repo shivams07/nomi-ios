@@ -24,7 +24,7 @@ public struct NomiProgressBar: View {
   }
 
   /// The pre-F2a call. Maps the fraction onto the three states (over from
-  /// 100%, close from 90%), so BudgetsScreen and Home compile unchanged.
+  /// 100%, close from 90%), so existing callers compile unchanged.
   public init(fraction: Double) {
     self.init(fraction: fraction, state: fraction >= 1 ? .over : fraction >= 0.9 ? .close : .under)
   }

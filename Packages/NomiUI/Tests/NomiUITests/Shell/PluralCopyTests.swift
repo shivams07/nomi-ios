@@ -9,42 +9,6 @@ import XCTest
 /// back instead of the sentence.
 final class PluralCopyTests: XCTestCase {
 
-  // MARK: Subscriptions header
-
-  func testSubscriptionCountReadsForZeroOneAndTwo() {
-    XCTAssertEqual(SubscriptionsSummary.countText(0), "0 subscriptions")
-    XCTAssertEqual(SubscriptionsSummary.countText(1), "1 subscription")
-    XCTAssertEqual(SubscriptionsSummary.countText(2), "2 subscriptions")
-  }
-
-  // MARK: Subscriptions next-charge caption
-
-  func testNextInDaysReadsForOneAndTwo() {
-    let now = Date()
-    let oneOut = Calendar.current.date(byAdding: .day, value: 1, to: now)!
-    let twoOut = Calendar.current.date(byAdding: .day, value: 2, to: now)!
-
-    XCTAssertEqual(SubscriptionRowText.nextCharge(nextExpected: oneOut, now: now), "next in 1 day")
-    XCTAssertEqual(SubscriptionRowText.nextCharge(nextExpected: twoOut, now: now), "next in 2 days")
-  }
-
-  func testExpectedDaysAgoReadsForOneAndTwo() {
-    let now = Date()
-    let oneAgo = Calendar.current.date(byAdding: .day, value: -1, to: now)!
-    let twoAgo = Calendar.current.date(byAdding: .day, value: -2, to: now)!
-
-    XCTAssertEqual(SubscriptionRowText.nextCharge(nextExpected: oneAgo, now: now), "expected 1 day ago")
-    XCTAssertEqual(SubscriptionRowText.nextCharge(nextExpected: twoAgo, now: now), "expected 2 days ago")
-  }
-
-  // MARK: Budgets days-left
-
-  func testBudgetsDaysLeftReadsForZeroOneAndTwo() {
-    XCTAssertEqual(BudgetPeriodText.daysLeft(0), "0 days")
-    XCTAssertEqual(BudgetPeriodText.daysLeft(1), "1 day")
-    XCTAssertEqual(BudgetPeriodText.daysLeft(2), "2 days")
-  }
-
   // MARK: Needs-you card line
 
   func testNeedsReviewLineReadsForOneAndTwo() {

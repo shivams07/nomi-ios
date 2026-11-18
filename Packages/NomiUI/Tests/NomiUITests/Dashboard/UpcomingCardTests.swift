@@ -42,27 +42,18 @@ final class UpcomingCardTests: XCTestCase {
     XCTAssertTrue(UpcomingRows.soonest([]).isEmpty)
   }
 
-  /// M5. A series with no `category` (the detector's own default, and the
-  /// third of `FakeRecurringStore.sampleSeries`) renders through the
-  /// monogram path rather than `NomiCategoryBadge` — the pure rule
-  /// `SubscriptionBadge.resolve` decides, shared with `SubscriptionsScreen`.
-  func testSeriesWithoutCategoryRendersTheMonogramPath() {
-    let series = makeSeries(id: "NOBADGE", daysFromNow: 2)
-
-    XCTAssertEqual(SubscriptionBadge.resolve(series), .monogram("N"))
-  }
-
-  /// S1b step 5. Each row's second line is "Next 12 Nov · monthly". The Due or
-  /// Renews verb arrives with X1. The day comes from the device calendar, the
-  /// one `NomiFormatters.dayMonth` uses, so the date is zone-safe.
-  func testRowSubtitleNamesTheNextDateAndCadence() {
+  /// X1. The row's second line is "<verb> 12 Nov · monthly", the verb from S7's
+  /// `RecurringCopy.verb` on the category name: "Due" for a bill, "Next" with no
+  /// category. The fixture is built in the India calendar `UpcomingRows` reads days in,
+  /// so the date is zone-safe.
+  func testRowSubtitleNamesTheVerbDateAndCadence() {
     var components = DateComponents()
     components.year = 2026
     components.month = 11
     components.day = 12
     components.hour = 12
-    let renewal = Calendar.current.date(from: components)!
-    let series = RecurringSeries(
+    let renewal = NomiCalendar.india.date(from: components)!
+    let uncategorised = RecurringSeries(
       id: "NETFLIX",
       label: "Netflix",
       amountMinor: 64900,
@@ -70,8 +61,23 @@ final class UpcomingCardTests: XCTestCase {
       lastDate: Date(timeIntervalSinceNow: -30 * 86_400),
       nextExpected: renewal
     )
+    let bill = RecurringSeries(
+      id: "ELECTRIC",
+      label: "Power",
+      amountMinor: 1_200_00,
+      occurrences: 3,
+      lastDate: Date(timeIntervalSinceNow: -30 * 86_400),
+      nextExpected: renewal,
+      category: CategoryBadge(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000000103")!,
+        name: "Bills & Utilities",
+        symbolName: "bolt",
+        paletteSlot: 3
+      )
+    )
 
-    XCTAssertEqual(UpcomingRows.subtitle(for: series), "Next 12 Nov · monthly")
+    XCTAssertEqual(UpcomingRows.subtitle(for: uncategorised), "Next 12 Nov · monthly")
+    XCTAssertEqual(UpcomingRows.subtitle(for: bill), "Due 12 Nov · monthly")
   }
 
   // MARK: -

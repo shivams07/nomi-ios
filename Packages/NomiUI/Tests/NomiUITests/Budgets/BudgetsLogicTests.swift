@@ -91,28 +91,6 @@ final class BudgetsLogicTests: XCTestCase {
     XCTAssertEqual(totals?.remainingMinor, -600_00)
   }
 
-  func testBudgetDaysLeftOnTheFourteenthOfSeptember() {
-    var components = DateComponents()
-    components.year = 2026
-    components.month = 9
-    components.day = 14
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = TimeZone(identifier: "Asia/Kolkata")!
-    let date = calendar.date(from: components)!
-    XCTAssertEqual(BudgetDaysLeft.remaining(from: date, calendar: calendar), 17)
-  }
-
-  func testBudgetDaysLeftOnTheLastDayOfSeptember() {
-    var components = DateComponents()
-    components.year = 2026
-    components.month = 9
-    components.day = 30
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = TimeZone(identifier: "Asia/Kolkata")!
-    let date = calendar.date(from: components)!
-    XCTAssertEqual(BudgetDaysLeft.remaining(from: date, calendar: calendar), 1)
-  }
-
   func testBudgetPaceAssessment() {
     XCTAssertEqual(BudgetPace.assess(spentFraction: 0.34, elapsedFraction: 0.47), .under)
     XCTAssertEqual(BudgetPace.assess(spentFraction: 0.50, elapsedFraction: 0.47), .onPace)
