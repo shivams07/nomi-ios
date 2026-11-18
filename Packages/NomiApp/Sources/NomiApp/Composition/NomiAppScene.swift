@@ -297,7 +297,10 @@ struct RootContainerView: View {
     Group {
       switch firstRun.route {
       case .onboarding(let step):
+        // The store RootView's ShellEnvironment hands its screens, so the First
+        // scan's account rows read it during first run too (S12c).
         OnboardingFlow(environment: environment, step: step)
+          .environment(\.nomiInsightsStore, environment.insightsStore)
       case .main:
         RootView(environment: environment)
       }
