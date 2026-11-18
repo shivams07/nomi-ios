@@ -56,6 +56,11 @@ struct RootView: View {
   /// True between the system's keyboard-will-show and keyboard-will-hide, so the
   /// bar can step aside and leave the Activity search field clear (D2).
   @State private var keyboardVisible = false
+  #if DEBUG && targetEnvironment(simulator)
+    /// `NOMI_START_ROUTE`, applied once when the shell appears. The onboarding
+    /// routes are `RootContainerView`'s, so this is left as they are.
+    @State private var pendingDevRoute: DevLaunchRoute? = DevLaunchRoute.launch
+  #endif
 
   /// The live account list, passed to Settings and on to `RulesScreen`, so the rule
   /// editor's Account picker has something to show. Sorted like `AccountPickerSheet`
@@ -146,6 +151,11 @@ struct RootView: View {
         backfillUnfinished = await environment.mail.backfillIsUnfinished
       }
     }
+    #if DEBUG && targetEnvironment(simulator)
+    .task {
+      applyPendingDevRoute()
+    }
+    #endif
     .sheet(isPresented: $isPresentingEntry) {
       // The "Add" bottom sheet. `EntryView` reads categories through `@Query`, so the
       // container has to reach it. A sheet is a new presentation context and does not
@@ -340,6 +350,54 @@ struct RootView: View {
     show(outcome.selection)
   }
 
+  #if DEBUG && targetEnvironment(simulator)
+    /// Opens the screen `NOMI_START_ROUTE` names, once. Each case uses a call a tap
+    /// makes (`show`, `openImport`) or pushes the value Settings pushes, so Back
+    /// behaves as it does after a tap. About and Licences are pushed through Settings,
+    /// because that is the only way a tap reaches them.
+    private func applyPendingDevRoute() {
+      guard let route = pendingDevRoute else { return }
+      pendingDevRoute = nil
+      switch route {
+      case .home:
+        show(.home)
+      case .activity:
+        show(.activity)
+      case .insights:
+        show(.insights)
+      case .plan:
+        show(.plan)
+      case .settings:
+        show(.home)
+        homePath.append(HomeRoute.settings)
+      case .about:
+        show(.home)
+        homePath.append(HomeRoute.settings)
+        homePath.append(DevLaunchScreen.about)
+      case .licences:
+        show(.home)
+        homePath.append(HomeRoute.settings)
+        homePath.append(DevLaunchScreen.about)
+        homePath.append(DevLaunchScreen.licences)
+      case .budgets:
+        show(.home)
+        homePath.append(DashboardRoute.budgets)
+      case .accounts:
+        show(.home)
+        homePath.append(HomeRoute.accounts)
+      case .connectMail:
+        show(.home)
+        homePath.append(HomeRoute.connectMail)
+      case .importStatement:
+        openImport()
+      case .add:
+        isPresentingEntry = true
+      case .welcome, .bringData:
+        break
+      }
+    }
+  #endif
+
   /// Dismisses any sheet or cover, selects Home and pushes the Import screen.
   private func openImport() {
     isPresentingEntry = false
@@ -446,6 +504,16 @@ struct RootView: View {
           )
         }
       }
+      #if DEBUG && targetEnvironment(simulator)
+        .navigationDestination(for: DevLaunchScreen.self) { screen in
+          switch screen {
+          case .about:
+            AboutScreen()
+          case .licences:
+            LicensesScreen()
+          }
+        }
+      #endif
     }
   }
 
