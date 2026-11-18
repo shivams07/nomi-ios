@@ -80,9 +80,9 @@ enum BudgetFormGate {
   }
 }
 
-/// The Budgets screen's aggregate — and, per v5 §Home, the Home remaining-
+/// The Budgets aggregate — and, per v5 §Home, the Home remaining-
 /// budget card's source too (`DashboardWiring.budgetModule` wraps this),
-/// which is why it lives here rather than nested in `BudgetsScreen`.
+/// which is why it lives here rather than nested in a view.
 enum BudgetTotals {
   struct Totals: Equatable {
     let budgetMinor: Int
@@ -103,16 +103,6 @@ enum BudgetTotals {
       remainingMinor: budgetMinor - spentMinor,
       fraction: budgetMinor == 0 ? 0 : Double(spentMinor) / Double(budgetMinor)
     )
-  }
-}
-
-/// Days remaining in the current month, inclusive of today — the gauge
-/// card's "Days left" figure.
-enum BudgetDaysLeft {
-  static func remaining(from date: Date, calendar: Calendar = .current) -> Int {
-    guard let daysInMonth = calendar.range(of: .day, in: .month, for: date)?.count else { return 0 }
-    let today = calendar.component(.day, from: date)
-    return daysInMonth - today + 1
   }
 }
 

@@ -1,7 +1,8 @@
 import XCTest
 
-/// The tab roots own their bottom reserve (D4). Each of the four main scroll views reads
-/// `\.nomiTabBarReserve`. A source scan, because a SwiftUI body is not reachable from a
+/// The tab roots own their bottom reserve (D4). Each main scroll view reads
+/// `\.nomiTabBarReserve`; the Plan tab gets its reserve from `NomiHeroScaffold`, which
+/// the Home case below covers. A source scan, because a SwiftUI body is not reachable from a
 /// unit test: deleting the modifier from any one of them is caught here, by name.
 final class TabRootReserveWiringTests: XCTestCase {
 
@@ -39,9 +40,5 @@ final class TabRootReserveWiringTests: XCTestCase {
 
   func testInsightsReportsReservesTheBottom() throws {
     try assertReservesTheBottom("Reports/ReportsScreen.swift")
-  }
-
-  func testPlanBudgetsReservesTheBottom() throws {
-    try assertReservesTheBottom("Budgets/BudgetsScreen.swift")
   }
 }

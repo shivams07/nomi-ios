@@ -19,20 +19,8 @@ private final class NoopInsightsStore: InsightsStore {
   func transactions(in period: InsightPeriod) throws -> [Transaction] { [] }
 }
 
-/// G4 stubs for the three screens that take a store they never let a test
+/// G4 stub for the Accounts screen's store, which these tests never let a view
 /// read from. Identity is all these tests need.
-@MainActor
-private final class NoopRecurringStore: RecurringInsightsStore {
-  func recurringSeries() throws -> [RecurringSeries] { [] }
-}
-
-@MainActor
-private final class NoopBudgetStore: BudgetStore {
-  func setBudget(categoryID: UUID, amountMinor: Int) throws {}
-  func removeBudget(categoryID: UUID) throws {}
-  func budgets() throws -> [Budget] { [] }
-}
-
 @MainActor
 private final class NoopAccountStore: AccountStore {
   func create(
@@ -110,40 +98,6 @@ final class RefreshTokenTests: XCTestCase {
     let insights = NoopInsightsStore()
     let lhs = AccountsScreen(accountStore: accounts, insightsStore: insights, refreshToken: 4)
     let rhs = AccountsScreen(accountStore: accounts, insightsStore: insights, refreshToken: 4)
-    XCTAssertEqual(lhs, rhs)
-  }
-
-  @MainActor
-  func testBudgetsScreenValuesDifferingOnlyInRefreshTokenAreNotEqual() {
-    let budgets = NoopBudgetStore()
-    let insights = NoopInsightsStore()
-    let lhs = BudgetsScreen(budgetStore: budgets, insightsStore: insights, refreshToken: 0)
-    let rhs = BudgetsScreen(budgetStore: budgets, insightsStore: insights, refreshToken: 1)
-    XCTAssertNotEqual(lhs, rhs)
-  }
-
-  @MainActor
-  func testBudgetsScreenValuesWithSameRefreshTokenAreEqual() {
-    let budgets = NoopBudgetStore()
-    let insights = NoopInsightsStore()
-    let lhs = BudgetsScreen(budgetStore: budgets, insightsStore: insights, refreshToken: 6)
-    let rhs = BudgetsScreen(budgetStore: budgets, insightsStore: insights, refreshToken: 6)
-    XCTAssertEqual(lhs, rhs)
-  }
-
-  @MainActor
-  func testSubscriptionsScreenValuesDifferingOnlyInRefreshTokenAreNotEqual() {
-    let store = NoopRecurringStore()
-    let lhs = SubscriptionsScreen(recurringStore: store, refreshToken: 0)
-    let rhs = SubscriptionsScreen(recurringStore: store, refreshToken: 1)
-    XCTAssertNotEqual(lhs, rhs)
-  }
-
-  @MainActor
-  func testSubscriptionsScreenValuesWithSameRefreshTokenAreEqual() {
-    let store = NoopRecurringStore()
-    let lhs = SubscriptionsScreen(recurringStore: store, refreshToken: 2)
-    let rhs = SubscriptionsScreen(recurringStore: store, refreshToken: 2)
     XCTAssertEqual(lhs, rhs)
   }
 }

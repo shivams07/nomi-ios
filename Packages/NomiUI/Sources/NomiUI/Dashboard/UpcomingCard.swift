@@ -18,12 +18,14 @@ enum UpcomingRows {
     Array(series.sorted { $0.nextExpected < $1.nextExpected }.prefix(limit))
   }
 
-  /// "Next 12 Nov · monthly", the row's second line. The Due and Renews verb
-  /// arrives with X1, which moves this card onto S7's `RecurringCopy`.
+  /// "Due 12 Nov · monthly", the row's second line. The verb and the line come
+  /// from S7's `RecurringCopy`, the same rule the Plan tab's rows use, so Home
+  /// and Plan read alike. A series with no category reads "Next".
   static func subtitle(for series: RecurringSeries) -> String {
-    String(
-      localized: "Next \(NomiFormatters.dayMonth.string(from: series.nextExpected)) · monthly",
-      bundle: .module
+    RecurringCopy.subtitle(
+      verb: RecurringCopy.verb(categoryName: series.category?.name),
+      nextExpected: series.nextExpected,
+      calendar: NomiCalendar.india
     )
   }
 }
@@ -34,7 +36,8 @@ enum UpcomingRows {
 /// `DashboardView`'s `recurringStore`), so every value this type receives
 /// already came from a successful read.
 ///
-/// S1b step 5: two rows, each a label, "Next <d MMM> · monthly" and the amount.
+/// S1b step 5: two rows, each a label, "<verb> <d MMM> · monthly" and the amount.
+/// The verb is S7's `RecurringCopy.verb` (X1), the same one Plan uses.
 /// "See all" opens the Plan tab through `onSeeAll`. Every row is a debit by
 /// construction (`RecurrenceDetector` only ever groups debits), so the amount
 /// takes the default ink.

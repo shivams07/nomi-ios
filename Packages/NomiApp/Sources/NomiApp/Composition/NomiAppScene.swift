@@ -237,7 +237,7 @@ public struct NomiAppScene: Scene {
     WindowGroup {
       RootContainerView(environment: environment)
         // The one place the container is attached. Every `@Query` in the app —
-        // `CategoriesScreen`, `RulesScreen`, `EntryView`, `BudgetsScreen`,
+        // `CategoriesScreen`, `RulesScreen`, `EntryView`, `PlanScreen`,
         // `ImportEntryView`, the ledger — reads through it.
         .modelContainer(environment.container)
         // DEC-08: light only, for this restyle. See App/Info.plist.
